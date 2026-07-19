@@ -1,0 +1,1433 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1">
+<title>Clyde Academy — Register</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Work+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore-compat.js"></script>
+<style>
+  :root{
+    --ink:#16213E;
+    --ink-soft:#2A3A5C;
+    --slate:#4C5A73;
+    --paper:#F1EFE2;
+    --paper-dim:#E8E4D2;
+    --line:#D8D2BC;
+    --brass:#B8862E;
+    --brass-soft:#DDBB74;
+    --sage:#5F7A5E;
+    --sage-soft:#E4EBE1;
+    --brick:#A6483C;
+    --brick-soft:#F3E1DD;
+    --white:#FFFDF8;
+    --radius:10px;
+    --shadow: 0 2px 10px rgba(22,33,62,0.08);
+  }
+  *{box-sizing:border-box;}
+  html,body{height:100%;}
+  body{
+    margin:0;
+    background:var(--paper);
+    color:var(--ink);
+    font-family:'Work Sans', sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  h1,h2,h3,.display{
+    font-family:'Fraunces', serif;
+    font-weight:600;
+    letter-spacing:-0.01em;
+  }
+  .mono{font-family:'IBM Plex Mono', monospace;}
+  button{font-family:inherit; cursor:pointer;}
+  input,select{font-family:inherit;}
+  ::selection{background:var(--brass-soft);}
+
+  /* ---------- Crest ---------- */
+  .crest{
+    width:44px;height:44px;border-radius:50%;
+    background: radial-gradient(circle at 30% 28%, var(--brass-soft), var(--brass) 60%, #8f6a1f 100%);
+    display:flex;align-items:center;justify-content:center;
+    box-shadow: inset 0 0 0 2px rgba(255,255,255,0.25), 0 2px 6px rgba(0,0,0,0.25);
+    flex-shrink:0;
+  }
+  .crest span{
+    font-family:'Fraunces', serif; font-weight:700; color:var(--ink); font-size:16px;
+  }
+
+  /* ---------- Login ---------- */
+  #login-screen{
+    min-height:100vh; display:flex; align-items:center; justify-content:center;
+    background:
+      linear-gradient(var(--ink), var(--ink)),
+      repeating-linear-gradient(180deg, transparent, transparent 27px, rgba(255,255,255,0.035) 28px);
+    background-blend-mode:normal;
+    padding:24px;
+  }
+  .login-card{
+    background:var(--white);
+    border-radius:14px;
+    width:100%; max-width:400px;
+    padding:36px 32px 30px;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.35);
+    position:relative;
+  }
+  .login-head{display:flex; align-items:center; gap:12px; margin-bottom:6px;}
+  .login-head .crest{width:52px;height:52px;}
+  .login-head .crest span{font-size:19px;}
+  .login-title{font-size:24px; margin:0; line-height:1.1;}
+  .login-sub{margin:4px 0 26px; color:var(--slate); font-size:13.5px;}
+  .field{margin-bottom:16px;}
+  .field label{display:block; font-size:12px; text-transform:uppercase; letter-spacing:0.06em; color:var(--slate); margin-bottom:6px; font-weight:600;}
+  .field input, .field select{
+    width:100%; padding:11px 12px; border-radius:8px; border:1.5px solid var(--line);
+    background:var(--paper); font-size:14.5px; color:var(--ink); outline:none;
+    transition:border-color .15s;
+  }
+  .field input:focus, .field select:focus{border-color:var(--brass);}
+  .role-toggle{display:flex; gap:8px; margin-bottom:18px;}
+  .role-btn{
+    flex:1; padding:10px; border-radius:8px; border:1.5px solid var(--line);
+    background:var(--paper); color:var(--slate); font-size:13.5px; font-weight:600;
+    transition:all .15s;
+  }
+  .role-btn.active{background:var(--ink); border-color:var(--ink); color:var(--white);}
+  .btn-primary{
+    width:100%; padding:12px; border-radius:8px; border:none;
+    background:var(--ink); color:var(--white); font-weight:600; font-size:14.5px;
+    letter-spacing:0.01em;
+    transition:background .15s;
+  }
+  .btn-primary:hover{background:var(--ink-soft);}
+  .login-foot{margin-top:16px; text-align:center; font-size:12px; color:var(--slate);}
+
+  /* ---------- App shell ---------- */
+  #app-screen{display:none; min-height:100vh;}
+  .shell{display:flex; min-height:100vh;}
+  .sidebar{
+    width:220px; background:var(--ink); color:var(--white);
+    display:flex; flex-direction:column; flex-shrink:0;
+    position:sticky; top:0; height:100vh;
+  }
+  .sidebar-head{display:flex; align-items:center; gap:10px; padding:22px 18px 18px;}
+  .sidebar-head .brand{font-size:15px; line-height:1.15;}
+  .sidebar-head .brand small{display:block; font-size:10px; color:#9AA6C2; text-transform:uppercase; letter-spacing:0.08em; font-weight:500; margin-top:2px;}
+  .nav{flex:1; padding:6px 10px;}
+  .nav-item{
+    display:flex; align-items:center; gap:10px; padding:11px 12px; border-radius:8px;
+    color:#C4CBDD; font-size:14px; font-weight:500; margin-bottom:2px; border:none; background:none; width:100%; text-align:left;
+    transition:background .15s, color .15s;
+  }
+  .nav-item .ic{width:18px; text-align:center; font-size:15px;}
+  .nav-item:hover{background:rgba(255,255,255,0.06); color:var(--white);}
+  .nav-item.active{background:rgba(184,134,46,0.18); color:var(--brass-soft);}
+  .sidebar-foot{padding:16px 18px 20px; border-top:1px solid rgba(255,255,255,0.1);}
+  .user-chip{display:flex; align-items:center; gap:9px; margin-bottom:10px;}
+  .avatar{
+    width:32px;height:32px;border-radius:50%; background:var(--brass-soft); color:var(--ink);
+    display:flex;align-items:center;justify-content:center; font-weight:700; font-size:13px; flex-shrink:0;
+  }
+  .user-chip .who{font-size:13px; line-height:1.2;}
+  .user-chip .who b{display:block; color:var(--white); font-weight:600;}
+  .user-chip .who span{color:#9AA6C2; font-size:11.5px;}
+  .logout-btn{width:100%; padding:8px; background:rgba(255,255,255,0.07); border:none; border-radius:7px; color:#C4CBDD; font-size:12.5px; font-weight:600;}
+  .logout-btn:hover{background:rgba(255,255,255,0.13); color:var(--white);}
+  .sync-badge{
+    font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:0.05em;
+    padding:6px 10px; border-radius:20px; margin-bottom:12px; text-align:center;
+    background:rgba(255,255,255,0.08); color:#9AA6C2;
+  }
+  .sync-badge.synced{background:rgba(95,122,94,0.25); color:#9CC79A;}
+  .sync-badge.offline{background:rgba(184,134,46,0.22); color:var(--brass-soft);}
+  .sync-badge.local{background:rgba(196,203,221,0.12); color:#C4CBDD;}
+
+  .main{flex:1; min-width:0; padding:26px 32px 90px;}
+  .topbar{display:flex; align-items:center; justify-content:space-between; margin-bottom:22px; flex-wrap:wrap; gap:10px;}
+  .topbar h1{font-size:22px; margin:0;}
+  .topbar .eyebrow{font-size:11.5px; text-transform:uppercase; letter-spacing:0.08em; color:var(--slate); font-weight:600; margin-bottom:2px;}
+  .date-badge{font-size:12.5px; color:var(--slate); background:var(--white); padding:7px 12px; border-radius:20px; border:1px solid var(--line);}
+
+  /* ---------- Cards / stats ---------- */
+  .stat-grid{display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin-bottom:26px;}
+  .stat-card{
+    background:var(--white); border-radius:12px; padding:18px 18px; border:1px solid var(--line);
+    box-shadow:var(--shadow);
+  }
+  .stat-card .label{font-size:11.5px; text-transform:uppercase; letter-spacing:0.06em; color:var(--slate); font-weight:600;}
+  .stat-card .value{font-family:'Fraunces',serif; font-size:30px; font-weight:600; margin-top:6px; color:var(--ink);}
+  .stat-card .sub{font-size:12px; margin-top:4px; color:var(--slate);}
+  .stat-card .sub.up{color:var(--sage);}
+  .stat-card .sub.down{color:var(--brick);}
+
+  .panel{background:var(--white); border-radius:12px; border:1px solid var(--line); box-shadow:var(--shadow); margin-bottom:20px;}
+  .panel-head{display:flex; align-items:center; justify-content:space-between; padding:16px 20px; border-bottom:1px solid var(--line);}
+  .panel-head h3{margin:0; font-size:16px;}
+  .panel-body{padding:6px 20px 16px;}
+
+  /* ledger rows - signature motif */
+  .ledger-row{
+    display:flex; align-items:center; gap:14px; padding:13px 0; border-bottom:1px solid var(--line);
+  }
+  .ledger-row:last-child{border-bottom:none;}
+  .ledger-row .idx{width:22px; font-family:'IBM Plex Mono',monospace; font-size:11px; color:var(--slate); flex-shrink:0;}
+
+  .pill{display:inline-block; padding:3px 10px; border-radius:20px; font-size:11.5px; font-weight:600;}
+  .pill.present{background:var(--sage-soft); color:var(--sage);}
+  .pill.absent{background:var(--brick-soft); color:var(--brick);}
+  .pill.late{background:#F4EAD2; color:var(--brass);}
+
+  .btn-ghost{background:none; border:1px solid var(--line); border-radius:7px; padding:6px 12px; font-size:12.5px; font-weight:600; color:var(--slate);}
+  .btn-ghost:hover{border-color:var(--ink); color:var(--ink);}
+  .btn-small{background:var(--ink); color:var(--white); border:none; border-radius:7px; padding:6px 12px; font-size:12.5px; font-weight:600;}
+  .btn-small:hover{background:var(--ink-soft);}
+  .btn-small.brass{background:var(--brass);}
+  .btn-small.brass:hover{background:#a3781f;}
+
+  /* search / filters */
+  .toolbar{display:flex; gap:10px; margin-bottom:16px; flex-wrap:wrap;}
+  .toolbar input[type=text], .toolbar select{
+    padding:9px 12px; border-radius:8px; border:1.5px solid var(--line); background:var(--white); font-size:13.5px; color:var(--ink); outline:none;
+  }
+  .toolbar input[type=text]{flex:1; min-width:160px;}
+  .toolbar input:focus, .toolbar select:focus{border-color:var(--brass);}
+
+  /* students grid */
+  .student-grid{display:grid; grid-template-columns:repeat(auto-fill,minmax(230px,1fr)); gap:12px;}
+  .student-card{
+    background:var(--white); border:1px solid var(--line); border-radius:12px; padding:15px; cursor:pointer;
+    transition:transform .12s, box-shadow .12s;
+  }
+  .student-card:hover{transform:translateY(-2px); box-shadow:var(--shadow);}
+  .student-card .top{display:flex; align-items:center; gap:10px;}
+  .student-card .avatar{width:38px; height:38px; background:var(--ink); color:var(--brass-soft);}
+  .student-card .name{font-weight:600; font-size:14.5px;}
+  .student-card .cls{font-size:12px; color:var(--slate);}
+  .student-card .metrics{display:flex; justify-content:space-between; margin-top:12px; padding-top:10px; border-top:1px dashed var(--line);}
+  .student-card .metric .n{font-family:'Fraunces',serif; font-weight:600; font-size:16px;}
+  .student-card .metric .l{font-size:10.5px; color:var(--slate); text-transform:uppercase; letter-spacing:0.04em;}
+
+  /* tables */
+  table.reg{width:100%; border-collapse:collapse; font-size:13.5px;}
+  table.reg th{text-align:left; font-size:11px; text-transform:uppercase; letter-spacing:0.05em; color:var(--slate); padding:8px 10px; border-bottom:2px solid var(--ink);}
+  table.reg td{padding:10px 10px; border-bottom:1px solid var(--line);}
+  table.reg tr:last-child td{border-bottom:none;}
+  .score-input{width:56px; padding:5px 6px; border:1px solid var(--line); border-radius:6px; text-align:center; font-family:'IBM Plex Mono',monospace; font-size:13px;}
+
+  .grade-letter{font-family:'Fraunces',serif; font-weight:700; font-size:15px;}
+  .grade-A{color:var(--sage);} .grade-B{color:#4A7BAA;} .grade-C{color:var(--brass);} .grade-D{color:#B06A2A;} .grade-F{color:var(--brick);}
+
+  .tabs{display:flex; gap:4px; border-bottom:1px solid var(--line); margin-bottom:16px;}
+  .tab-btn{padding:10px 16px; background:none; border:none; font-size:13.5px; font-weight:600; color:var(--slate); border-bottom:2px solid transparent; margin-bottom:-1px;}
+  .tab-btn.active{color:var(--ink); border-bottom-color:var(--brass);}
+
+  .back-link{background:none;border:none;color:var(--slate);font-size:13px;font-weight:600;padding:0;margin-bottom:14px;display:inline-flex;align-items:center;gap:6px;}
+  .back-link:hover{color:var(--ink);}
+
+  .att-grid{display:flex; flex-wrap:wrap; gap:8px;}
+  .att-toggle{display:flex; border:1px solid var(--line); border-radius:8px; overflow:hidden;}
+  .att-toggle button{border:none; background:var(--white); padding:6px 12px; font-size:12px; font-weight:600; color:var(--slate);}
+  .att-toggle button.sel-present.on{background:var(--sage-soft); color:var(--sage);}
+  .att-toggle button.sel-late.on{background:#F4EAD2; color:var(--brass);}
+  .att-toggle button.sel-absent.on{background:var(--brick-soft); color:var(--brick);}
+
+  .empty{padding:30px 10px; text-align:center; color:var(--slate); font-size:13.5px;}
+
+  /* bottom nav (mobile) */
+  .bottom-nav{display:none;}
+
+  @media (max-width: 860px){
+    .stat-grid{grid-template-columns:repeat(2,1fr);}
+    .sidebar{display:none;}
+    .main{padding:18px 16px 90px;}
+    .bottom-nav{
+      display:flex; position:fixed; bottom:0; left:0; right:0; background:var(--ink);
+      justify-content:space-around; padding:8px 4px 10px; z-index:50; box-shadow:0 -4px 16px rgba(0,0,0,0.2);
+    }
+    .bottom-nav button{
+      background:none; border:none; color:#8A96B5; font-size:10px; font-weight:600; display:flex; flex-direction:column;
+      align-items:center; gap:3px; padding:4px 8px; flex:1;
+    }
+    .bottom-nav button .ic{font-size:18px;}
+    .bottom-nav button.active{color:var(--brass-soft);}
+    .topbar h1{font-size:19px;}
+  }
+  @media (max-width: 480px){
+    .stat-grid{grid-template-columns:1fr 1fr;}
+    .student-grid{grid-template-columns:1fr 1fr;}
+  }
+
+  /* ---------- Register screen ---------- */
+  .auth-link{background:none;border:none;padding:0;color:var(--brass);font-weight:700;font-size:inherit;text-decoration:underline;cursor:pointer;}
+  .auth-link:hover{color:#a3781f;}
+
+  /* ---------- Admin CRUD widgets ---------- */
+  .crud-box{border:1px dashed var(--line); border-radius:10px; padding:14px; margin-bottom:14px; background:var(--paper);}
+  .crud-box h4{margin:0 0 10px; font-size:12.5px; text-transform:uppercase; letter-spacing:0.05em; color:var(--slate);}
+  .inline-form{display:flex; gap:8px; flex-wrap:wrap; align-items:center;}
+  .inline-form input, .inline-form select{padding:8px 10px; border-radius:7px; border:1.5px solid var(--line); background:var(--white); font-size:13px;}
+  .class-card{border:1px solid var(--line); border-radius:12px; background:var(--white); box-shadow:var(--shadow); margin-bottom:16px; overflow:hidden;}
+  .class-card-head{display:flex; align-items:center; justify-content:space-between; padding:14px 18px; background:var(--paper-dim); flex-wrap:wrap; gap:8px;}
+  .class-card-head .name{font-family:'Fraunces',serif; font-weight:600; font-size:17px;}
+  .class-card-body{padding:14px 18px 18px;}
+  .subject-row{display:flex; align-items:center; gap:10px; padding:9px 0; border-bottom:1px solid var(--line); flex-wrap:wrap;}
+  .subject-row:last-child{border-bottom:none;}
+  .subject-row .sname{flex:1; min-width:110px; font-weight:600; font-size:13.5px;}
+  .badge-unassigned{font-size:11px; color:var(--brick); background:var(--brick-soft); padding:2px 8px; border-radius:10px; font-weight:600;}
+  .btn-danger{background:none;border:1px solid var(--brick-soft); color:var(--brick); border-radius:7px; padding:5px 10px; font-size:12px; font-weight:700;}
+  .btn-danger:hover{background:var(--brick-soft);}
+
+  /* ---------- Print report card ---------- */
+  #print-area{display:none;}
+  .rc-page{padding:26px 6px; page-break-after:always;}
+  .rc-page:last-child{page-break-after:auto;}
+  .rc-head{display:flex; align-items:center; gap:14px; border-bottom:3px double var(--ink); padding-bottom:14px; margin-bottom:16px;}
+  .rc-head .crest{width:54px;height:54px;}
+  .rc-head h2{margin:0; font-size:22px;}
+  .rc-head p{margin:2px 0 0; color:var(--slate); font-size:12.5px;}
+  .rc-meta{display:grid; grid-template-columns:repeat(2,1fr); gap:6px 20px; margin-bottom:16px; font-size:13px;}
+  .rc-meta div b{display:inline-block; min-width:110px; color:var(--slate); font-weight:600;}
+  .rc-table{width:100%; border-collapse:collapse; margin-bottom:16px; font-size:13px;}
+  .rc-table th{text-align:left; background:var(--paper-dim); padding:7px 9px; font-size:11px; text-transform:uppercase; letter-spacing:0.04em; border:1px solid var(--line);}
+  .rc-table td{padding:7px 9px; border:1px solid var(--line);}
+  .rc-summary{display:flex; gap:18px; margin-bottom:24px;}
+  .rc-summary div{border:1px solid var(--line); border-radius:8px; padding:10px 16px; text-align:center;}
+  .rc-summary .n{font-family:'Fraunces',serif; font-size:22px; font-weight:700;}
+  .rc-summary .l{font-size:10.5px; color:var(--slate); text-transform:uppercase;}
+  .rc-sign{display:flex; justify-content:space-between; margin-top:50px;}
+  .rc-sign div{width:42%; text-align:center; border-top:1px solid var(--ink); padding-top:6px; font-size:11.5px; color:var(--slate);}
+  @media print{
+    body *{visibility:hidden;}
+    #print-area, #print-area *{visibility:visible;}
+    #print-area{display:block; position:absolute; left:0; top:0; width:100%;}
+  }
+</style>
+</head>
+<body>
+
+<!-- ===================== LOGIN ===================== -->
+<div id="login-screen">
+  <div class="login-card">
+    <div class="login-head">
+      <div class="crest"><span>CA</span></div>
+      <div>
+        <h1 class="login-title">Clyde Academy</h1>
+      </div>
+    </div>
+    <p class="login-sub">Academic register &amp; performance system</p>
+
+    <div class="field">
+      <label>Username</label>
+      <input type="text" id="login-username" placeholder="e.g. owusu" autocomplete="username" />
+    </div>
+    <div class="field">
+      <label>Password</label>
+      <input type="password" id="login-password" placeholder="••••••••" autocomplete="current-password" />
+    </div>
+    <p id="login-error" style="display:none;color:var(--brick);font-size:12.5px;font-weight:600;margin:-8px 0 14px;">Incorrect username or password.</p>
+
+    <button class="btn-primary" onclick="login()">Enter register</button>
+    <p class="login-foot">Staff access only · Clyde Academy © 2026</p>
+    <p class="login-foot" style="margin-top:8px;">First time here as a teacher? <button class="auth-link" onclick="showRegister()">Register an account</button></p>
+    <script>
+      document.getElementById('login-username').addEventListener('keydown', e=>{ if(e.key==='Enter') login(); });
+      document.getElementById('login-password').addEventListener('keydown', e=>{ if(e.key==='Enter') login(); });
+    </script>
+  </div>
+</div>
+
+<!-- ===================== TEACHER REGISTRATION ===================== -->
+<div id="register-screen" style="display:none;">
+  <div style="min-height:100vh; display:flex; align-items:center; justify-content:center; background:linear-gradient(var(--ink), var(--ink)); padding:24px;">
+    <div class="login-card">
+      <div class="login-head">
+        <div class="crest"><span>CA</span></div>
+        <div><h1 class="login-title">Teacher Registration</h1></div>
+      </div>
+      <p class="login-sub">Create your account for the first time. Your class and subjects will be assigned by the administrator afterward.</p>
+
+      <div class="field"><label>Full name</label><input type="text" id="reg-name" placeholder="e.g. Mr. Owusu"></div>
+      <div class="field"><label>Choose a username</label><input type="text" id="reg-username" placeholder="e.g. owusu"></div>
+      <div class="field"><label>Choose a password</label><input type="password" id="reg-password" placeholder="••••••••"></div>
+      <div class="field"><label>Confirm password</label><input type="password" id="reg-password2" placeholder="••••••••"></div>
+      <p id="register-error" style="display:none;color:var(--brick);font-size:12.5px;font-weight:600;margin:-8px 0 14px;"></p>
+
+      <button class="btn-primary" onclick="registerTeacher()">Create account</button>
+      <p class="login-foot">Already registered? <button class="auth-link" onclick="hideRegister()">Back to sign in</button></p>
+    </div>
+  </div>
+</div>
+
+<!-- ===================== PRINTABLE REPORT CARD ===================== -->
+<div id="print-area"></div>
+
+<!-- ===================== APP ===================== -->
+<div id="app-screen">
+  <div class="shell">
+    <div class="sidebar">
+      <div class="sidebar-head">
+        <div class="crest"><span>CA</span></div>
+        <div class="brand">Clyde Academy<small>Academic Register</small></div>
+      </div>
+      <div class="nav" id="nav-items"></div>
+      <div class="sidebar-foot">
+        <div id="sync-badge" class="sync-badge">Starting up…</div>
+        <div class="user-chip">
+          <div class="avatar" id="user-avatar">?</div>
+          <div class="who"><b id="user-name">—</b><span id="user-role">—</span></div>
+        </div>
+        <button class="logout-btn" onclick="logout()">Sign out</button>
+      </div>
+    </div>
+
+    <div class="main" id="main-content"></div>
+  </div>
+
+  <div class="bottom-nav" id="bottom-nav"></div>
+</div>
+
+<script>
+/* ============================================================
+   CLYDE ACADEMY — data + state
+============================================================ */
+let session = null; // {role, name, classId}
+let DB = null;
+let view = { page:'dashboard', studentId:null, tab:'overview', classId:null, subject:null, date:null };
+
+const STORAGE_KEY = 'clyde-academy-db-v1';
+
+/* ============================================================
+   STORAGE — browser-based, with optional Firebase cloud sync
+   ------------------------------------------------------------
+   By default this app saves everything to THIS BROWSER only
+   (localStorage). That works fully offline, but data won't be
+   shared between devices — e.g. a teacher's phone won't see
+   what the admin entered on a laptop.
+
+   To turn on cloud sync (so every device sees the same data,
+   and it still works offline and catches up when back online):
+     1. Go to https://console.firebase.google.com and create a
+        free project (takes ~2 minutes, no credit card needed).
+     2. In the project: Build → Firestore Database → Create
+        database → start in "test mode" for now.
+     3. Project settings (gear icon, top left) → scroll to
+        "Your apps" → click the web icon "</>" → register an
+        app → copy the "firebaseConfig" object it shows you.
+     4. Paste those values into FIREBASE_CONFIG below, replacing
+        the empty strings, then re-save/re-upload this file.
+
+   Leave FIREBASE_CONFIG exactly as-is (all empty strings) to
+   keep running in browser-only/offline mode — the app works
+   fine either way.
+============================================================ */
+const FIREBASE_CONFIG = {
+  apiKey: "",
+  authDomain: "",
+  projectId: "",
+  storageBucket: "",
+  messagingSenderId: "",
+  appId: ""
+};
+const FIRESTORE_COLLECTION = 'clydeAcademy';
+const FIRESTORE_DOC = 'database';
+
+let firestoreDB = null;
+let cloudEnabled = false;
+
+function firebaseIsConfigured(){
+  return !!(FIREBASE_CONFIG.apiKey && FIREBASE_CONFIG.projectId && FIREBASE_CONFIG.appId);
+}
+function setSyncBadge(mode){
+  const el = document.getElementById('sync-badge');
+  if(!el) return;
+  el.classList.remove('synced','offline','local');
+  if(mode==='synced'){ el.textContent = '☁ Synced'; el.classList.add('synced'); }
+  else if(mode==='offline'){ el.textContent = '📴 Offline — saved on this device'; el.classList.add('offline'); }
+  else if(mode==='connecting'){ el.textContent = 'Connecting…'; }
+  else { el.textContent = '💻 Browser-only mode'; el.classList.add('local'); }
+}
+
+function readLocalCache(){
+  try{
+    const raw = localStorage.getItem(STORAGE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  }catch(e){ return null; }
+}
+function writeLocalCache(){
+  try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(DB)); }
+  catch(e){ console.error('local cache save failed', e); }
+}
+
+async function initCloudSync(){
+  if(!firebaseIsConfigured()) return false;
+  try{
+    setSyncBadge('connecting');
+    if(!firebase.apps.length) firebase.initializeApp(FIREBASE_CONFIG);
+    firestoreDB = firebase.firestore();
+    try{ await firestoreDB.enablePersistence({ synchronizeTabs:true }); }
+    catch(e){ /* already enabled elsewhere, or unsupported browser — safe to continue */ }
+    cloudEnabled = true;
+    return true;
+  }catch(e){
+    console.error('Firebase init failed — continuing in browser-only mode', e);
+    cloudEnabled = false;
+    return false;
+  }
+}
+
+async function loadDB(){
+  const gotCloud = await initCloudSync();
+  if(gotCloud){
+    try{
+      const ref = firestoreDB.collection(FIRESTORE_COLLECTION).doc(FIRESTORE_DOC);
+      const snap = await ref.get();
+      if(snap.exists && snap.data().payload){
+        DB = JSON.parse(snap.data().payload);
+      } else {
+        DB = readLocalCache() || seedDB();
+        await ref.set({ payload: JSON.stringify(DB), updatedAt: Date.now() });
+      }
+      migrateDB();
+      writeLocalCache();
+      setSyncBadge(snap.metadata && snap.metadata.fromCache ? 'offline' : 'synced');
+
+      // live updates from other devices/browsers
+      ref.onSnapshot(doc=>{
+        if(!doc.exists || !doc.data().payload) return;
+        const incoming = JSON.parse(doc.data().payload);
+        if(JSON.stringify(incoming) !== JSON.stringify(DB)){
+          DB = incoming;
+          migrateDB();
+          writeLocalCache();
+          if(session) render();
+        }
+        setSyncBadge(doc.metadata.fromCache ? 'offline' : 'synced');
+      }, err=>{ console.error('Sync listener error', err); setSyncBadge('offline'); });
+
+      window.addEventListener('online', ()=> setSyncBadge('synced'));
+      window.addEventListener('offline', ()=> setSyncBadge('offline'));
+      return;
+    }catch(e){
+      console.error('Cloud load failed, falling back to browser-only mode', e);
+      cloudEnabled = false;
+    }
+  }
+  // browser-only mode (no Firebase configured, or it failed to connect)
+  DB = readLocalCache() || seedDB();
+  migrateDB();
+  writeLocalCache();
+  setSyncBadge('local');
+}
+
+async function saveDB(){
+  writeLocalCache(); // always keep an on-device copy first, so nothing is lost if offline
+  if(cloudEnabled && firestoreDB){
+    try{
+      await firestoreDB.collection(FIRESTORE_COLLECTION).doc(FIRESTORE_DOC).set({ payload: JSON.stringify(DB), updatedAt: Date.now() });
+      setSyncBadge('synced');
+    }catch(e){
+      console.error('Cloud save failed — change is saved on this device and will sync later', e);
+      setSyncBadge('offline');
+    }
+  }
+}
+
+function todayStr(offsetDays){
+  const d = new Date();
+  d.setDate(d.getDate() + (offsetDays||0));
+  return d.toISOString().slice(0,10);
+}
+function fmtDate(s){
+  const d = new Date(s+'T00:00:00');
+  return d.toLocaleDateString('en-GB', { weekday:'short', day:'2-digit', month:'short' });
+}
+
+function seedDB(){
+  const classes = [
+    { id:'c1', name:'Form 1A', homeroomTeacher:'owusu', subjects:[
+      {name:'Mathematics', teacher:'owusu'},{name:'English', teacher:'owusu'},{name:'Integrated Science', teacher:'owusu'}
+    ] },
+    { id:'c2', name:'Form 2B', homeroomTeacher:'mensah', subjects:[
+      {name:'Mathematics', teacher:'mensah'},{name:'English', teacher:'mensah'},{name:'Social Studies', teacher:'mensah'}
+    ] },
+    { id:'c3', name:'Form 3C', homeroomTeacher:'boateng', subjects:[
+      {name:'Mathematics', teacher:'boateng'},{name:'English', teacher:'boateng'},{name:'Integrated Science', teacher:'boateng'}
+    ] },
+  ];
+
+  const names = [
+    ['Ama Serwaa','c1'],['Kojo Antwi','c1'],['Efua Darko','c1'],['Yaw Asante','c1'],['Abena Boakye','c1'],
+    ['Kwabena Mensah','c2'],['Adjoa Owusu','c2'],['Kwesi Appiah','c2'],['Akosua Frimpong','c2'],['Nana Yeboah','c2'],
+    ['Yaa Asantewaa','c3'],['Kwame Nkrumah Jr.','c3'],['Afia Agyeman','c3'],['Kojo Baffour','c3'],
+  ];
+
+  const students = names.map((n,i)=>({
+    id:'s'+(i+1), name:n[0], classId:n[1],
+    guardian: '+233 24 '+ (1000000+ i*137).toString().slice(0,3) + ' ' + (1000+i*97),
+  }));
+
+  // gradebook[classId][subject] = { assessments:[{id,name,max}], scores:{studentId:{assessId:score}} }
+  const gradebook = {};
+  classes.forEach(c=>{
+    gradebook[c.id] = {};
+    c.subjects.forEach(subjObj=>{
+      const subj = subjObj.name;
+      const assessments = [
+        {id:'a1', name:'Class Test 1', max:20},
+        {id:'a2', name:'Homework Avg', max:20},
+        {id:'a3', name:'Mid-term Exam', max:60},
+      ];
+      const scores = {};
+      students.filter(s=>s.classId===c.id).forEach(s=>{
+        const seed = (s.name.length*7 + subj.length*3) % 10;
+        scores[s.id] = {
+          a1: Math.min(20, 12 + seed % 8),
+          a2: Math.min(20, 14 + (seed+3) % 6),
+          a3: Math.min(60, 34 + (seed*3) % 24),
+        };
+      });
+      gradebook[c.id][subj] = { assessments, scores };
+    });
+  });
+
+  // attendance[classId][date] = { studentId: 'present'|'absent'|'late' }
+  const attendance = {};
+  classes.forEach(c=>{
+    attendance[c.id] = {};
+    for(let i=6;i>=0;i--){
+      const date = todayStr(-i);
+      const day = new Date(date+'T00:00:00').getDay();
+      if(day===0||day===6) continue; // skip weekends
+      const rec = {};
+      students.filter(s=>s.classId===c.id).forEach((s,idx)=>{
+        const roll = (s.name.length + i + idx) % 11;
+        rec[s.id] = roll===0 ? 'absent' : roll===1 ? 'late' : 'present';
+      });
+      attendance[c.id][date] = rec;
+    }
+  });
+
+  const users = [
+    { username:'admin', password:'admin123', role:'Admin', name:'Ms. Addo (Head Teacher)' },
+    { username:'owusu', password:'teach123', role:'Teacher', name:'Mr. Owusu' },
+    { username:'mensah', password:'teach123', role:'Teacher', name:'Mrs. Mensah' },
+    { username:'boateng', password:'teach123', role:'Teacher', name:'Mr. Boateng' },
+  ];
+
+  return { classes, students, gradebook, attendance, users };
+}
+
+function migrateDB(){
+  let changed = false;
+  if(!DB.users){ DB.users = seedDB().users; changed = true; }
+  DB.classes.forEach(c=>{
+    // old shape: subjects was an array of plain strings
+    if(c.subjects.length && typeof c.subjects[0] === 'string'){
+      c.subjects = c.subjects.map(name=>({ name, teacher: c._legacyTeacherUsername || null }));
+      changed = true;
+    }
+    if(c.teacher !== undefined){
+      // old shape stored a display-name string on c.teacher; try to map it to a username once
+      if(!c.homeroomTeacher){
+        const match = DB.users.find(u=>u.role==='Teacher' && u.name===c.teacher);
+        c.homeroomTeacher = match ? match.username : null;
+      }
+      delete c.teacher;
+      changed = true;
+    }
+    if(c.homeroomTeacher===undefined){ c.homeroomTeacher = null; changed = true; }
+  });
+  DB.users.forEach(u=>{
+    if(u.role==='Teacher' && u.pendingApproval===undefined){ u.pendingApproval = false; }
+  });
+  if(changed) saveDB();
+}
+
+/* ============================================================
+   Derived helpers
+============================================================ */
+function studentsOf(classId){ return DB.students.filter(s=>s.classId===classId); }
+function classOf(id){ return DB.classes.find(c=>c.id===id); }
+function studentById(id){ return DB.students.find(s=>s.id===id); }
+function userByUsername(u){ return DB.users.find(x=>x.username===u); }
+function teacherName(username){ const u = userByUsername(username); return u ? u.name : null; }
+function subjectNames(cls){ return cls.subjects.map(s=>s.name); }
+function subjectOf(cls, name){ return cls.subjects.find(s=>s.name===name); }
+
+/* which classes can this session act on, and with which subjects */
+function accessibleClasses(){
+  if(session.role==='Admin') return DB.classes;
+  return DB.classes.filter(c=> c.homeroomTeacher===session.username || c.subjects.some(s=>s.teacher===session.username));
+}
+function homeroomClasses(){
+  if(session.role==='Admin') return DB.classes;
+  return DB.classes.filter(c=> c.homeroomTeacher===session.username);
+}
+function teachableSubjects(cls){
+  if(session.role==='Admin') return subjectNames(cls);
+  return cls.subjects.filter(s=>s.teacher===session.username).map(s=>s.name);
+}
+
+function subjectAverage(classId, subj, studentId){
+  const sub = DB.gradebook[classId]?.[subj];
+  if(!sub) return null;
+  const sc = sub.scores[studentId];
+  if(!sc) return null;
+  let earned=0, total=0;
+  sub.assessments.forEach(a=>{ earned += (sc[a.id]||0); total += a.max; });
+  return total ? Math.round((earned/total)*100) : null;
+}
+function overallAverage(studentId){
+  const st = studentById(studentId);
+  if(!st) return null;
+  const subs = classOf(st.classId)?.subjects || [];
+  const vals = subs.map(s=>subjectAverage(st.classId, s, studentId)).filter(v=>v!==null);
+  if(!vals.length) return null;
+  return Math.round(vals.reduce((a,b)=>a+b,0)/vals.length);
+}
+function letterFor(pct){
+  if(pct===null||pct===undefined) return '—';
+  if(pct>=80) return 'A'; if(pct>=70) return 'B'; if(pct>=60) return 'C'; if(pct>=50) return 'D'; return 'F';
+}
+function attendanceRate(studentId, classId){
+  const days = DB.attendance[classId] || {};
+  const keys = Object.keys(days);
+  if(!keys.length) return null;
+  let present=0, count=0;
+  keys.forEach(d=>{
+    const status = days[d][studentId];
+    if(status){ count++; if(status!=='absent') present++; }
+  });
+  return count ? Math.round((present/count)*100) : null;
+}
+function classAvgAttendanceToday(classId){
+  const d = todayStr(0);
+  const rec = DB.attendance[classId]?.[d];
+  if(!rec) return null;
+  const vals = Object.values(rec);
+  const present = vals.filter(v=>v!=='absent').length;
+  return vals.length ? Math.round((present/vals.length)*100) : null;
+}
+function schoolWideAttendanceToday(){
+  let present=0, total=0;
+  DB.classes.forEach(c=>{
+    const d = todayStr(0);
+    const rec = DB.attendance[c.id]?.[d];
+    if(rec){ Object.values(rec).forEach(v=>{ total++; if(v!=='absent') present++; }); }
+  });
+  return total ? Math.round((present/total)*100) : '—';
+}
+function schoolWideAverage(){
+  const vals = DB.students.map(s=>overallAverage(s.id)).filter(v=>v!==null);
+  return vals.length ? Math.round(vals.reduce((a,b)=>a+b,0)/vals.length) : '—';
+}
+
+/* ============================================================
+   Auth
+============================================================ */
+async function login(){
+  const username = document.getElementById('login-username').value.trim().toLowerCase();
+  const password = document.getElementById('login-password').value;
+  const user = DB.users.find(u=>u.username.toLowerCase()===username && u.password===password);
+  const errEl = document.getElementById('login-error');
+  if(!user){ errEl.style.display='block'; return; }
+  errEl.style.display='none';
+  session = { role:user.role, name:user.name, username:user.username };
+  document.getElementById('login-screen').style.display = 'none';
+  document.getElementById('app-screen').style.display = 'block';
+  document.getElementById('user-name').textContent = user.name;
+  const myClasses = homeroomClasses();
+  document.getElementById('user-role').textContent = session.role + (session.role!=='Admin' && myClasses.length ? ' · '+myClasses.map(c=>c.name).join(', ') : '');
+  document.getElementById('user-avatar').textContent = user.name.split(' ').map(w=>w[0]).slice(0,2).join('').toUpperCase();
+  const defaultClassId = (myClasses[0] || accessibleClasses()[0] || DB.classes[0])?.id || null;
+  view = { page:'dashboard', studentId:null, tab:'overview', classId: defaultClassId, subject:null, date: todayStr(0) };
+  renderNav();
+  render();
+}
+function showRegister(){
+  document.getElementById('login-screen').style.display = 'none';
+  document.getElementById('register-screen').style.display = 'block';
+}
+function hideRegister(){
+  document.getElementById('register-screen').style.display = 'none';
+  document.getElementById('login-screen').style.display = 'flex';
+  history.replaceState(null, '', location.pathname + location.search);
+}
+async function registerTeacher(){
+  const name = document.getElementById('reg-name').value.trim();
+  const username = document.getElementById('reg-username').value.trim().toLowerCase();
+  const password = document.getElementById('reg-password').value;
+  const password2 = document.getElementById('reg-password2').value;
+  const errEl = document.getElementById('register-error');
+  const showErr = msg=>{ errEl.textContent = msg; errEl.style.display='block'; };
+  if(!name || !username || !password){ showErr('Please fill in your name, username, and password.'); return; }
+  if(password.length<4){ showErr('Password should be at least 4 characters.'); return; }
+  if(password!==password2){ showErr('Passwords do not match.'); return; }
+  if(DB.users.find(u=>u.username.toLowerCase()===username)){ showErr('That username is already taken — choose another.'); return; }
+  errEl.style.display='none';
+  DB.users.push({ name, username, password, role:'Teacher' });
+  await saveDB();
+  alert('Account created! You can now sign in. Your administrator still needs to assign you a class and subjects before you\'ll see any students.');
+  hideRegister();
+  document.getElementById('login-username').value = username;
+}
+function logout(){
+  session = null;
+  document.getElementById('app-screen').style.display = 'none';
+  document.getElementById('login-screen').style.display = 'flex';
+}
+
+/* ============================================================
+   Navigation
+============================================================ */
+const NAV_ITEMS = [
+  { id:'dashboard', label:'Dashboard', ic:'&#9670;' },
+  { id:'students', label:'Students', ic:'&#9737;' },
+  { id:'gradebook', label:'Gradebook', ic:'&#9998;' },
+  { id:'attendance', label:'Attendance', ic:'&#10003;' },
+  { id:'classes', label:'Classes', ic:'&#9776;', adminOnly:true },
+  { id:'staff', label:'Staff Accounts', ic:'&#128273;', adminOnly:true },
+];
+function renderNav(){
+  const items = NAV_ITEMS.filter(i=> !i.adminOnly || session.role==='Admin');
+  document.getElementById('nav-items').innerHTML = items.map(i=>`
+    <button class="nav-item ${view.page===i.id?'active':''}" onclick="goTo('${i.id}')">
+      <span class="ic">${i.ic}</span> ${i.label}
+    </button>`).join('');
+  document.getElementById('bottom-nav').innerHTML = items.map(i=>`
+    <button class="${view.page===i.id?'active':''}" onclick="goTo('${i.id}')">
+      <span class="ic">${i.ic}</span>${i.label}
+    </button>`).join('');
+}
+function goTo(page){
+  view.page = page; view.studentId = null; view.tab='overview';
+  renderNav(); render();
+}
+
+/* ============================================================
+   Render root
+============================================================ */
+function render(){
+  renderNav();
+  const el = document.getElementById('main-content');
+  if(view.studentId) { el.innerHTML = renderStudentDetail(view.studentId); return; }
+  switch(view.page){
+    case 'dashboard': el.innerHTML = renderDashboard(); break;
+    case 'students': el.innerHTML = renderStudents(); break;
+    case 'gradebook': el.innerHTML = renderGradebook(); break;
+    case 'attendance': el.innerHTML = renderAttendance(); break;
+    case 'classes': el.innerHTML = renderClasses(); break;
+    case 'staff': el.innerHTML = renderStaff(); break;
+    default: el.innerHTML = renderDashboard();
+  }
+}
+
+/* ============================================================
+   Dashboard
+============================================================ */
+function renderDashboard(){
+  const myClasses = accessibleClasses();
+  const myClassIds = myClasses.map(c=>c.id);
+  const total = session.role==='Admin' ? DB.students.length : DB.students.filter(s=>myClassIds.includes(s.classId)).length;
+  const attToday = session.role==='Admin' ? schoolWideAttendanceToday() : (
+    myClassIds.length ? Math.round(myClassIds.map(id=>classAvgAttendanceToday(id)).filter(v=>v!==null).reduce((a,b,_,arr)=>a+ (arr.length?b/arr.length:0),0)) : null
+  ) ?? '—';
+  const avgVals = session.role==='Admin' ? DB.students.map(s=>overallAverage(s.id)).filter(v=>v!==null) : DB.students.filter(s=>myClassIds.includes(s.classId)).map(s=>overallAverage(s.id)).filter(v=>v!==null);
+  const avg = avgVals.length ? Math.round(avgVals.reduce((a,b)=>a+b,0)/avgVals.length) : '—';
+  const numClasses = session.role==='Admin' ? DB.classes.length : myClasses.length;
+
+  // recent activity: last assessments + today's attendance summary
+  let activity = [];
+  DB.classes.forEach(c=>{
+    if(session.role!=='Admin' && !myClassIds.includes(c.id)) return;
+    const d = todayStr(0);
+    const rec = DB.attendance[c.id]?.[d];
+    if(rec){
+      const absentees = Object.entries(rec).filter(([,v])=>v==='absent').map(([sid])=>studentById(sid)?.name).filter(Boolean);
+      activity.push({ text: `${c.name} register taken for today — ${absentees.length ? absentees.length+' absent' : 'full attendance'}`, kind: absentees.length ? 'absent' : 'present' });
+    }
+  });
+  if(!activity.length) activity.push({text:'No register entries yet for today.', kind:'present'});
+
+  return `
+    <div class="topbar">
+      <div><div class="eyebrow">${fmtDate(todayStr(0))}</div><h1>Welcome back, ${session.name.split(' ')[0]}</h1></div>
+      <div class="date-badge">${session.role} ${session.role!=='Admin' ? '· '+(myClasses.length ? myClasses.map(c=>c.name).join(', ') : 'No classes yet') : '· All classes'}</div>
+    </div>
+    <div class="stat-grid">
+      <div class="stat-card"><div class="label">Students</div><div class="value">${total}</div><div class="sub">${session.role==='Admin'?'Across '+numClasses+' classes':'In your classes'}</div></div>
+      <div class="stat-card"><div class="label">Present today</div><div class="value">${attToday}${attToday!=='—'?'%':''}</div><div class="sub ${attToday!=='—' && attToday>=90?'up':(attToday!=='—'?'down':'')}">${attToday!=='—' ? (attToday>=90?'Strong turnout':'Needs follow-up') : 'Not yet recorded'}</div></div>
+      <div class="stat-card"><div class="label">Average performance</div><div class="value">${avg}${avg!=='—'?'%':''}</div><div class="sub">Grade ${letterFor(avg)}</div></div>
+      <div class="stat-card"><div class="label">Classes</div><div class="value">${numClasses}</div><div class="sub">${session.role==='Admin' ? 'Managed school-wide' : (myClasses.length ? 'Your assignments' : 'Awaiting admin assignment')}</div></div>
+    </div>
+    ${session.role!=='Admin' && !myClasses.length ? `<div class="panel"><div class="panel-body" style="padding-top:16px;"><p style="margin:0;color:var(--slate);font-size:13.5px;">You haven't been assigned to a class or subject yet. Ask the administrator to assign you from Staff Accounts / Classes.</p></div></div>` : ''}
+
+    <div class="panel">
+      <div class="panel-head"><h3>Today's register activity</h3><span class="mono" style="font-size:11px;color:var(--slate)">${todayStr(0)}</span></div>
+      <div class="panel-body">
+        ${activity.map((a,i)=>`
+          <div class="ledger-row">
+            <span class="idx mono">${String(i+1).padStart(2,'0')}</span>
+            <span class="pill ${a.kind}">${a.kind==='absent'?'Flag':'OK'}</span>
+            <span style="flex:1">${a.text}</span>
+          </div>`).join('')}
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head"><h3>Quick actions</h3></div>
+      <div class="panel-body" style="display:flex;gap:10px;flex-wrap:wrap;padding-bottom:16px;">
+        <button class="btn-small" onclick="goTo('attendance')">Take attendance</button>
+        <button class="btn-small brass" onclick="goTo('gradebook')">Enter grades</button>
+        <button class="btn-ghost" onclick="goTo('students')">View students</button>
+      </div>
+    </div>
+  `;
+}
+
+/* ============================================================
+   Students list
+============================================================ */
+let studentFilter = { q:'', classId:'all' };
+function renderStudents(){
+  const scope = accessibleClasses();
+  const scopeIds = scope.map(c=>c.id);
+  let list = session.role==='Admin' ? DB.students : DB.students.filter(s=>scopeIds.includes(s.classId));
+  if(studentFilter.classId!=='all') list = list.filter(s=>s.classId===studentFilter.classId);
+  if(studentFilter.q) list = list.filter(s=>s.name.toLowerCase().includes(studentFilter.q.toLowerCase()));
+
+  return `
+    <div class="topbar">
+      <div><div class="eyebrow">Register</div><h1>Students</h1></div>
+    </div>
+    ${session.role==='Admin' ? `
+    <div class="crud-box">
+      <h4>Add a new student</h4>
+      <div class="inline-form">
+        <input type="text" id="new-student-name" placeholder="Full name" style="flex:2;min-width:160px;">
+        <select id="new-student-class">
+          ${DB.classes.map(c=>`<option value="${c.id}">${c.name}</option>`).join('')}
+        </select>
+        <input type="text" id="new-student-guardian" placeholder="Guardian phone (optional)" style="flex:1;min-width:150px;">
+        <button class="btn-small brass" onclick="addStudent()">Add student</button>
+      </div>
+    </div>` : ''}
+    <div class="toolbar">
+      <input type="text" placeholder="Search by name…" value="${studentFilter.q}" oninput="studentFilter.q=this.value; render()">
+      ${scope.length>1 ? `<select onchange="studentFilter.classId=this.value; render()">
+        <option value="all">All classes</option>
+        ${scope.map(c=>`<option value="${c.id}" ${studentFilter.classId===c.id?'selected':''}>${c.name}</option>`).join('')}
+      </select>` : ''}
+      ${list.length ? `<button class="btn-ghost" onclick='printClassReportCards(${JSON.stringify(list.map(s=>s.id))})'>Print report cards</button>` : ''}
+    </div>
+    <div class="student-grid">
+      ${list.length ? list.map(s=>{
+        const avg = overallAverage(s.id);
+        const att = attendanceRate(s.id, s.classId);
+        return `
+        <div class="student-card">
+          <div onclick="openStudent('${s.id}')" style="cursor:pointer;">
+          <div class="top">
+            <div class="avatar" style="width:38px;height:38px;">${s.name.split(' ').map(w=>w[0]).slice(0,2).join('')}</div>
+            <div><div class="name">${s.name}</div><div class="cls">${classOf(s.classId).name}</div></div>
+          </div>
+          <div class="metrics">
+            <div class="metric"><div class="n grade-${letterFor(avg)}">${avg??'—'}${avg!==null?'%':''}</div><div class="l">Average</div></div>
+            <div class="metric"><div class="n">${att??'—'}${att!==null?'%':''}</div><div class="l">Attendance</div></div>
+          </div>
+          </div>
+          ${session.role==='Admin' ? `<button class="btn-danger" style="margin-top:10px;width:100%;" onclick="event.stopPropagation(); removeStudent('${s.id}')">Remove student</button>` : ''}
+        </div>`;
+      }).join('') : '<div class="empty">No students match this search.</div>'}
+    </div>
+  `;
+}
+async function addStudent(){
+  const name = document.getElementById('new-student-name').value.trim();
+  const classId = document.getElementById('new-student-class').value;
+  const guardian = document.getElementById('new-student-guardian').value.trim();
+  if(!name) return;
+  const id = 's'+Date.now();
+  DB.students.push({ id, name, classId, guardian: guardian || '—' });
+  // seed an empty score record for every subject already in this class's gradebook
+  const gb = DB.gradebook[classId] || {};
+  Object.values(gb).forEach(sub=>{ sub.scores[id] = {}; });
+  await saveDB();
+  render();
+}
+async function removeStudent(id){
+  const s = studentById(id);
+  if(!confirm(`Remove ${s.name} and all of their grade/attendance records? This cannot be undone.`)) return;
+  DB.students = DB.students.filter(x=>x.id!==id);
+  Object.values(DB.gradebook).forEach(subjMap=>{
+    Object.values(subjMap).forEach(sub=>{ delete sub.scores[id]; });
+  });
+  Object.values(DB.attendance).forEach(dateMap=>{
+    Object.values(dateMap).forEach(rec=>{ delete rec[id]; });
+  });
+  await saveDB();
+  render();
+}
+function openStudent(id){ view.studentId = id; view.tab='overview'; render(); }
+
+/* ============================================================
+   Student detail
+============================================================ */
+function renderStudentDetail(id){
+  const s = studentById(id);
+  const cls = classOf(s.classId);
+  const avg = overallAverage(id);
+  const att = attendanceRate(id, s.classId);
+  const homeroomName = cls.homeroomTeacher ? teacherName(cls.homeroomTeacher) : null;
+
+  let body = '';
+  if(view.tab==='overview'){
+    body = `
+      <div class="stat-grid" style="grid-template-columns:repeat(3,1fr);">
+        <div class="stat-card"><div class="label">Overall average</div><div class="value grade-${letterFor(avg)}">${avg??'—'}${avg!==null?'%':''}</div><div class="sub">Grade ${letterFor(avg)}</div></div>
+        <div class="stat-card"><div class="label">Attendance rate</div><div class="value">${att??'—'}${att!==null?'%':''}</div><div class="sub">Last 7 school days</div></div>
+        <div class="stat-card"><div class="label">Homeroom</div><div class="value" style="font-size:20px;">${cls.name}</div><div class="sub">${homeroomName || 'No homeroom teacher assigned'}</div></div>
+      </div>
+      <div class="panel"><div class="panel-head"><h3>Subject performance</h3></div><div class="panel-body">
+        ${cls.subjects.map((subj,i)=>{
+          const p = subjectAverage(s.classId, subj.name, id);
+          return `<div class="ledger-row"><span class="idx mono">${String(i+1).padStart(2,'0')}</span>
+            <span style="flex:1">${subj.name}<br><span style="font-size:11px;color:var(--slate);">${subj.teacher ? teacherName(subj.teacher) : 'Unassigned teacher'}</span></span>
+            <span class="grade-letter grade-${letterFor(p)}">${p??'—'}${p!==null?'%':''} &nbsp; ${letterFor(p)}</span></div>`;
+        }).join('')}
+      </div></div>
+      <div class="panel"><div class="panel-head"><h3>Guardian contact</h3></div><div class="panel-body" style="padding-bottom:16px;"><span class="mono">${s.guardian}</span></div></div>
+    `;
+  } else if(view.tab==='grades'){
+    body = cls.subjects.map(subjObj=>{
+      const subj = subjObj.name;
+      const sub = DB.gradebook[s.classId][subj];
+      const sc = sub.scores[id] || {};
+      const canEdit = session.role==='Admin' || subjObj.teacher===session.username;
+      return `
+      <div class="panel"><div class="panel-head"><h3>${subj}</h3><span class="mono" style="font-size:12px;color:var(--slate)">${subjectAverage(s.classId,subj,id)??'—'}%</span></div>
+      <div class="panel-body">
+        <table class="reg"><thead><tr><th>Assessment</th><th>Score</th><th>Out of</th></tr></thead>
+        <tbody>
+        ${sub.assessments.map(a=>`
+          <tr><td>${a.name}</td>
+          <td>${canEdit ? `<input class="score-input" type="number" min="0" max="${a.max}" value="${sc[a.id]??0}" onchange="updateScore('${s.classId}','${subj}','${id}','${a.id}',this.value)">` : (sc[a.id]??'—')}</td>
+          <td class="mono">${a.max}</td></tr>`).join('')}
+        </tbody></table>
+      </div></div>`;
+    }).join('');
+  } else if(view.tab==='attendance'){
+    const days = DB.attendance[s.classId] || {};
+    const keys = Object.keys(days).sort().reverse();
+    body = `<div class="panel"><div class="panel-head"><h3>Attendance history</h3></div><div class="panel-body">
+      ${keys.length ? keys.map((d,i)=>{
+        const status = days[d][id] || 'present';
+        return `<div class="ledger-row"><span class="idx mono">${String(i+1).padStart(2,'0')}</span>
+          <span style="flex:1">${fmtDate(d)}</span><span class="pill ${status}">${status}</span></div>`;
+      }).join('') : '<div class="empty">No attendance recorded yet.</div>'}
+    </div></div>`;
+  }
+
+  return `
+    <button class="back-link" onclick="view.studentId=null; render()">&larr; Back to students</button>
+    <div class="topbar">
+      <div style="display:flex;align-items:center;gap:14px;">
+        <div class="avatar" style="width:48px;height:48px;font-size:16px;background:var(--ink);color:var(--brass-soft);">${s.name.split(' ').map(w=>w[0]).slice(0,2).join('')}</div>
+        <div><div class="eyebrow">${cls.name}</div><h1>${s.name}</h1></div>
+      </div>
+      <button class="btn-small brass" onclick="printReportCard('${id}')">Print report card</button>
+    </div>
+    <div class="tabs">
+      <button class="tab-btn ${view.tab==='overview'?'active':''}" onclick="view.tab='overview'; render()">Overview</button>
+      <button class="tab-btn ${view.tab==='grades'?'active':''}" onclick="view.tab='grades'; render()">Grades</button>
+      <button class="tab-btn ${view.tab==='attendance'?'active':''}" onclick="view.tab='attendance'; render()">Attendance</button>
+    </div>
+    ${body}
+  `;
+}
+async function updateScore(classId, subj, studentId, assessId, val){
+  const n = Math.max(0, Number(val)||0);
+  DB.gradebook[classId][subj].scores[studentId][assessId] = n;
+  await saveDB();
+  render();
+}
+
+/* ============================================================
+   Gradebook (class-wide)
+============================================================ */
+function renderGradebook(){
+  const classes = accessibleClasses().filter(c=> teachableSubjects(c).length>0);
+  if(!classes.length){
+    return `
+      <div class="topbar"><div><div class="eyebrow">Enter marks</div><h1>Gradebook</h1></div></div>
+      <div class="empty">You haven't been assigned any subjects yet. Ask the administrator to assign you a class and subject from Classes.</div>
+    `;
+  }
+  if(!view.classId || !classes.find(c=>c.id===view.classId)) view.classId = classes[0].id;
+  const cls = classOf(view.classId);
+  const mySubjects = teachableSubjects(cls);
+  if(!view.subject || !mySubjects.includes(view.subject)) view.subject = mySubjects[0];
+  const sub = DB.gradebook[cls.id][view.subject];
+  const subjObj = subjectOf(cls, view.subject);
+  const canEdit = session.role==='Admin' || subjObj.teacher===session.username;
+  const roster = studentsOf(cls.id);
+
+  return `
+    <div class="topbar">
+      <div><div class="eyebrow">Enter marks</div><h1>Gradebook</h1></div>
+      <button class="btn-ghost" onclick='printClassReportCards(${JSON.stringify(roster.map(s=>s.id))})'>Print report cards</button>
+    </div>
+    <div class="toolbar">
+      ${classes.length>1 ? `<select onchange="view.classId=this.value; view.subject=null; render()">
+        ${classes.map(c=>`<option value="${c.id}" ${c.id===view.classId?'selected':''}>${c.name}</option>`).join('')}
+      </select>` : ''}
+      <select onchange="view.subject=this.value; render()">
+        ${mySubjects.map(s=>`<option value="${s}" ${s===view.subject?'selected':''}>${s}</option>`).join('')}
+      </select>
+    </div>
+    <div class="panel"><div class="panel-body" style="padding-top:16px;">
+      <table class="reg">
+        <thead><tr><th>Student</th>${sub.assessments.map(a=>`<th>${a.name}<br><span class="mono" style="font-weight:400;">/${a.max}</span></th>`).join('')}<th>Average</th></tr></thead>
+        <tbody>
+          ${roster.map(s=>{
+            const sc = sub.scores[s.id] || {};
+            const avg = subjectAverage(cls.id, view.subject, s.id);
+            return `<tr>
+              <td onclick="openStudent('${s.id}')" style="cursor:pointer;font-weight:600;">${s.name}</td>
+              ${sub.assessments.map(a=>`<td>${canEdit ? `<input class="score-input" type="number" min="0" max="${a.max}" value="${sc[a.id]??0}" onchange="updateScore('${cls.id}','${view.subject}','${s.id}','${a.id}',this.value)">` : (sc[a.id]??'—')}</td>`).join('')}
+              <td class="grade-letter grade-${letterFor(avg)}">${avg??'—'}%</td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+    </div></div>
+  `;
+}
+
+/* ============================================================
+   Attendance (class-wide, take register)
+============================================================ */
+function renderAttendance(){
+  const classes = homeroomClasses();
+  if(!classes.length){
+    return `
+      <div class="topbar"><div><div class="eyebrow">Take register</div><h1>Attendance</h1></div></div>
+      <div class="empty">You haven't been assigned as a homeroom teacher for any class yet. Ask the administrator to assign you one from Classes.</div>
+    `;
+  }
+  if(!view.classId || !classes.find(c=>c.id===view.classId)) view.classId = classes[0].id;
+  if(!view.date) view.date = todayStr(0);
+  const cls = classOf(view.classId);
+  const roster = studentsOf(cls.id);
+  const rec = (DB.attendance[cls.id] && DB.attendance[cls.id][view.date]) || {};
+
+  return `
+    <div class="topbar">
+      <div><div class="eyebrow">Take register</div><h1>Attendance</h1></div>
+    </div>
+    <div class="toolbar">
+      ${classes.length>1 ? `<select onchange="view.classId=this.value; render()">
+        ${classes.map(c=>`<option value="${c.id}" ${c.id===view.classId?'selected':''}>${c.name}</option>`).join('')}
+      </select>` : ''}
+      <input type="date" value="${view.date}" onchange="view.date=this.value; render()">
+    </div>
+    <div class="panel"><div class="panel-body" style="padding-top:14px;">
+      ${roster.map((s,i)=>{
+        const status = rec[s.id] || 'present';
+        return `<div class="ledger-row">
+          <span class="idx mono">${String(i+1).padStart(2,'0')}</span>
+          <span style="flex:1;font-weight:600;">${s.name}</span>
+          <div class="att-toggle">
+            <button class="sel-present ${status==='present'?'on':''}" onclick="markAttendance('${cls.id}','${view.date}','${s.id}','present')">Present</button>
+            <button class="sel-late ${status==='late'?'on':''}" onclick="markAttendance('${cls.id}','${view.date}','${s.id}','late')">Late</button>
+            <button class="sel-absent ${status==='absent'?'on':''}" onclick="markAttendance('${cls.id}','${view.date}','${s.id}','absent')">Absent</button>
+          </div>
+        </div>`;
+      }).join('')}
+    </div></div>
+  `;
+}
+async function markAttendance(classId, date, studentId, status){
+  if(!DB.attendance[classId]) DB.attendance[classId] = {};
+  if(!DB.attendance[classId][date]) DB.attendance[classId][date] = {};
+  DB.attendance[classId][date][studentId] = status;
+  await saveDB();
+  render();
+}
+
+/* ============================================================
+   Classes (admin) — full CRUD: classes, subjects, teacher assignment
+============================================================ */
+function renderClasses(){
+  const teachers = DB.users.filter(u=>u.role==='Teacher');
+  return `
+    <div class="topbar"><div><div class="eyebrow">Administration</div><h1>Classes, Subjects &amp; Teacher Assignment</h1></div></div>
+
+    <div class="crud-box">
+      <h4>Add a new class</h4>
+      <div class="inline-form">
+        <input type="text" id="new-class-name" placeholder="e.g. Form 4A" style="flex:1;min-width:160px;">
+        <button class="btn-small brass" onclick="addClass()">Add class</button>
+      </div>
+    </div>
+
+    ${DB.classes.map(c=>{
+      const roster = studentsOf(c.id);
+      return `
+      <div class="class-card">
+        <div class="class-card-head">
+          <div>
+            <div class="name">${c.name}</div>
+            <div style="font-size:12px;color:var(--slate);">${roster.length} student${roster.length===1?'':'s'} · ${c.subjects.length} subject${c.subjects.length===1?'':'s'}</div>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+            <label style="font-size:12px;color:var(--slate);font-weight:600;">Homeroom teacher</label>
+            <select onchange="assignHomeroomTeacher('${c.id}', this.value)">
+              <option value="">— Unassigned —</option>
+              ${teachers.map(t=>`<option value="${t.username}" ${c.homeroomTeacher===t.username?'selected':''}>${t.name}</option>`).join('')}
+            </select>
+            <button class="btn-danger" onclick="removeClass('${c.id}')">Delete class</button>
+          </div>
+        </div>
+        <div class="class-card-body">
+          ${c.subjects.map(s=>`
+            <div class="subject-row">
+              <span class="sname">${s.name}</span>
+              ${!s.teacher ? `<span class="badge-unassigned">No teacher</span>` : ''}
+              <select onchange="assignSubjectTeacher('${c.id}','${s.name.replace(/'/g,"\\'")}', this.value)">
+                <option value="">— Unassigned —</option>
+                ${teachers.map(t=>`<option value="${t.username}" ${s.teacher===t.username?'selected':''}>${t.name}</option>`).join('')}
+              </select>
+              <button class="btn-danger" onclick="removeSubject('${c.id}','${s.name.replace(/'/g,"\\'")}')">Remove</button>
+            </div>
+          `).join('')}
+          <div class="inline-form" style="margin-top:12px;">
+            <input type="text" id="new-subject-${c.id}" placeholder="New subject name" style="flex:1;min-width:150px;">
+            <button class="btn-small" onclick="addSubject('${c.id}')">Add subject</button>
+          </div>
+        </div>
+      </div>`;
+    }).join('')}
+  `;
+}
+async function addClass(){
+  const nameEl = document.getElementById('new-class-name');
+  const name = nameEl.value.trim();
+  if(!name) return;
+  const id = 'c'+Date.now();
+  DB.classes.push({ id, name, homeroomTeacher:null, subjects:[] });
+  DB.gradebook[id] = {};
+  DB.attendance[id] = {};
+  await saveDB();
+  render();
+}
+async function removeClass(classId){
+  const c = classOf(classId);
+  const roster = studentsOf(classId);
+  if(roster.length){ alert(`Move or remove the ${roster.length} student(s) in ${c.name} before deleting this class.`); return; }
+  if(!confirm(`Delete ${c.name}? This will remove its subjects and attendance history.`)) return;
+  DB.classes = DB.classes.filter(x=>x.id!==classId);
+  delete DB.gradebook[classId];
+  delete DB.attendance[classId];
+  await saveDB();
+  render();
+}
+async function addSubject(classId){
+  const input = document.getElementById('new-subject-'+classId);
+  const name = input.value.trim();
+  if(!name) return;
+  const c = classOf(classId);
+  if(c.subjects.some(s=>s.name.toLowerCase()===name.toLowerCase())){ alert('That subject already exists in this class.'); return; }
+  c.subjects.push({ name, teacher:null });
+  DB.gradebook[classId][name] = {
+    assessments:[{id:'a1',name:'Class Test 1',max:20},{id:'a2',name:'Homework Avg',max:20},{id:'a3',name:'Mid-term Exam',max:60}],
+    scores:{}
+  };
+  studentsOf(classId).forEach(s=>{ DB.gradebook[classId][name].scores[s.id] = {}; });
+  await saveDB();
+  render();
+}
+async function removeSubject(classId, subjectName){
+  if(!confirm(`Remove ${subjectName} from this class? All recorded scores for this subject will be lost.`)) return;
+  const c = classOf(classId);
+  c.subjects = c.subjects.filter(s=>s.name!==subjectName);
+  delete DB.gradebook[classId][subjectName];
+  await saveDB();
+  render();
+}
+async function assignHomeroomTeacher(classId, username){
+  classOf(classId).homeroomTeacher = username || null;
+  await saveDB();
+  render();
+}
+async function assignSubjectTeacher(classId, subjectName, username){
+  const c = classOf(classId);
+  const subj = subjectOf(c, subjectName);
+  if(subj) subj.teacher = username || null;
+  await saveDB();
+  render();
+}
+
+/* ============================================================
+   Staff accounts (admin)
+============================================================ */
+function renderStaff(){
+  return `
+    <div class="topbar"><div><div class="eyebrow">Administration</div><h1>Staff Accounts</h1></div></div>
+
+    <div class="panel"><div class="panel-head"><h3>Invite teachers</h3></div>
+      <div class="panel-body" style="padding-top:14px;padding-bottom:16px;">
+        <p style="margin:0 0 10px;font-size:13px;color:var(--slate);">Share this link with teachers so they can register their own account the first time they access the app. You'll still need to assign each teacher to a class and their subjects from the Classes page afterward.</p>
+        <div class="inline-form">
+          <input type="text" id="reg-link-box" readonly value="${location.origin + location.pathname + '#register'}" style="flex:1;min-width:220px;background:var(--paper);">
+          <button class="btn-small brass" onclick="copyRegLink()">Copy link</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel"><div class="panel-head"><h3>Add an account directly</h3></div>
+      <div class="panel-body" style="padding-top:14px;padding-bottom:16px;">
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;">
+          <input type="text" id="new-staff-name" placeholder="Full name">
+          <input type="text" id="new-staff-username" placeholder="Username">
+          <input type="password" id="new-staff-password" placeholder="Password">
+          <select id="new-staff-role">
+            <option value="Teacher">Teacher</option>
+            <option value="Admin">Administrator</option>
+          </select>
+        </div>
+        <button class="btn-small brass" style="margin-top:12px;" onclick="addStaff()">Create account</button>
+        <p id="staff-error" style="display:none;color:var(--brick);font-size:12.5px;font-weight:600;margin-top:8px;">That username is already taken.</p>
+      </div>
+    </div>
+
+    <div class="panel"><div class="panel-head"><h3>Existing accounts</h3></div>
+      <div class="panel-body">
+        ${DB.users.map((u,i)=>{
+          const home = DB.classes.filter(c=>c.homeroomTeacher===u.username).map(c=>c.name);
+          const subjAssign = [];
+          DB.classes.forEach(c=>c.subjects.forEach(s=>{ if(s.teacher===u.username) subjAssign.push(`${s.name} (${c.name})`); }));
+          const assignSummary = u.role==='Teacher' ? [
+            home.length ? 'Homeroom: '+home.join(', ') : null,
+            subjAssign.length ? 'Teaches: '+subjAssign.join(', ') : null
+          ].filter(Boolean).join(' · ') || 'No class or subject assigned yet' : '';
+          return `
+          <div class="ledger-row">
+            <span class="idx mono">${String(i+1).padStart(2,'0')}</span>
+            <div style="flex:1;">
+              <div style="font-weight:600;">${u.name} ${u.username===session.username ? '<span class="mono" style=\'font-size:10.5px;color:var(--slate);\'>(you)</span>':''}</div>
+              <div style="font-size:12px;color:var(--slate);">@${u.username} · ${u.role}${assignSummary ? ' · '+assignSummary : ''}</div>
+            </div>
+            <button class="btn-ghost" onclick="resetPassword('${u.username}')">Reset password</button>
+            ${u.username!==session.username ? `<button class="btn-ghost" style="color:var(--brick);border-color:var(--brick-soft);" onclick="removeStaff('${u.username}')">Remove</button>` : ''}
+          </div>
+        `;}).join('')}
+      </div>
+    </div>
+  `;
+}
+function copyRegLink(){
+  const link = location.origin + location.pathname + '#register';
+  const box = document.getElementById('reg-link-box');
+  box.value = link;
+  box.select();
+  navigator.clipboard?.writeText(link).then(()=>{
+    const btn = event.target;
+    const old = btn.textContent; btn.textContent = 'Copied!';
+    setTimeout(()=>{ btn.textContent = old; }, 1500);
+  }).catch(()=>{ /* clipboard blocked — the text is still selected for manual copy */ });
+}
+async function addStaff(){
+  const name = document.getElementById('new-staff-name').value.trim();
+  const username = document.getElementById('new-staff-username').value.trim().toLowerCase();
+  const password = document.getElementById('new-staff-password').value;
+  const role = document.getElementById('new-staff-role').value;
+  const errEl = document.getElementById('staff-error');
+  if(!name || !username || !password){ return; }
+  if(DB.users.find(u=>u.username.toLowerCase()===username)){ errEl.style.display='block'; return; }
+  errEl.style.display='none';
+  DB.users.push({ name, username, password, role });
+  await saveDB();
+  render();
+}
+async function resetPassword(username){
+  const newPass = prompt('Enter a new password for @'+username+':');
+  if(!newPass) return;
+  const u = DB.users.find(x=>x.username===username);
+  if(u){ u.password = newPass; await saveDB(); render(); }
+}
+async function removeStaff(username){
+  if(!confirm('Remove @'+username+'\'s account?')) return;
+  DB.users = DB.users.filter(u=>u.username!==username);
+  DB.classes.forEach(c=>{
+    if(c.homeroomTeacher===username) c.homeroomTeacher = null;
+    c.subjects.forEach(s=>{ if(s.teacher===username) s.teacher = null; });
+  });
+  await saveDB();
+  render();
+}
+
+/* ============================================================
+   Print report cards
+============================================================ */
+function buildReportCardHTML(studentId){
+  const s = studentById(studentId);
+  const cls = classOf(s.classId);
+  const avg = overallAverage(studentId);
+  const att = attendanceRate(studentId, s.classId);
+  const homeroomName = cls.homeroomTeacher ? teacherName(cls.homeroomTeacher) : '—';
+  return `
+    <div class="rc-page">
+      <div class="rc-head">
+        <div class="crest"><span>CA</span></div>
+        <div><h2>Clyde Academy</h2><p>Student Report Card</p></div>
+      </div>
+      <div class="rc-meta">
+        <div><b>Student</b>${s.name}</div>
+        <div><b>Class</b>${cls.name}</div>
+        <div><b>Homeroom teacher</b>${homeroomName}</div>
+        <div><b>Guardian contact</b>${s.guardian}</div>
+        <div><b>Date issued</b>${fmtDate(todayStr(0))}</div>
+        <div><b>Attendance rate</b>${att??'—'}${att!==null?'%':''}</div>
+      </div>
+      <table class="rc-table">
+        <thead><tr><th>Subject</th><th>Score</th><th>Grade</th></tr></thead>
+        <tbody>
+          ${cls.subjects.map(subj=>{
+            const p = subjectAverage(s.classId, subj.name, studentId);
+            return `<tr><td>${subj.name}</td><td>${p??'—'}${p!==null?'%':''}</td><td>${letterFor(p)}</td></tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+      <div class="rc-summary">
+        <div><div class="n">${avg??'—'}${avg!==null?'%':''}</div><div class="l">Overall average</div></div>
+        <div><div class="n">${letterFor(avg)}</div><div class="l">Overall grade</div></div>
+      </div>
+      <div class="rc-sign">
+        <div>Class Teacher</div>
+        <div>Head Teacher</div>
+      </div>
+    </div>
+  `;
+}
+function printReportCard(studentId){
+  document.getElementById('print-area').innerHTML = buildReportCardHTML(studentId);
+  window.print();
+}
+function printClassReportCards(studentIds){
+  const ids = typeof studentIds === 'string' ? JSON.parse(studentIds) : studentIds;
+  document.getElementById('print-area').innerHTML = ids.map(id=>buildReportCardHTML(id)).join('');
+  window.print();
+}
+
+/* ============================================================
+   Boot
+============================================================ */
+(async function boot(){
+  await loadDB();
+  if(location.hash === '#register'){ showRegister(); }
+})();
+</script>
+</body>
+</html>
