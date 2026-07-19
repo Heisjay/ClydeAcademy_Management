@@ -1319,6 +1319,7 @@ function renderStaff(){
               <div style="font-weight:600;">${u.name} ${u.username===session.username ? '<span class="mono" style=\'font-size:10.5px;color:var(--slate);\'>(you)</span>':''}</div>
               <div style="font-size:12px;color:var(--slate);">@${u.username} · ${u.role}${assignSummary ? ' · '+assignSummary : ''}</div>
             </div>
+            <button class="btn-ghost" onclick="editAccount('${u.username}')">Edit</button>
             <button class="btn-ghost" onclick="resetPassword('${u.username}')">Reset password</button>
             ${u.username!==session.username ? `<button class="btn-ghost" style="color:var(--brick);border-color:var(--brick-soft);" onclick="removeStaff('${u.username}')">Remove</button>` : ''}
           </div>
@@ -1348,6 +1349,45 @@ async function addStaff(){
   if(DB.users.find(u=>u.username.toLowerCase()===username)){ errEl.style.display='block'; return; }
   errEl.style.display='none';
   DB.users.push({ name, username, password, role });
+  await saveDB();
+  render();
+}
+async function editAccount(username){
+  const u = DB.users.find(x=>x.username===username);
+  if(!u) return;
+
+  const newNameRaw = prompt('Full name:', u.name);
+  if(newNameRaw===null) return; // cancelled
+  const newName = newNameRaw.trim();
+  if(!newName){ alert('Name cannot be empty.'); return; }
+
+  const newUsernameRaw = prompt('Username:', u.username);
+  if(newUsernameRaw===null) return; // cancelled
+  const newUsername = newUsernameRaw.trim().toLowerCase();
+  if(!newUsername){ alert('Username cannot be empty.'); return; }
+  if(newUsername!==u.username.toLowerCase() && DB.users.find(x=>x.username.toLowerCase()===newUsername)){
+    alert('That username is already taken by another account.');
+    return;
+  }
+
+  const oldUsername = u.username;
+  u.name = newName;
+  u.username = newUsername;
+
+  if(oldUsername!==newUsername){
+    // keep class/subject teacher assignments pointing at the right person
+    DB.classes.forEach(c=>{
+      if(c.homeroomTeacher===oldUsername) c.homeroomTeacher = newUsername;
+      c.subjects.forEach(s=>{ if(s.teacher===oldUsername) s.teacher = newUsername; });
+    });
+  }
+  if(session.username===oldUsername){
+    session.username = newUsername;
+    session.name = newName;
+    document.getElementById('user-name').textContent = newName;
+    document.getElementById('user-avatar').textContent = newName.split(' ').map(w=>w[0]).slice(0,2).join('').toUpperCase();
+  }
+
   await saveDB();
   render();
 }
