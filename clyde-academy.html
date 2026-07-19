@@ -6,6 +6,8 @@
 <title>Clyde Academy — Register</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Work+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore-compat.js"></script>
 <style>
   :root{
     --ink:#16213E;
@@ -132,6 +134,14 @@
   .user-chip .who span{color:#9AA6C2; font-size:11.5px;}
   .logout-btn{width:100%; padding:8px; background:rgba(255,255,255,0.07); border:none; border-radius:7px; color:#C4CBDD; font-size:12.5px; font-weight:600;}
   .logout-btn:hover{background:rgba(255,255,255,0.13); color:var(--white);}
+  .sync-badge{
+    font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:0.05em;
+    padding:6px 10px; border-radius:20px; margin-bottom:12px; text-align:center;
+    background:rgba(255,255,255,0.08); color:#9AA6C2;
+  }
+  .sync-badge.synced{background:rgba(95,122,94,0.25); color:#9CC79A;}
+  .sync-badge.offline{background:rgba(184,134,46,0.22); color:var(--brass-soft);}
+  .sync-badge.local{background:rgba(196,203,221,0.12); color:#C4CBDD;}
 
   .main{flex:1; min-width:0; padding:26px 32px 90px;}
   .topbar{display:flex; align-items:center; justify-content:space-between; margin-bottom:22px; flex-wrap:wrap; gap:10px;}
@@ -362,6 +372,7 @@
       </div>
       <div class="nav" id="nav-items"></div>
       <div class="sidebar-foot">
+        <div id="sync-badge" class="sync-badge">Starting up…</div>
         <div class="user-chip">
           <div class="avatar" id="user-avatar">?</div>
           <div class="who"><b id="user-name">—</b><span id="user-role">—</span></div>
@@ -385,6 +396,142 @@ let DB = null;
 let view = { page:'dashboard', studentId:null, tab:'overview', classId:null, subject:null, date:null };
 
 const STORAGE_KEY = 'clyde-academy-db-v1';
+
+/* ============================================================
+   STORAGE — browser-based, with optional Firebase cloud sync
+   ------------------------------------------------------------
+   By default this app saves everything to THIS BROWSER only
+   (localStorage). That works fully offline, but data won't be
+   shared between devices — e.g. a teacher's phone won't see
+   what the admin entered on a laptop.
+
+   To turn on cloud sync (so every device sees the same data,
+   and it still works offline and catches up when back online):
+     1. Go to https://console.firebase.google.com and create a
+        free project (takes ~2 minutes, no credit card needed).
+     2. In the project: Build → Firestore Database → Create
+        database → start in "test mode" for now.
+     3. Project settings (gear icon, top left) → scroll to
+        "Your apps" → click the web icon "</>" → register an
+        app → copy the "firebaseConfig" object it shows you.
+     4. Paste those values into FIREBASE_CONFIG below, replacing
+        the empty strings, then re-save/re-upload this file.
+
+   Leave FIREBASE_CONFIG exactly as-is (all empty strings) to
+   keep running in browser-only/offline mode — the app works
+   fine either way.
+============================================================ */
+const FIREBASE_CONFIG = {
+  apiKey: "AIzaSyDV9Mx-EZPLzCtegcSswBg4ENO9ohe8Qgg",
+  authDomain: "clyde-ee10d.firebaseapp.com",
+  projectId: "clyde-ee10d",
+  storageBucket: "clyde-ee10d.firebasestorage.app",
+  messagingSenderId: "253465015372",
+  appId: "1:253465015372:web:a036b32804c479d44170e9"
+};
+const FIRESTORE_COLLECTION = 'clydeAcademy';
+const FIRESTORE_DOC = 'database';
+
+let firestoreDB = null;
+let cloudEnabled = false;
+
+function firebaseIsConfigured(){
+  return !!(FIREBASE_CONFIG.apiKey && FIREBASE_CONFIG.projectId && FIREBASE_CONFIG.appId);
+}
+function setSyncBadge(mode){
+  const el = document.getElementById('sync-badge');
+  if(!el) return;
+  el.classList.remove('synced','offline','local');
+  if(mode==='synced'){ el.textContent = '☁ Synced'; el.classList.add('synced'); }
+  else if(mode==='offline'){ el.textContent = '📴 Offline — saved on this device'; el.classList.add('offline'); }
+  else if(mode==='connecting'){ el.textContent = 'Connecting…'; }
+  else { el.textContent = '💻 Browser-only mode'; el.classList.add('local'); }
+}
+
+function readLocalCache(){
+  try{
+    const raw = localStorage.getItem(STORAGE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  }catch(e){ return null; }
+}
+function writeLocalCache(){
+  try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(DB)); }
+  catch(e){ console.error('local cache save failed', e); }
+}
+
+async function initCloudSync(){
+  if(!firebaseIsConfigured()) return false;
+  try{
+    setSyncBadge('connecting');
+    if(!firebase.apps.length) firebase.initializeApp(FIREBASE_CONFIG);
+    firestoreDB = firebase.firestore();
+    try{ await firestoreDB.enablePersistence({ synchronizeTabs:true }); }
+    catch(e){ /* already enabled elsewhere, or unsupported browser — safe to continue */ }
+    cloudEnabled = true;
+    return true;
+  }catch(e){
+    console.error('Firebase init failed — continuing in browser-only mode', e);
+    cloudEnabled = false;
+    return false;
+  }
+}
+
+async function loadDB(){
+  const gotCloud = await initCloudSync();
+  if(gotCloud){
+    try{
+      const ref = firestoreDB.collection(FIRESTORE_COLLECTION).doc(FIRESTORE_DOC);
+      const snap = await ref.get();
+      if(snap.exists && snap.data().payload){
+        DB = JSON.parse(snap.data().payload);
+      } else {
+        DB = readLocalCache() || seedDB();
+        await ref.set({ payload: JSON.stringify(DB), updatedAt: Date.now() });
+      }
+      migrateDB();
+      writeLocalCache();
+      setSyncBadge(snap.metadata && snap.metadata.fromCache ? 'offline' : 'synced');
+
+      // live updates from other devices/browsers
+      ref.onSnapshot(doc=>{
+        if(!doc.exists || !doc.data().payload) return;
+        const incoming = JSON.parse(doc.data().payload);
+        if(JSON.stringify(incoming) !== JSON.stringify(DB)){
+          DB = incoming;
+          migrateDB();
+          writeLocalCache();
+          if(session) render();
+        }
+        setSyncBadge(doc.metadata.fromCache ? 'offline' : 'synced');
+      }, err=>{ console.error('Sync listener error', err); setSyncBadge('offline'); });
+
+      window.addEventListener('online', ()=> setSyncBadge('synced'));
+      window.addEventListener('offline', ()=> setSyncBadge('offline'));
+      return;
+    }catch(e){
+      console.error('Cloud load failed, falling back to browser-only mode', e);
+      cloudEnabled = false;
+    }
+  }
+  // browser-only mode (no Firebase configured, or it failed to connect)
+  DB = readLocalCache() || seedDB();
+  migrateDB();
+  writeLocalCache();
+  setSyncBadge('local');
+}
+
+async function saveDB(){
+  writeLocalCache(); // always keep an on-device copy first, so nothing is lost if offline
+  if(cloudEnabled && firestoreDB){
+    try{
+      await firestoreDB.collection(FIRESTORE_COLLECTION).doc(FIRESTORE_DOC).set({ payload: JSON.stringify(DB), updatedAt: Date.now() });
+      setSyncBadge('synced');
+    }catch(e){
+      console.error('Cloud save failed — change is saved on this device and will sync later', e);
+      setSyncBadge('offline');
+    }
+  }
+}
 
 function todayStr(offsetDays){
   const d = new Date();
@@ -471,18 +618,6 @@ function seedDB(){
   return { classes, students, gradebook, attendance, users };
 }
 
-async function loadDB(){
-  try{
-    const res = await window.storage.get(STORAGE_KEY, true);
-    if(res && res.value){
-      DB = JSON.parse(res.value);
-      migrateDB();
-      return;
-    }
-  }catch(e){ /* not found */ }
-  DB = seedDB();
-  await saveDB();
-}
 function migrateDB(){
   let changed = false;
   if(!DB.users){ DB.users = seedDB().users; changed = true; }
@@ -507,10 +642,6 @@ function migrateDB(){
     if(u.role==='Teacher' && u.pendingApproval===undefined){ u.pendingApproval = false; }
   });
   if(changed) saveDB();
-}
-async function saveDB(){
-  try{ await window.storage.set(STORAGE_KEY, JSON.stringify(DB), true); }
-  catch(e){ console.error('save failed', e); }
 }
 
 /* ============================================================
