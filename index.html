@@ -8,6 +8,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Work+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore-compat.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
   :root{
     --ink:#16213E;
@@ -588,13 +589,13 @@ const TERM_NAMES = ['1st Term','2nd Term','3rd Term'];
 
 function seedDB(){
   const classes = [
-    { id:'c1', name:'Form 1A', homeroomTeacher:'owusu', subjects:[
+    { id:'c1', name:'Form 1A', classTeacher:'owusu', subjects:[
       {name:'Mathematics', teacher:'owusu'},{name:'English', teacher:'owusu'},{name:'Integrated Science', teacher:'owusu'}
     ] },
-    { id:'c2', name:'Form 2B', homeroomTeacher:'mensah', subjects:[
+    { id:'c2', name:'Form 2B', classTeacher:'mensah', subjects:[
       {name:'Mathematics', teacher:'mensah'},{name:'English', teacher:'mensah'},{name:'Social Studies', teacher:'mensah'}
     ] },
-    { id:'c3', name:'Form 3C', homeroomTeacher:'boateng', subjects:[
+    { id:'c3', name:'Form 3C', classTeacher:'boateng', subjects:[
       {name:'Mathematics', teacher:'boateng'},{name:'English', teacher:'boateng'},{name:'Integrated Science', teacher:'boateng'}
     ] },
   ];
@@ -700,14 +701,20 @@ function migrateDB(){
     }
     if(c.teacher !== undefined){
       // old shape stored a display-name string on c.teacher; try to map it to a username once
-      if(!c.homeroomTeacher){
+      if(!c.classTeacher){
         const match = DB.users.find(u=>u.role==='Teacher' && u.name===c.teacher);
-        c.homeroomTeacher = match ? match.username : null;
+        c.classTeacher = match ? match.username : null;
       }
       delete c.teacher;
       changed = true;
     }
-    if(c.homeroomTeacher===undefined){ c.homeroomTeacher = null; changed = true; }
+    if(c.homeroomTeacher !== undefined){
+      // field renamed from homeroomTeacher -> classTeacher; carry the value over once
+      if(c.classTeacher===undefined) c.classTeacher = c.homeroomTeacher;
+      delete c.homeroomTeacher;
+      changed = true;
+    }
+    if(c.classTeacher===undefined){ c.classTeacher = null; changed = true; }
   });
   DB.users.forEach(u=>{
     if(u.role==='Teacher' && u.pendingApproval===undefined){ u.pendingApproval = false; }
@@ -729,11 +736,11 @@ function subjectOf(cls, name){ return cls.subjects.find(s=>s.name===name); }
 /* which classes can this session act on, and with which subjects */
 function accessibleClasses(){
   if(session.role==='Admin') return DB.classes;
-  return DB.classes.filter(c=> c.homeroomTeacher===session.username || c.subjects.some(s=>s.teacher===session.username));
+  return DB.classes.filter(c=> c.classTeacher===session.username || c.subjects.some(s=>s.teacher===session.username));
 }
-function homeroomClasses(){
+function classTeacherClasses(){
   if(session.role==='Admin') return DB.classes;
-  return DB.classes.filter(c=> c.homeroomTeacher===session.username);
+  return DB.classes.filter(c=> c.classTeacher===session.username);
 }
 function teachableSubjects(cls){
   if(session.role==='Admin') return subjectNames(cls);
@@ -870,6 +877,44 @@ function schoolWideAverage(){
 }
 
 /* ============================================================
+   Bulk import helpers (Excel/CSV + pasted text) — used by the
+   admin's "bulk add students / staff / subjects" panels.
+============================================================ */
+function fieldVal(row, ...keys){
+  const rowKeys = Object.keys(row);
+  for(const want of keys){
+    const found = rowKeys.find(k=>k.trim().toLowerCase()===want.toLowerCase());
+    if(found && String(row[found]).trim()!=='') return String(row[found]).trim();
+  }
+  return '';
+}
+function readSpreadsheetRows(file){
+  return new Promise((resolve, reject)=>{
+    const reader = new FileReader();
+    reader.onerror = ()=>reject(new Error('Could not read file'));
+    reader.onload = ()=>{
+      try{
+        const wb = XLSX.read(reader.result, { type:'array' });
+        const sheet = wb.Sheets[wb.SheetNames[0]];
+        const rows = XLSX.utils.sheet_to_json(sheet, { defval:'' });
+        resolve(rows);
+      }catch(e){ reject(e); }
+    };
+    reader.readAsArrayBuffer(file);
+  });
+}
+/* Turn pasted "one row per line, comma-separated" text into row objects using the given column names. */
+function parsePastedRows(text, columns){
+  return text.split('\n').map(l=>l.trim()).filter(Boolean).map(line=>{
+    const parts = line.split(',').map(p=>p.trim());
+    const obj = {};
+    columns.forEach((col,i)=>{ obj[col] = parts[i]||''; });
+    return obj;
+  });
+}
+
+
+/* ============================================================
    Auth
 ============================================================ */
 async function login(){
@@ -883,7 +928,7 @@ async function login(){
   document.getElementById('login-screen').style.display = 'none';
   document.getElementById('app-screen').style.display = 'block';
   document.getElementById('user-name').textContent = user.name;
-  const myClasses = homeroomClasses();
+  const myClasses = classTeacherClasses();
   document.getElementById('user-role').textContent = session.role + (session.role!=='Admin' && myClasses.length ? ' · '+myClasses.map(c=>c.name).join(', ') : '');
   document.getElementById('user-avatar').textContent = user.name.split(' ').map(w=>w[0]).slice(0,2).join('').toUpperCase();
   const defaultClassId = (myClasses[0] || accessibleClasses()[0] || DB.classes[0])?.id || null;
@@ -1058,6 +1103,17 @@ function renderStudents(){
         <input type="text" id="new-student-guardian" placeholder="Guardian phone (optional)" style="flex:1;min-width:150px;">
         <button class="btn-small brass" onclick="addStudent()">Add student</button>
       </div>
+    </div>
+    <div class="crud-box">
+      <h4>Bulk add students</h4>
+      <p style="margin:0 0 10px;font-size:12.5px;color:var(--slate);">Paste one student per line as <span class="mono">Full Name, Class, Guardian contact</span> (guardian is optional; class name must match an existing class, e.g. "Form 1A") — or upload an Excel/CSV file with columns <span class="mono">Name, Class, Guardian</span>.</p>
+      <textarea id="bulk-student-text" rows="4" placeholder="Ama Serwaa, Form 1A, +233241234567&#10;Kojo Antwi, Form 1A" style="width:100%;padding:9px 10px;border-radius:8px;border:1.5px solid var(--line);font-family:'IBM Plex Mono',monospace;font-size:12.5px;"></textarea>
+      <div class="inline-form" style="margin-top:8px;">
+        <button class="btn-small brass" onclick="bulkAddStudentsFromText()">Add pasted students</button>
+        <span style="color:var(--slate);font-size:12.5px;">or</span>
+        <input type="file" id="bulk-student-file" accept=".xlsx,.xls,.csv" style="max-width:220px;">
+        <button class="btn-small" onclick="bulkAddStudentsFromFile()">Import from file</button>
+      </div>
     </div>` : ''}
     <div class="toolbar">
       <input type="text" placeholder="Search by name…" value="${studentFilter.q}" oninput="studentFilter.q=this.value; render()">
@@ -1095,12 +1151,49 @@ async function addStudent(){
   const guardian = document.getElementById('new-student-guardian').value.trim();
   if(!name) return;
   const id = 's'+Date.now();
-  DB.students.push({ id, name, classId, guardian: guardian || '—' });
+  DB.students.push({ id, name, classId, guardian: guardian || '—', photo:null, remark:'' });
   // seed an empty score record for every subject already in this class's gradebook
   const gb = DB.gradebook[classId] || {};
   Object.values(gb).forEach(sub=>{ sub.scores[id] = {}; });
   await saveDB();
   render();
+}
+function findClassByName(name){
+  const n = (name||'').trim().toLowerCase();
+  return DB.classes.find(c=>c.name.trim().toLowerCase()===n);
+}
+async function processStudentRows(rows){
+  let added=0; const skipped=[];
+  rows.forEach((r,i)=>{
+    const name = fieldVal(r,'name','full name','student','student name');
+    const className = fieldVal(r,'class','classname','class name','form');
+    const guardian = fieldVal(r,'guardian','guardian contact','guardian phone','phone','contact');
+    if(!name){ skipped.push(`Row ${i+1}: no name given`); return; }
+    const cls = findClassByName(className);
+    if(!cls){ skipped.push(`Row ${i+1} (${name}): class "${className}" not found`); return; }
+    const id = 's'+Date.now()+Math.floor(Math.random()*10000);
+    DB.students.push({ id, name, classId:cls.id, guardian: guardian || '—', photo:null, remark:'' });
+    const gb = DB.gradebook[cls.id] || {};
+    Object.values(gb).forEach(sub=>{ sub.scores[id] = {}; });
+    added++;
+  });
+  await saveDB();
+  render();
+  alert(`Added ${added} student(s).` + (skipped.length ? `\n\nSkipped ${skipped.length}:\n`+skipped.join('\n') : ''));
+}
+async function bulkAddStudentsFromText(){
+  const text = document.getElementById('bulk-student-text').value;
+  if(!text.trim()) return;
+  const rows = parsePastedRows(text, ['name','class','guardian']);
+  await processStudentRows(rows);
+}
+async function bulkAddStudentsFromFile(){
+  const file = document.getElementById('bulk-student-file').files[0];
+  if(!file){ alert('Choose a file first.'); return; }
+  try{
+    const rows = await readSpreadsheetRows(file);
+    await processStudentRows(rows);
+  }catch(e){ alert('Could not read that file — please check it\'s a valid Excel or CSV file.'); }
 }
 async function removeStudent(id){
   const s = studentById(id);
@@ -1159,10 +1252,10 @@ function renderStudentDetail(id){
   const cls = classOf(s.classId);
   const avg = overallAverage(id);
   const att = attendanceRate(id, s.classId);
-  const homeroomName = cls.homeroomTeacher ? teacherName(cls.homeroomTeacher) : null;
+  const classTeacherName = cls.classTeacher ? teacherName(cls.classTeacher) : null;
 
   const pos = classPosition(id);
-  const canEditProfile = session.role==='Admin' || cls.homeroomTeacher===session.username;
+  const canEditProfile = session.role==='Admin' || cls.classTeacher===session.username;
 
   let body = '';
   if(view.tab==='overview'){
@@ -1171,7 +1264,7 @@ function renderStudentDetail(id){
         <div class="stat-card"><div class="label">Overall average</div><div class="value grade-${letterFor(avg)}">${avg??'—'}${avg!==null?'%':''}</div><div class="sub">Grade ${letterFor(avg)}</div></div>
         <div class="stat-card"><div class="label">Class position</div><div class="value">${pos?ordinal(pos.rank):'—'}</div><div class="sub">${pos?'out of '+pos.of:'Not enough data yet'}</div></div>
         <div class="stat-card"><div class="label">Attendance rate</div><div class="value">${att??'—'}${att!==null?'%':''}</div><div class="sub">This term</div></div>
-        <div class="stat-card"><div class="label">Homeroom</div><div class="value" style="font-size:20px;">${cls.name}</div><div class="sub">${homeroomName || 'No homeroom teacher assigned'}</div></div>
+        <div class="stat-card"><div class="label">Class</div><div class="value" style="font-size:20px;">${cls.name}</div><div class="sub">${classTeacherName || 'No class teacher assigned'}</div></div>
       </div>
       <div class="panel"><div class="panel-head"><h3>Profile</h3>${canEditProfile ? `<button class="btn-ghost" onclick="openEditProfile('${id}')">Edit profile</button>` : ''}</div>
         <div class="panel-body" style="padding-top:14px;padding-bottom:16px;display:flex;gap:18px;align-items:center;flex-wrap:wrap;">
@@ -1410,11 +1503,11 @@ async function updateExamScore(classId, subj, studentId, val){
    Attendance (class-wide, take register)
 ============================================================ */
 function renderAttendance(){
-  const classes = homeroomClasses();
+  const classes = classTeacherClasses();
   if(!classes.length){
     return `
       <div class="topbar"><div><div class="eyebrow">Take register</div><h1>Attendance</h1></div></div>
-      <div class="empty">You haven't been assigned as a homeroom teacher for any class yet. Ask the administrator to assign you one from Classes.</div>
+      <div class="empty">You haven't been assigned as a class teacher for any class yet. Ask the administrator to assign you one from Classes.</div>
     `;
   }
   if(!view.classId || !classes.find(c=>c.id===view.classId)) view.classId = classes[0].id;
@@ -1473,6 +1566,18 @@ function renderClasses(){
       </div>
     </div>
 
+    <div class="crud-box">
+      <h4>Bulk add subjects</h4>
+      <p style="margin:0 0 10px;font-size:12.5px;color:var(--slate);">Paste one subject per line as <span class="mono">Class, Subject, Teacher username</span> (teacher is optional; class name must match an existing class) — or upload an Excel/CSV file with columns <span class="mono">Class, Subject, Teacher</span>. Works across multiple classes at once.</p>
+      <textarea id="bulk-subject-text" rows="4" placeholder="Form 1A, French&#10;Form 1A, ICT, owusu&#10;Form 2B, French" style="width:100%;padding:9px 10px;border-radius:8px;border:1.5px solid var(--line);font-family:'IBM Plex Mono',monospace;font-size:12.5px;"></textarea>
+      <div class="inline-form" style="margin-top:8px;">
+        <button class="btn-small brass" onclick="bulkAddSubjectsFromText()">Add pasted subjects</button>
+        <span style="color:var(--slate);font-size:12.5px;">or</span>
+        <input type="file" id="bulk-subject-file" accept=".xlsx,.xls,.csv" style="max-width:220px;">
+        <button class="btn-small" onclick="bulkAddSubjectsFromFile()">Import from file</button>
+      </div>
+    </div>
+
     ${DB.classes.map(c=>{
       const roster = studentsOf(c.id);
       return `
@@ -1483,10 +1588,10 @@ function renderClasses(){
             <div style="font-size:12px;color:var(--slate);">${roster.length} student${roster.length===1?'':'s'} · ${c.subjects.length} subject${c.subjects.length===1?'':'s'}</div>
           </div>
           <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-            <label style="font-size:12px;color:var(--slate);font-weight:600;">Homeroom teacher</label>
-            <select onchange="assignHomeroomTeacher('${c.id}', this.value)">
+            <label style="font-size:12px;color:var(--slate);font-weight:600;">Class teacher</label>
+            <select onchange="assignClassTeacher('${c.id}', this.value)">
               <option value="">— Unassigned —</option>
-              ${teachers.map(t=>`<option value="${t.username}" ${c.homeroomTeacher===t.username?'selected':''}>${t.name}</option>`).join('')}
+              ${teachers.map(t=>`<option value="${t.username}" ${c.classTeacher===t.username?'selected':''}>${t.name}</option>`).join('')}
             </select>
             <button class="btn-danger" onclick="removeClass('${c.id}')">Delete class</button>
           </div>
@@ -1517,7 +1622,7 @@ async function addClass(){
   const name = nameEl.value.trim();
   if(!name) return;
   const id = 'c'+Date.now();
-  DB.classes.push({ id, name, homeroomTeacher:null, subjects:[] });
+  DB.classes.push({ id, name, classTeacher:null, subjects:[] });
   DB.gradebook[id] = {};
   DB.attendance[id] = {};
   await saveDB();
@@ -1542,12 +1647,52 @@ async function addSubject(classId){
   if(c.subjects.some(s=>s.name.toLowerCase()===name.toLowerCase())){ alert('That subject already exists in this class.'); return; }
   c.subjects.push({ name, teacher:null });
   DB.gradebook[classId][name] = {
-    assessments:[{id:'a1',name:'Class Test 1',max:20},{id:'a2',name:'Homework Avg',max:20},{id:'a3',name:'Mid-term Exam',max:60}],
-    scores:{}
+    assessments: SBA_CATEGORIES.slice(), scores:{}, weeklyEnabled:false, weeklyMax:10, weeklyScores:{}, examScores:{}
   };
   studentsOf(classId).forEach(s=>{ DB.gradebook[classId][name].scores[s.id] = {}; });
   await saveDB();
   render();
+}
+async function processSubjectRows(rows){
+  let added=0; const skipped=[];
+  rows.forEach((r,i)=>{
+    const className = fieldVal(r,'class','classname','class name','form');
+    const subjectName = fieldVal(r,'subject','subject name');
+    const teacherUsername = fieldVal(r,'teacher','teacher username','username').toLowerCase();
+    if(!subjectName){ skipped.push(`Row ${i+1}: no subject name given`); return; }
+    const cls = findClassByName(className);
+    if(!cls){ skipped.push(`Row ${i+1} (${subjectName}): class "${className}" not found`); return; }
+    if(cls.subjects.some(s=>s.name.toLowerCase()===subjectName.toLowerCase())){ skipped.push(`Row ${i+1}: "${subjectName}" already exists in ${cls.name}`); return; }
+    let teacher = null;
+    if(teacherUsername){
+      const match = DB.users.find(u=>u.username.toLowerCase()===teacherUsername);
+      if(match) teacher = match.username;
+      else skipped.push(`Row ${i+1}: teacher "${teacherUsername}" not found — subject added without a teacher`);
+    }
+    cls.subjects.push({ name: subjectName, teacher });
+    DB.gradebook[cls.id][subjectName] = {
+      assessments: SBA_CATEGORIES.slice(), scores:{}, weeklyEnabled:false, weeklyMax:10, weeklyScores:{}, examScores:{}
+    };
+    studentsOf(cls.id).forEach(s=>{ DB.gradebook[cls.id][subjectName].scores[s.id] = {}; });
+    added++;
+  });
+  await saveDB();
+  render();
+  alert(`Added ${added} subject(s).` + (skipped.length ? `\n\nNotes:\n`+skipped.join('\n') : ''));
+}
+async function bulkAddSubjectsFromText(){
+  const text = document.getElementById('bulk-subject-text').value;
+  if(!text.trim()) return;
+  const rows = parsePastedRows(text, ['class','subject','teacher']);
+  await processSubjectRows(rows);
+}
+async function bulkAddSubjectsFromFile(){
+  const file = document.getElementById('bulk-subject-file').files[0];
+  if(!file){ alert('Choose a file first.'); return; }
+  try{
+    const rows = await readSpreadsheetRows(file);
+    await processSubjectRows(rows);
+  }catch(e){ alert('Could not read that file — please check it\'s a valid Excel or CSV file.'); }
 }
 async function removeSubject(classId, subjectName){
   if(!confirm(`Remove ${subjectName} from this class? All recorded scores for this subject will be lost.`)) return;
@@ -1557,8 +1702,8 @@ async function removeSubject(classId, subjectName){
   await saveDB();
   render();
 }
-async function assignHomeroomTeacher(classId, username){
-  classOf(classId).homeroomTeacher = username || null;
+async function assignClassTeacher(classId, username){
+  classOf(classId).classTeacher = username || null;
   await saveDB();
   render();
 }
@@ -1634,14 +1779,27 @@ function renderStaff(){
       </div>
     </div>
 
+    <div class="panel"><div class="panel-head"><h3>Bulk add accounts</h3></div>
+      <div class="panel-body" style="padding-top:14px;padding-bottom:16px;">
+        <p style="margin:0 0 10px;font-size:12.5px;color:var(--slate);">Paste one account per line as <span class="mono">Full Name, Username, Password, Role</span> (Role is "Teacher" or "Admin" — leave blank for Teacher) — or upload an Excel/CSV file with columns <span class="mono">Name, Username, Password, Role</span>.</p>
+        <textarea id="bulk-staff-text" rows="4" placeholder="Mr. Owusu, owusu, teach123, Teacher&#10;Mrs. Mensah, mensah, teach123" style="width:100%;padding:9px 10px;border-radius:8px;border:1.5px solid var(--line);font-family:'IBM Plex Mono',monospace;font-size:12.5px;"></textarea>
+        <div class="inline-form" style="margin-top:8px;">
+          <button class="btn-small brass" onclick="bulkAddStaffFromText()">Add pasted accounts</button>
+          <span style="color:var(--slate);font-size:12.5px;">or</span>
+          <input type="file" id="bulk-staff-file" accept=".xlsx,.xls,.csv" style="max-width:220px;">
+          <button class="btn-small" onclick="bulkAddStaffFromFile()">Import from file</button>
+        </div>
+      </div>
+    </div>
+
     <div class="panel"><div class="panel-head"><h3>Existing accounts</h3></div>
       <div class="panel-body">
         ${DB.users.map((u,i)=>{
-          const home = DB.classes.filter(c=>c.homeroomTeacher===u.username).map(c=>c.name);
+          const home = DB.classes.filter(c=>c.classTeacher===u.username).map(c=>c.name);
           const subjAssign = [];
           DB.classes.forEach(c=>c.subjects.forEach(s=>{ if(s.teacher===u.username) subjAssign.push(`${s.name} (${c.name})`); }));
           const assignSummary = u.role==='Teacher' ? [
-            home.length ? 'Homeroom: '+home.join(', ') : null,
+            home.length ? 'Class teacher: '+home.join(', ') : null,
             subjAssign.length ? 'Teaches: '+subjAssign.join(', ') : null
           ].filter(Boolean).join(' · ') || 'No class or subject assigned yet' : '';
           return `
@@ -1702,9 +1860,40 @@ async function addStaff(){
   if(!name || !username || !password){ return; }
   if(DB.users.find(u=>u.username.toLowerCase()===username)){ errEl.style.display='block'; return; }
   errEl.style.display='none';
-  DB.users.push({ name, username, password, role });
+  DB.users.push({ name, username, password, role, signature:null });
   await saveDB();
   render();
+}
+async function processStaffRows(rows){
+  let added=0; const skipped=[];
+  rows.forEach((r,i)=>{
+    const name = fieldVal(r,'name','full name','staff name');
+    const username = fieldVal(r,'username','user name','login').toLowerCase();
+    const password = fieldVal(r,'password','pass');
+    let role = fieldVal(r,'role','position');
+    role = /admin/i.test(role) ? 'Admin' : 'Teacher';
+    if(!name || !username || !password){ skipped.push(`Row ${i+1}: missing name, username, or password`); return; }
+    if(DB.users.find(u=>u.username.toLowerCase()===username)){ skipped.push(`Row ${i+1} (${name}): username "${username}" already taken`); return; }
+    DB.users.push({ name, username, password, role, signature:null });
+    added++;
+  });
+  await saveDB();
+  render();
+  alert(`Added ${added} account(s).` + (skipped.length ? `\n\nSkipped ${skipped.length}:\n`+skipped.join('\n') : ''));
+}
+async function bulkAddStaffFromText(){
+  const text = document.getElementById('bulk-staff-text').value;
+  if(!text.trim()) return;
+  const rows = parsePastedRows(text, ['name','username','password','role']);
+  await processStaffRows(rows);
+}
+async function bulkAddStaffFromFile(){
+  const file = document.getElementById('bulk-staff-file').files[0];
+  if(!file){ alert('Choose a file first.'); return; }
+  try{
+    const rows = await readSpreadsheetRows(file);
+    await processStaffRows(rows);
+  }catch(e){ alert('Could not read that file — please check it\'s a valid Excel or CSV file.'); }
 }
 async function editAccount(username){
   const u = DB.users.find(x=>x.username===username);
@@ -1731,7 +1920,7 @@ async function editAccount(username){
   if(oldUsername!==newUsername){
     // keep class/subject teacher assignments pointing at the right person
     DB.classes.forEach(c=>{
-      if(c.homeroomTeacher===oldUsername) c.homeroomTeacher = newUsername;
+      if(c.classTeacher===oldUsername) c.classTeacher = newUsername;
       c.subjects.forEach(s=>{ if(s.teacher===oldUsername) s.teacher = newUsername; });
     });
   }
@@ -1755,7 +1944,7 @@ async function removeStaff(username){
   if(!confirm('Remove @'+username+'\'s account?')) return;
   DB.users = DB.users.filter(u=>u.username!==username);
   DB.classes.forEach(c=>{
-    if(c.homeroomTeacher===username) c.homeroomTeacher = null;
+    if(c.classTeacher===username) c.classTeacher = null;
     c.subjects.forEach(s=>{ if(s.teacher===username) s.teacher = null; });
   });
   await saveDB();
@@ -1772,8 +1961,8 @@ function buildReportCardHTML(studentId){
   const att = attendanceRate(studentId, s.classId);
   const attCounts = attendanceCounts(studentId, s.classId);
   const pos = classPosition(studentId);
-  const homeroomName = cls.homeroomTeacher ? teacherName(cls.homeroomTeacher) : '—';
-  const homeroomUser = cls.homeroomTeacher ? userByUsername(cls.homeroomTeacher) : null;
+  const classTeacherName = cls.classTeacher ? teacherName(cls.classTeacher) : '—';
+  const classTeacherUser = cls.classTeacher ? userByUsername(cls.classTeacher) : null;
   const headUser = DB.headTeacherUsername ? userByUsername(DB.headTeacherUsername) : null;
   const termLabel = TERM_NAMES[(DB.term?.termNumber||1)-1] || '1st Term';
   const photoHTML = s.photo
@@ -1789,7 +1978,7 @@ function buildReportCardHTML(studentId){
       <div class="rc-meta">
         <div><b>Student</b>${s.name}</div>
         <div><b>Class</b>${cls.name}</div>
-        <div><b>Homeroom teacher</b>${homeroomName}</div>
+        <div><b>Class teacher</b>${classTeacherName}</div>
         <div><b>Guardian contact</b>${s.guardian}</div>
         <div><b>Date issued</b>${fmtDate(todayStr(0))}</div>
         <div><b>Attendance</b>${attCounts.total ? attCounts.present+' / '+attCounts.total+' ('+(att??'—')+'%)' : '—'}</div>
@@ -1815,7 +2004,7 @@ function buildReportCardHTML(studentId){
       </div></div>
       <div class="rc-sign">
         <div>
-          ${homeroomUser && homeroomUser.signature ? `<img src="${homeroomUser.signature}" style="height:40px;object-fit:contain;display:block;margin:0 auto 4px;">` : '<div style="height:44px;"></div>'}
+          ${classTeacherUser && classTeacherUser.signature ? `<img src="${classTeacherUser.signature}" style="height:40px;object-fit:contain;display:block;margin:0 auto 4px;">` : '<div style="height:44px;"></div>'}
           Class Teacher
         </div>
         <div>
