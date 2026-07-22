@@ -361,6 +361,7 @@
 
 <!-- ===================== PRINTABLE REPORT CARD ===================== -->
 <div id="print-area"></div>
+<input type="file" id="profile-photo-upload" accept="image/*" style="display:none;" onchange="handleProfilePhoto(this.files[0])">
 
 <!-- ===================== APP ===================== -->
 <div id="app-screen">
@@ -377,6 +378,8 @@
           <div class="avatar" id="user-avatar">?</div>
           <div class="who"><b id="user-name">—</b><span id="user-role">—</span></div>
         </div>
+        <button class="btn-ghost" style="width:100%;margin-bottom:8px;background:none;border-color:rgba(255,255,255,0.2);color:#C4CBDD;" onclick="document.getElementById('sig-upload').click()">Upload my signature</button>
+        <input type="file" id="sig-upload" accept="image/*" style="display:none;" onchange="uploadMySignature(this.files[0])">
         <button class="logout-btn" onclick="logout()">Sign out</button>
       </div>
     </div>
@@ -543,6 +546,46 @@ function fmtDate(s){
   return d.toLocaleDateString('en-GB', { weekday:'short', day:'2-digit', month:'short' });
 }
 
+/* Read an <input type=file> image, shrink it down (so it doesn't bloat storage), and return a base64 data URL. */
+function readImageResized(file, maxWidth){
+  return new Promise((resolve, reject)=>{
+    const reader = new FileReader();
+    reader.onerror = ()=>reject(new Error('Could not read file'));
+    reader.onload = ()=>{
+      const img = new Image();
+      img.onerror = ()=>reject(new Error('Not a valid image'));
+      img.onload = ()=>{
+        const scale = Math.min(1, maxWidth / img.width);
+        const w = Math.round(img.width * scale), h = Math.round(img.height * scale);
+        const canvas = document.createElement('canvas');
+        canvas.width = w; canvas.height = h;
+        canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+        resolve(canvas.toDataURL('image/jpeg', 0.82));
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+/* ============================================================
+   SBA (School-Based Assessment) configuration
+   ------------------------------------------------------------
+   4 fixed categories, totalling 50 raw marks. Their raw total
+   is scaled to represent 50% of the term grade. The other 50%
+   comes from the end-of-term exam (marked out of 100).
+   If a subject teacher switches on "weekly assessment" for a
+   subject, the 4 categories are replaced by however many weekly
+   marks were entered that term — those are scaled the same way.
+============================================================ */
+const SBA_CATEGORIES = [
+  {id:'cat1', name:'CAT 1 (Individual Test)', max:20},
+  {id:'cat2', name:'CAT 2 (Group Test)', max:10},
+  {id:'cat3', name:'CAT 3 (Individual Test)', max:10},
+  {id:'cat4', name:'CAT 4 (Primary Test)', max:10},
+];
+const TERM_NAMES = ['1st Term','2nd Term','3rd Term'];
+
 function seedDB(){
   const classes = [
     { id:'c1', name:'Form 1A', homeroomTeacher:'owusu', subjects:[
@@ -565,29 +608,30 @@ function seedDB(){
   const students = names.map((n,i)=>({
     id:'s'+(i+1), name:n[0], classId:n[1],
     guardian: '+233 24 '+ (1000000+ i*137).toString().slice(0,3) + ' ' + (1000+i*97),
+    photo: null, remark: '',
   }));
 
-  // gradebook[classId][subject] = { assessments:[{id,name,max}], scores:{studentId:{assessId:score}} }
+  // gradebook[classId][subject] = { assessments:[{id,name,max}], scores:{studentId:{assessId:score}},
+  //   weeklyEnabled, weeklyMax, weeklyScores:{studentId:{w1:score,...}}, examScores:{studentId:score/100} }
   const gradebook = {};
   classes.forEach(c=>{
     gradebook[c.id] = {};
     c.subjects.forEach(subjObj=>{
       const subj = subjObj.name;
-      const assessments = [
-        {id:'a1', name:'Class Test 1', max:20},
-        {id:'a2', name:'Homework Avg', max:20},
-        {id:'a3', name:'Mid-term Exam', max:60},
-      ];
-      const scores = {};
+      const assessments = SBA_CATEGORIES.slice();
+      const scores = {}, weeklyScores = {}, examScores = {};
       students.filter(s=>s.classId===c.id).forEach(s=>{
         const seed = (s.name.length*7 + subj.length*3) % 10;
         scores[s.id] = {
-          a1: Math.min(20, 12 + seed % 8),
-          a2: Math.min(20, 14 + (seed+3) % 6),
-          a3: Math.min(60, 34 + (seed*3) % 24),
+          cat1: Math.min(20, 12 + seed % 8),
+          cat2: Math.min(10, 6 + seed % 4),
+          cat3: Math.min(10, 6 + (seed+2) % 4),
+          cat4: Math.min(10, 6 + (seed+4) % 4),
         };
+        weeklyScores[s.id] = {};
+        examScores[s.id] = Math.min(100, 48 + (seed*5) % 40);
       });
-      gradebook[c.id][subj] = { assessments, scores };
+      gradebook[c.id][subj] = { assessments, scores, weeklyEnabled:false, weeklyMax:10, weeklyScores, examScores };
     });
   });
 
@@ -609,18 +653,45 @@ function seedDB(){
   });
 
   const users = [
-    { username:'admin', password:'admin123', role:'Admin', name:'Ms. Addo (Head Teacher)' },
-    { username:'owusu', password:'teach123', role:'Teacher', name:'Mr. Owusu' },
-    { username:'mensah', password:'teach123', role:'Teacher', name:'Mrs. Mensah' },
-    { username:'boateng', password:'teach123', role:'Teacher', name:'Mr. Boateng' },
+    { username:'admin', password:'admin123', role:'Admin', name:'Ms. Addo (Head Teacher)', signature:null },
+    { username:'owusu', password:'teach123', role:'Teacher', name:'Mr. Owusu', signature:null },
+    { username:'mensah', password:'teach123', role:'Teacher', name:'Mrs. Mensah', signature:null },
+    { username:'boateng', password:'teach123', role:'Teacher', name:'Mr. Boateng', signature:null },
   ];
 
-  return { classes, students, gradebook, attendance, users };
+  const term = { startDate: todayStr(0), weeks: 12, termNumber: 1 };
+
+  return { classes, students, gradebook, attendance, users, term, headTeacherUsername: 'admin' };
 }
 
 function migrateDB(){
   let changed = false;
   if(!DB.users){ DB.users = seedDB().users; changed = true; }
+  if(!DB.term){ DB.term = { startDate: todayStr(0), weeks: 12, termNumber: 1 }; changed = true; }
+  if(DB.headTeacherUsername === undefined){ DB.headTeacherUsername = null; changed = true; }
+  DB.users.forEach(u=>{ if(u.signature===undefined){ u.signature = null; changed = true; } });
+  DB.students.forEach(s=>{
+    if(s.photo===undefined){ s.photo = null; changed = true; }
+    if(s.remark===undefined){ s.remark = ''; changed = true; }
+  });
+  // Restructure each subject's gradebook to the SBA model (4 CATs + weekly toggle + exam score)
+  Object.values(DB.gradebook).forEach(subjMap=>{
+    Object.values(subjMap).forEach(sub=>{
+      const hasNewShape = sub.assessments && sub.assessments.length && sub.assessments[0].id === 'cat1';
+      if(!hasNewShape){
+        sub.assessments = SBA_CATEGORIES.slice();
+        // scores object shape (studentId->assessId->score) is reused, but old assessIds no longer
+        // match the new cat1..cat4 ids, so old marks are cleared out for this subject as part of
+        // moving to the new SBA structure — new marks get entered against the new categories.
+        Object.keys(sub.scores||{}).forEach(sid=>{ sub.scores[sid] = {}; });
+        changed = true;
+      }
+      if(sub.weeklyEnabled===undefined){ sub.weeklyEnabled = false; changed = true; }
+      if(sub.weeklyMax===undefined){ sub.weeklyMax = 10; changed = true; }
+      if(!sub.weeklyScores){ sub.weeklyScores = {}; changed = true; }
+      if(!sub.examScores){ sub.examScores = {}; changed = true; }
+    });
+  });
   DB.classes.forEach(c=>{
     // old shape: subjects was an array of plain strings
     if(c.subjects.length && typeof c.subjects[0] === 'string'){
@@ -669,14 +740,68 @@ function teachableSubjects(cls){
   return cls.subjects.filter(s=>s.teacher===session.username).map(s=>s.name);
 }
 
-function subjectAverage(classId, subj, studentId){
+/* Full SBA + Exam breakdown for one student in one subject.
+   sbaRaw/sbaMax = whatever the raw marks are before scaling (either the 4 CATs, or weekly totals).
+   sba50 = sbaRaw scaled to a mark out of 50.
+   examScore = raw exam mark out of 100. exam50 = that scaled to a mark out of 50.
+   grand = sba50 + exam50, i.e. the mark out of 100 used everywhere else in the app. */
+function subjectBreakdown(classId, subj, studentId){
   const sub = DB.gradebook[classId]?.[subj];
   if(!sub) return null;
-  const sc = sub.scores[studentId];
-  if(!sc) return null;
-  let earned=0, total=0;
-  sub.assessments.forEach(a=>{ earned += (sc[a.id]||0); total += a.max; });
-  return total ? Math.round((earned/total)*100) : null;
+  let sbaRaw = null, sbaMax = null;
+  if(sub.weeklyEnabled){
+    const weeks = DB.term?.weeks || 12;
+    const wk = sub.weeklyScores[studentId] || {};
+    let earned = 0, weeksEntered = 0;
+    for(let w=1; w<=weeks; w++){
+      const v = wk['w'+w];
+      if(v!==undefined && v!==null){ earned += Number(v)||0; weeksEntered++; }
+    }
+    if(weeksEntered>0){ sbaRaw = earned; sbaMax = weeksEntered * (sub.weeklyMax||10); }
+  } else {
+    const sc = sub.scores[studentId];
+    if(sc && Object.keys(sc).length){
+      let earned=0, total=0, anyEntered=false;
+      sub.assessments.forEach(a=>{
+        if(sc[a.id]!==undefined && sc[a.id]!==null){ earned += Number(sc[a.id])||0; anyEntered = true; }
+        total += a.max;
+      });
+      if(anyEntered){ sbaRaw = earned; sbaMax = total; }
+    }
+  }
+  const sba50 = (sbaRaw!==null && sbaMax) ? (sbaRaw/sbaMax)*50 : null;
+  const examRaw = sub.examScores ? sub.examScores[studentId] : null;
+  const examScore = (examRaw!==undefined && examRaw!==null) ? Number(examRaw) : null;
+  const exam50 = examScore!==null ? (examScore/100)*50 : null;
+  let grand = null;
+  if(sba50!==null || exam50!==null) grand = Math.round((sba50||0) + (exam50||0));
+  return { sbaRaw, sbaMax, sba50: sba50!==null?Math.round(sba50*10)/10:null, examScore, exam50: exam50!==null?Math.round(exam50*10)/10:null, grand };
+}
+function subjectAverage(classId, subj, studentId){
+  const b = subjectBreakdown(classId, subj, studentId);
+  return b ? b.grand : null;
+}
+function ordinal(n){
+  const s=['th','st','nd','rd'], v=n%100;
+  return n + (s[(v-20)%10]||s[v]||s[0]);
+}
+/* Position of a student within their class, ranked by overall average (grand total), highest first.
+   Standard "competition ranking": ties share the same rank, next rank skips accordingly. */
+function classPosition(studentId){
+  const s = studentById(studentId);
+  if(!s) return null;
+  const roster = studentsOf(s.classId);
+  const ranked = roster.map(r=>({ id:r.id, avg: overallAverage(r.id) }))
+    .filter(r=>r.avg!==null)
+    .sort((a,b)=>b.avg-a.avg);
+  if(!ranked.length) return null;
+  let rank = 0, lastAvg = null, seen = 0;
+  for(const r of ranked){
+    seen++;
+    if(r.avg !== lastAvg){ rank = seen; lastAvg = r.avg; }
+    if(r.id === studentId) return { rank, of: ranked.length };
+  }
+  return null;
 }
 function overallAverage(studentId){
   const st = studentById(studentId);
@@ -692,7 +817,12 @@ function letterFor(pct){
 }
 function attendanceRate(studentId, classId){
   const days = DB.attendance[classId] || {};
-  const keys = Object.keys(days);
+  let keys = Object.keys(days);
+  if(DB.term && DB.term.startDate){
+    const start = DB.term.startDate;
+    const end = todayStr((DB.term.weeks||12) * 7);
+    keys = keys.filter(d=> d>=start && d<=end);
+  }
   if(!keys.length) return null;
   let present=0, count=0;
   keys.forEach(d=>{
@@ -700,6 +830,22 @@ function attendanceRate(studentId, classId){
     if(status){ count++; if(status!=='absent') present++; }
   });
   return count ? Math.round((present/count)*100) : null;
+}
+/* Raw "X out of Y" attendance count over the term, for the report card. */
+function attendanceCounts(studentId, classId){
+  const days = DB.attendance[classId] || {};
+  let keys = Object.keys(days);
+  if(DB.term && DB.term.startDate){
+    const start = DB.term.startDate;
+    const end = todayStr((DB.term.weeks||12) * 7);
+    keys = keys.filter(d=> d>=start && d<=end);
+  }
+  let present=0, count=0;
+  keys.forEach(d=>{
+    const status = days[d][studentId];
+    if(status){ count++; if(status!=='absent') present++; }
+  });
+  return { present, total: count };
 }
 function classAvgAttendanceToday(classId){
   const d = todayStr(0);
@@ -929,7 +1075,7 @@ function renderStudents(){
         <div class="student-card">
           <div onclick="openStudent('${s.id}')" style="cursor:pointer;">
           <div class="top">
-            <div class="avatar" style="width:38px;height:38px;">${s.name.split(' ').map(w=>w[0]).slice(0,2).join('')}</div>
+            ${s.photo ? `<img src="${s.photo}" style="width:38px;height:38px;border-radius:50%;object-fit:cover;flex-shrink:0;">` : `<div class="avatar" style="width:38px;height:38px;">${s.name.split(' ').map(w=>w[0]).slice(0,2).join('')}</div>`}
             <div><div class="name">${s.name}</div><div class="cls">${classOf(s.classId).name}</div></div>
           </div>
           <div class="metrics">
@@ -970,6 +1116,40 @@ async function removeStudent(id){
   render();
 }
 function openStudent(id){ view.studentId = id; view.tab='overview'; render(); }
+let profilePhotoTarget = null;
+async function openEditProfile(id){
+  const s = studentById(id);
+  const newNameRaw = prompt('Full name:', s.name);
+  if(newNameRaw===null) return;
+  const newName = newNameRaw.trim();
+  if(!newName){ alert('Name cannot be empty.'); return; }
+  const newGuardianRaw = prompt('Guardian phone/contact:', s.guardian);
+  if(newGuardianRaw===null){ s.name = newName; await saveDB(); render(); return; }
+  s.name = newName;
+  s.guardian = newGuardianRaw.trim() || s.guardian;
+  await saveDB();
+  render();
+  if(confirm('Would you like to upload/change this student\'s photo now?')){
+    profilePhotoTarget = id;
+    document.getElementById('profile-photo-upload').click();
+  }
+}
+async function handleProfilePhoto(file){
+  if(!file || !profilePhotoTarget) return;
+  try{
+    const dataUrl = await readImageResized(file, 240);
+    const s = studentById(profilePhotoTarget);
+    if(s){ s.photo = dataUrl; await saveDB(); render(); }
+  }catch(e){ alert('Could not read that image — please try another file.'); }
+  profilePhotoTarget = null;
+}
+async function saveRemark(id){
+  const s = studentById(id);
+  const text = document.getElementById('remark-'+id).value;
+  s.remark = text;
+  await saveDB();
+  alert('Remark saved.');
+}
 
 /* ============================================================
    Student detail
@@ -981,13 +1161,26 @@ function renderStudentDetail(id){
   const att = attendanceRate(id, s.classId);
   const homeroomName = cls.homeroomTeacher ? teacherName(cls.homeroomTeacher) : null;
 
+  const pos = classPosition(id);
+  const canEditProfile = session.role==='Admin' || cls.homeroomTeacher===session.username;
+
   let body = '';
   if(view.tab==='overview'){
     body = `
-      <div class="stat-grid" style="grid-template-columns:repeat(3,1fr);">
+      <div class="stat-grid" style="grid-template-columns:repeat(4,1fr);">
         <div class="stat-card"><div class="label">Overall average</div><div class="value grade-${letterFor(avg)}">${avg??'—'}${avg!==null?'%':''}</div><div class="sub">Grade ${letterFor(avg)}</div></div>
-        <div class="stat-card"><div class="label">Attendance rate</div><div class="value">${att??'—'}${att!==null?'%':''}</div><div class="sub">Last 7 school days</div></div>
+        <div class="stat-card"><div class="label">Class position</div><div class="value">${pos?ordinal(pos.rank):'—'}</div><div class="sub">${pos?'out of '+pos.of:'Not enough data yet'}</div></div>
+        <div class="stat-card"><div class="label">Attendance rate</div><div class="value">${att??'—'}${att!==null?'%':''}</div><div class="sub">This term</div></div>
         <div class="stat-card"><div class="label">Homeroom</div><div class="value" style="font-size:20px;">${cls.name}</div><div class="sub">${homeroomName || 'No homeroom teacher assigned'}</div></div>
+      </div>
+      <div class="panel"><div class="panel-head"><h3>Profile</h3>${canEditProfile ? `<button class="btn-ghost" onclick="openEditProfile('${id}')">Edit profile</button>` : ''}</div>
+        <div class="panel-body" style="padding-top:14px;padding-bottom:16px;display:flex;gap:18px;align-items:center;flex-wrap:wrap;">
+          <div style="position:relative;">
+            ${s.photo ? `<img src="${s.photo}" style="width:72px;height:72px;border-radius:50%;object-fit:cover;border:1px solid var(--line);">` : `<div class="avatar" style="width:72px;height:72px;font-size:22px;background:var(--ink);color:var(--brass-soft);">${s.name.split(' ').map(w=>w[0]).slice(0,2).join('')}</div>`}
+            ${canEditProfile ? `<button class="btn-ghost" style="position:absolute;bottom:-8px;left:50%;transform:translateX(-50%);padding:2px 8px;font-size:10.5px;white-space:nowrap;" onclick="profilePhotoTarget='${id}'; document.getElementById('profile-photo-upload').click()">Change photo</button>` : ''}
+          </div>
+          <div><div style="font-size:12px;color:var(--slate);font-weight:600;text-transform:uppercase;letter-spacing:0.05em;">Guardian contact</div><div class="mono" style="margin-top:3px;">${s.guardian}</div></div>
+        </div>
       </div>
       <div class="panel"><div class="panel-head"><h3>Subject performance</h3></div><div class="panel-body">
         ${cls.subjects.map((subj,i)=>{
@@ -997,7 +1190,14 @@ function renderStudentDetail(id){
             <span class="grade-letter grade-${letterFor(p)}">${p??'—'}${p!==null?'%':''} &nbsp; ${letterFor(p)}</span></div>`;
         }).join('')}
       </div></div>
-      <div class="panel"><div class="panel-head"><h3>Guardian contact</h3></div><div class="panel-body" style="padding-bottom:16px;"><span class="mono">${s.guardian}</span></div></div>
+      <div class="panel"><div class="panel-head"><h3>Teacher remarks (for report card)</h3></div>
+        <div class="panel-body" style="padding-top:14px;padding-bottom:16px;">
+          ${canEditProfile ? `
+            <textarea id="remark-${id}" rows="3" style="width:100%;padding:10px;border-radius:8px;border:1.5px solid var(--line);font-family:inherit;font-size:13.5px;" placeholder="e.g. A hardworking student who participates well in class discussions.">${s.remark||''}</textarea>
+            <button class="btn-small brass" style="margin-top:8px;" onclick="saveRemark('${id}')">Save remark</button>
+          ` : `<p style="margin:0;font-size:13.5px;color:var(--slate);">${s.remark || 'No remark added yet.'}</p>`}
+        </div>
+      </div>
     `;
   } else if(view.tab==='grades'){
     body = cls.subjects.map(subjObj=>{
@@ -1005,16 +1205,28 @@ function renderStudentDetail(id){
       const sub = DB.gradebook[s.classId][subj];
       const sc = sub.scores[id] || {};
       const canEdit = session.role==='Admin' || subjObj.teacher===session.username;
+      const b = subjectBreakdown(s.classId, subj, id);
+      const weeks = DB.term?.weeks || 12;
+      const weeklyRows = sub.weeklyEnabled ? Array.from({length:weeks},(_,i)=>i+1).map(w=>{
+        const v = (sub.weeklyScores[id]||{})['w'+w];
+        return `<tr><td>Week ${w}</td>
+          <td>${canEdit ? `<input class="score-input" type="number" min="0" max="${sub.weeklyMax}" value="${v??''}" placeholder="—" onchange="updateWeeklyScore('${s.classId}','${subj}','${id}',${w},this.value)">` : (v??'—')}</td>
+          <td class="mono">${sub.weeklyMax}</td></tr>`;
+      }).join('') : '';
       return `
-      <div class="panel"><div class="panel-head"><h3>${subj}</h3><span class="mono" style="font-size:12px;color:var(--slate)">${subjectAverage(s.classId,subj,id)??'—'}%</span></div>
+      <div class="panel"><div class="panel-head"><h3>${subj}</h3><span class="mono" style="font-size:12px;color:var(--slate)">${b.grand??'—'}${b.grand!==null?'%':''}</span></div>
       <div class="panel-body">
         <table class="reg"><thead><tr><th>Assessment</th><th>Score</th><th>Out of</th></tr></thead>
         <tbody>
-        ${sub.assessments.map(a=>`
+        ${sub.weeklyEnabled ? weeklyRows : sub.assessments.map(a=>`
           <tr><td>${a.name}</td>
-          <td>${canEdit ? `<input class="score-input" type="number" min="0" max="${a.max}" value="${sc[a.id]??0}" onchange="updateScore('${s.classId}','${subj}','${id}','${a.id}',this.value)">` : (sc[a.id]??'—')}</td>
+          <td>${canEdit ? `<input class="score-input" type="number" min="0" max="${a.max}" value="${sc[a.id]??''}" placeholder="—" onchange="updateScore('${s.classId}','${subj}','${id}','${a.id}',this.value)">` : (sc[a.id]??'—')}</td>
           <td class="mono">${a.max}</td></tr>`).join('')}
+        <tr><td style="font-weight:600;">Exam</td>
+          <td>${canEdit ? `<input class="score-input" type="number" min="0" max="100" value="${b.examScore??''}" placeholder="—" onchange="updateExamScore('${s.classId}','${subj}','${id}',this.value)">` : (b.examScore??'—')}</td>
+          <td class="mono">100</td></tr>
         </tbody></table>
+        <p style="margin:10px 0 0;font-size:12.5px;color:var(--slate);">SBA (50%): <b class="mono">${b.sba50??'—'}</b> &nbsp;+&nbsp; Exam (50%): <b class="mono">${b.exam50??'—'}</b> &nbsp;=&nbsp; Grand total: <b class="mono">${b.grand??'—'}</b></p>
       </div></div>`;
     }).join('');
   } else if(view.tab==='attendance'){
@@ -1047,8 +1259,10 @@ function renderStudentDetail(id){
   `;
 }
 async function updateScore(classId, subj, studentId, assessId, val){
-  const n = Math.max(0, Number(val)||0);
-  DB.gradebook[classId][subj].scores[studentId][assessId] = n;
+  const sc = DB.gradebook[classId][subj].scores;
+  if(!sc[studentId]) sc[studentId] = {};
+  if(val===''){ delete sc[studentId][assessId]; }
+  else{ sc[studentId][assessId] = Math.max(0, Number(val)||0); }
   await saveDB();
   render();
 }
@@ -1056,6 +1270,7 @@ async function updateScore(classId, subj, studentId, assessId, val){
 /* ============================================================
    Gradebook (class-wide)
 ============================================================ */
+let gbWeek = 1;
 function renderGradebook(){
   const classes = accessibleClasses().filter(c=> teachableSubjects(c).length>0);
   if(!classes.length){
@@ -1072,6 +1287,10 @@ function renderGradebook(){
   const subjObj = subjectOf(cls, view.subject);
   const canEdit = session.role==='Admin' || subjObj.teacher===session.username;
   const roster = studentsOf(cls.id);
+  const weeks = DB.term?.weeks || 12;
+  if(gbWeek < 1 || gbWeek > weeks) gbWeek = 1;
+
+  const catMax = sub.assessments.reduce((a,c)=>a+c.max,0);
 
   return `
     <div class="topbar">
@@ -1086,23 +1305,105 @@ function renderGradebook(){
         ${mySubjects.map(s=>`<option value="${s}" ${s===view.subject?'selected':''}>${s}</option>`).join('')}
       </select>
     </div>
-    <div class="panel"><div class="panel-body" style="padding-top:16px;">
+
+    ${canEdit ? `
+    <div class="crud-box" style="display:flex;align-items:center;gap:10px;justify-content:space-between;flex-wrap:wrap;">
+      <div>
+        <h4 style="margin-bottom:2px;">Weekly assessment for ${view.subject}</h4>
+        <span style="font-size:12.5px;color:var(--slate);">When on, weekly marks replace the 4 SBA categories below for this subject. Both are scaled to 50% the same way.</span>
+      </div>
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;">
+        <input type="checkbox" ${sub.weeklyEnabled?'checked':''} onchange="toggleWeekly('${cls.id}','${view.subject}',this.checked)"> Conduct weekly assessment
+      </label>
+    </div>` : ''}
+
+    ${sub.weeklyEnabled ? `
+    <div class="panel"><div class="panel-head"><h3>Weekly marks</h3>
+      <div style="display:flex;align-items:center;gap:8px;">
+        <label style="font-size:12.5px;color:var(--slate);">Week</label>
+        <select onchange="gbWeek=Number(this.value); render()">
+          ${Array.from({length:weeks},(_,i)=>i+1).map(w=>`<option value="${w}" ${w===gbWeek?'selected':''}>Week ${w}</option>`).join('')}
+        </select>
+        ${canEdit ? `<label style="font-size:12.5px;color:var(--slate);">Max for this week</label>
+        <input type="number" class="score-input" style="width:56px;" min="1" value="${sub.weeklyMax}" onchange="setWeeklyMax('${cls.id}','${view.subject}',this.value)">` : ''}
+      </div>
+    </div>
+    <div class="panel-body" style="padding-top:0;">
+      <table class="reg"><thead><tr><th>Student</th><th>Week ${gbWeek} mark<br><span class="mono" style="font-weight:400;">/${sub.weeklyMax}</span></th></tr></thead>
+      <tbody>
+        ${roster.map(s=>{
+          const v = (sub.weeklyScores[s.id]||{})['w'+gbWeek];
+          return `<tr><td style="font-weight:600;">${s.name}</td>
+            <td>${canEdit ? `<input class="score-input" type="number" min="0" max="${sub.weeklyMax}" value="${v??''}" placeholder="—" onchange="updateWeeklyScore('${cls.id}','${view.subject}','${s.id}',${gbWeek},this.value)">` : (v??'—')}</td></tr>`;
+        }).join('')}
+      </tbody></table>
+    </div></div>
+    ` : `
+    <div class="panel"><div class="panel-head"><h3>SBA — 4 categories (out of ${catMax}, scaled to 50%)</h3></div>
+    <div class="panel-body" style="padding-top:10px;">
       <table class="reg">
-        <thead><tr><th>Student</th>${sub.assessments.map(a=>`<th>${a.name}<br><span class="mono" style="font-weight:400;">/${a.max}</span></th>`).join('')}<th>Average</th></tr></thead>
+        <thead><tr><th>Student</th>${sub.assessments.map(a=>`<th>${a.name}<br><span class="mono" style="font-weight:400;">/${a.max}</span></th>`).join('')}</tr></thead>
         <tbody>
           ${roster.map(s=>{
             const sc = sub.scores[s.id] || {};
-            const avg = subjectAverage(cls.id, view.subject, s.id);
             return `<tr>
-              <td onclick="openStudent('${s.id}')" style="cursor:pointer;font-weight:600;">${s.name}</td>
-              ${sub.assessments.map(a=>`<td>${canEdit ? `<input class="score-input" type="number" min="0" max="${a.max}" value="${sc[a.id]??0}" onchange="updateScore('${cls.id}','${view.subject}','${s.id}','${a.id}',this.value)">` : (sc[a.id]??'—')}</td>`).join('')}
-              <td class="grade-letter grade-${letterFor(avg)}">${avg??'—'}%</td>
+              <td style="font-weight:600;">${s.name}</td>
+              ${sub.assessments.map(a=>`<td>${canEdit ? `<input class="score-input" type="number" min="0" max="${a.max}" value="${sc[a.id]??''}" placeholder="—" onchange="updateScore('${cls.id}','${view.subject}','${s.id}','${a.id}',this.value)">` : (sc[a.id]??'—')}</td>`).join('')}
             </tr>`;
           }).join('')}
         </tbody>
       </table>
     </div></div>
+    `}
+
+    <div class="panel"><div class="panel-head"><h3>End-of-term exam &amp; grand total</h3></div>
+    <div class="panel-body" style="padding-top:10px;">
+      <table class="reg">
+        <thead><tr><th>Student</th><th>SBA<br><span class="mono" style="font-weight:400;">/50</span></th><th>Exam<br><span class="mono" style="font-weight:400;">/100</span></th><th>Exam<br><span class="mono" style="font-weight:400;">/50</span></th><th>Grand total<br><span class="mono" style="font-weight:400;">/100</span></th><th>Position</th></tr></thead>
+        <tbody>
+          ${roster.map(s=>{
+            const b = subjectBreakdown(cls.id, view.subject, s.id);
+            const pos = classPosition(s.id);
+            return `<tr>
+              <td onclick="openStudent('${s.id}')" style="cursor:pointer;font-weight:600;">${s.name}</td>
+              <td class="mono">${b.sba50??'—'}</td>
+              <td>${canEdit ? `<input class="score-input" type="number" min="0" max="100" value="${b.examScore??''}" placeholder="—" onchange="updateExamScore('${cls.id}','${view.subject}','${s.id}',this.value)">` : (b.examScore??'—')}</td>
+              <td class="mono">${b.exam50??'—'}</td>
+              <td class="grade-letter grade-${letterFor(b.grand)}">${b.grand??'—'}${b.grand!==null?'%':''}</td>
+              <td class="mono">${pos?ordinal(pos.rank)+' / '+pos.of:'—'}</td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+      <p style="margin:12px 0 4px;font-size:12px;color:var(--slate);">Position shown here is the student's overall class position (average across all subjects), not just this one subject.</p>
+    </div></div>
   `;
+}
+async function toggleWeekly(classId, subj, on){
+  DB.gradebook[classId][subj].weeklyEnabled = !!on;
+  await saveDB();
+  render();
+}
+async function setWeeklyMax(classId, subj, val){
+  const n = Math.max(1, Number(val)||10);
+  DB.gradebook[classId][subj].weeklyMax = n;
+  await saveDB();
+  render();
+}
+async function updateWeeklyScore(classId, subj, studentId, week, val){
+  const sub = DB.gradebook[classId][subj];
+  if(!sub.weeklyScores[studentId]) sub.weeklyScores[studentId] = {};
+  if(val===''){ delete sub.weeklyScores[studentId]['w'+week]; }
+  else{ sub.weeklyScores[studentId]['w'+week] = Math.max(0, Number(val)||0); }
+  await saveDB();
+  render();
+}
+async function updateExamScore(classId, subj, studentId, val){
+  const sub = DB.gradebook[classId][subj];
+  if(val===''){ delete sub.examScores[studentId]; }
+  else{ sub.examScores[studentId] = Math.max(0, Math.min(100, Number(val)||0)); }
+  await saveDB();
+  render();
 }
 
 /* ============================================================
@@ -1273,8 +1574,39 @@ async function assignSubjectTeacher(classId, subjectName, username){
    Staff accounts (admin)
 ============================================================ */
 function renderStaff(){
+  const term = DB.term || { startDate: todayStr(0), weeks:12, termNumber:1 };
+  const termEndDate = todayStr(term.weeks*7);
+  const staffAndAdmins = DB.users;
   return `
     <div class="topbar"><div><div class="eyebrow">Administration</div><h1>Staff Accounts</h1></div></div>
+
+    <div class="panel"><div class="panel-head"><h3>Term setup</h3></div>
+      <div class="panel-body" style="padding-top:14px;padding-bottom:16px;">
+        <p style="margin:0 0 10px;font-size:13px;color:var(--slate);">This controls attendance totals and the term shown on report cards. Set it once at the start of each term.</p>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;align-items:end;">
+          <div><label style="display:block;font-size:11.5px;color:var(--slate);font-weight:600;margin-bottom:5px;">Term start date</label>
+            <input type="date" id="term-start" value="${term.startDate}"></div>
+          <div><label style="display:block;font-size:11.5px;color:var(--slate);font-weight:600;margin-bottom:5px;">Number of weeks</label>
+            <input type="number" id="term-weeks" min="1" max="20" value="${term.weeks}"></div>
+          <div><label style="display:block;font-size:11.5px;color:var(--slate);font-weight:600;margin-bottom:5px;">Which term</label>
+            <select id="term-number">
+              ${TERM_NAMES.map((t,i)=>`<option value="${i+1}" ${term.termNumber===i+1?'selected':''}>${t}</option>`).join('')}
+            </select></div>
+          <button class="btn-small brass" onclick="saveTermSetup()">Save term setup</button>
+        </div>
+        <p style="margin:10px 0 0;font-size:12px;color:var(--slate);">Ends around <span class="mono">${fmtDate(termEndDate)}</span> · attendance and report cards use this range.</p>
+      </div>
+    </div>
+
+    <div class="panel"><div class="panel-head"><h3>Head teacher</h3></div>
+      <div class="panel-body" style="padding-top:14px;padding-bottom:16px;">
+        <p style="margin:0 0 10px;font-size:13px;color:var(--slate);">Choose who signs as head teacher on every report card. They can then upload their own signature from the sidebar after signing in.</p>
+        <select onchange="setHeadTeacher(this.value)">
+          <option value="">— Not set —</option>
+          ${staffAndAdmins.map(u=>`<option value="${u.username}" ${DB.headTeacherUsername===u.username?'selected':''}>${u.name}</option>`).join('')}
+        </select>
+      </div>
+    </div>
 
     <div class="panel"><div class="panel-head"><h3>Invite teachers</h3></div>
       <div class="panel-body" style="padding-top:14px;padding-bottom:16px;">
@@ -1327,6 +1659,28 @@ function renderStaff(){
       </div>
     </div>
   `;
+}
+async function uploadMySignature(file){
+  if(!file) return;
+  try{
+    const dataUrl = await readImageResized(file, 300);
+    const u = userByUsername(session.username);
+    if(u){ u.signature = dataUrl; await saveDB(); alert('Signature saved.'); }
+  }catch(e){ alert('Could not read that image — please try another file.'); }
+}
+async function saveTermSetup(){
+  const startDate = document.getElementById('term-start').value;
+  const weeks = Math.max(1, Number(document.getElementById('term-weeks').value)||12);
+  const termNumber = Number(document.getElementById('term-number').value);
+  if(!startDate) return;
+  DB.term = { startDate, weeks, termNumber };
+  await saveDB();
+  render();
+}
+async function setHeadTeacher(username){
+  DB.headTeacherUsername = username || null;
+  await saveDB();
+  render();
 }
 function copyRegLink(){
   const link = location.origin + location.pathname + '#register';
@@ -1416,12 +1770,21 @@ function buildReportCardHTML(studentId){
   const cls = classOf(s.classId);
   const avg = overallAverage(studentId);
   const att = attendanceRate(studentId, s.classId);
+  const attCounts = attendanceCounts(studentId, s.classId);
+  const pos = classPosition(studentId);
   const homeroomName = cls.homeroomTeacher ? teacherName(cls.homeroomTeacher) : '—';
+  const homeroomUser = cls.homeroomTeacher ? userByUsername(cls.homeroomTeacher) : null;
+  const headUser = DB.headTeacherUsername ? userByUsername(DB.headTeacherUsername) : null;
+  const termLabel = TERM_NAMES[(DB.term?.termNumber||1)-1] || '1st Term';
+  const photoHTML = s.photo
+    ? `<img src="${s.photo}" style="width:64px;height:64px;border-radius:50%;object-fit:cover;border:1px solid var(--line);">`
+    : `<div class="avatar" style="width:64px;height:64px;background:var(--ink);color:var(--brass-soft);">${s.name.split(' ').map(w=>w[0]).slice(0,2).join('')}</div>`;
   return `
     <div class="rc-page">
       <div class="rc-head">
         <div class="crest"><span>CA</span></div>
-        <div><h2>Clyde Academy</h2><p>Student Report Card</p></div>
+        <div><h2>Clyde Academy</h2><p>Student Report Card — ${termLabel}</p></div>
+        <div style="margin-left:auto;">${photoHTML}</div>
       </div>
       <div class="rc-meta">
         <div><b>Student</b>${s.name}</div>
@@ -1429,24 +1792,36 @@ function buildReportCardHTML(studentId){
         <div><b>Homeroom teacher</b>${homeroomName}</div>
         <div><b>Guardian contact</b>${s.guardian}</div>
         <div><b>Date issued</b>${fmtDate(todayStr(0))}</div>
-        <div><b>Attendance rate</b>${att??'—'}${att!==null?'%':''}</div>
+        <div><b>Attendance</b>${attCounts.total ? attCounts.present+' / '+attCounts.total+' ('+(att??'—')+'%)' : '—'}</div>
+        <div><b>Class position</b>${pos ? ordinal(pos.rank)+' out of '+pos.of : '—'}</div>
       </div>
       <table class="rc-table">
-        <thead><tr><th>Subject</th><th>Score</th><th>Grade</th></tr></thead>
+        <thead><tr><th>Subject</th><th>SBA /50</th><th>Exam /50</th><th>Total /100</th><th>Grade</th></tr></thead>
         <tbody>
           ${cls.subjects.map(subj=>{
-            const p = subjectAverage(s.classId, subj.name, studentId);
-            return `<tr><td>${subj.name}</td><td>${p??'—'}${p!==null?'%':''}</td><td>${letterFor(p)}</td></tr>`;
+            const b = subjectBreakdown(s.classId, subj.name, studentId);
+            return `<tr><td>${subj.name}</td><td>${b.sba50??'—'}</td><td>${b.exam50??'—'}</td><td>${b.grand??'—'}${b.grand!==null?'%':''}</td><td>${letterFor(b.grand)}</td></tr>`;
           }).join('')}
         </tbody>
       </table>
       <div class="rc-summary">
         <div><div class="n">${avg??'—'}${avg!==null?'%':''}</div><div class="l">Overall average</div></div>
         <div><div class="n">${letterFor(avg)}</div><div class="l">Overall grade</div></div>
+        <div><div class="n">${pos?ordinal(pos.rank):'—'}</div><div class="l">Class position</div></div>
       </div>
+      <div class="panel" style="box-shadow:none;margin-bottom:24px;"><div class="panel-body" style="padding-top:14px;">
+        <div style="font-size:11px;text-transform:uppercase;letter-spacing:0.05em;color:var(--slate);font-weight:600;margin-bottom:4px;">Teacher's remarks</div>
+        <div style="font-size:13px;">${s.remark || '—'}</div>
+      </div></div>
       <div class="rc-sign">
-        <div>Class Teacher</div>
-        <div>Head Teacher</div>
+        <div>
+          ${homeroomUser && homeroomUser.signature ? `<img src="${homeroomUser.signature}" style="height:40px;object-fit:contain;display:block;margin:0 auto 4px;">` : '<div style="height:44px;"></div>'}
+          Class Teacher
+        </div>
+        <div>
+          ${headUser && headUser.signature ? `<img src="${headUser.signature}" style="height:40px;object-fit:contain;display:block;margin:0 auto 4px;">` : '<div style="height:44px;"></div>'}
+          Head Teacher
+        </div>
       </div>
     </div>
   `;
