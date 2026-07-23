@@ -57,6 +57,60 @@
   .crest span{
     font-family:'Fraunces', serif; font-weight:700; color:var(--ink); font-size:16px;
   }
+  .crest img{ width:100%; height:100%; border-radius:50%; object-fit:cover; }
+
+  /* ---------- Login book animation ---------- */
+  .book-scene{ display:flex; justify-content:center; margin-bottom:6px; }
+  .book-svg{ width:150px; height:auto; overflow:visible; }
+  .book-left{ transform-origin:110px 74px; animation:pageOpenLeft 2.6s ease-in-out infinite; }
+  .book-right{ transform-origin:110px 74px; animation:pageOpenRight 2.6s ease-in-out infinite; }
+  @keyframes pageOpenLeft{
+    0%,100%{ transform:rotateY(0deg); }
+    45%,60%{ transform:rotateY(18deg); }
+  }
+  @keyframes pageOpenRight{
+    0%,100%{ transform:rotateY(0deg); }
+    45%,60%{ transform:rotateY(-18deg); }
+  }
+  .book-figure{ animation:figureNod 2.6s ease-in-out infinite; transform-origin:110px 55px; }
+  @keyframes figureNod{
+    0%,100%{ transform:translateY(0) rotate(0deg); }
+    50%{ transform:translateY(2px) rotate(-2deg); }
+  }
+  .book-signature{
+    stroke-dasharray:60; stroke-dashoffset:60;
+    animation:signWrite 2.6s ease-in-out infinite;
+  }
+  @keyframes signWrite{
+    0%,40%{ stroke-dashoffset:60; opacity:0; }
+    55%{ opacity:1; }
+    85%,100%{ stroke-dashoffset:0; opacity:1; }
+  }
+
+  /* ---------- Register badge animation ---------- */
+  .badge-scene{ display:flex; justify-content:center; margin-bottom:6px; }
+  .badge-svg{ width:150px; height:auto; overflow:visible; }
+  .badge-card{ animation:cardRise 2.8s ease-in-out infinite; }
+  @keyframes cardRise{
+    0%,100%{ transform:translateY(3px); }
+    50%{ transform:translateY(-2px); }
+  }
+  .badge-line{ opacity:0.5; animation:lineGrow 2.8s ease-in-out infinite; transform-origin:left center; }
+  .badge-line1{ animation-delay:0.1s; }
+  .badge-line2{ animation-delay:0.3s; }
+  @keyframes lineGrow{
+    0%,20%{ transform:scaleX(0); opacity:0; }
+    45%,100%{ transform:scaleX(1); opacity:0.6; }
+  }
+  .badge-stamp{
+    opacity:0; transform:scale(1.6) rotate(-12deg); transform-origin:150px 90px;
+    animation:stampIn 2.8s ease-in-out infinite;
+  }
+  @keyframes stampIn{
+    0%,55%{ opacity:0; transform:scale(1.6) rotate(-12deg); }
+    72%{ opacity:1; transform:scale(0.92) rotate(-12deg); }
+    82%,100%{ opacity:1; transform:scale(1) rotate(-12deg); }
+  }
 
   /* ---------- Login ---------- */
   #login-screen{
@@ -310,10 +364,27 @@
 <!-- ===================== LOGIN ===================== -->
 <div id="login-screen">
   <div class="login-card">
+    <div class="book-scene" aria-hidden="true">
+      <svg viewBox="0 0 220 130" class="book-svg">
+        <ellipse cx="110" cy="118" rx="86" ry="8" fill="rgba(0,0,0,0.10)"/>
+        <g class="book-figure">
+          <circle cx="110" cy="30" r="13" fill="#3B2E23"/>
+          <path d="M92 62 Q110 44 128 62 L128 78 Q110 66 92 78 Z" fill="#4C5A73"/>
+        </g>
+        <g class="book-left">
+          <path d="M110 100 L110 48 Q80 40 34 48 L34 100 Q80 92 110 100 Z" fill="#F7F2E7" stroke="#C9A227" stroke-width="1.5"/>
+        </g>
+        <g class="book-right">
+          <path d="M110 100 L110 48 Q140 40 186 48 L186 100 Q140 92 110 100 Z" fill="#F7F2E7" stroke="#C9A227" stroke-width="1.5"/>
+        </g>
+        <path class="book-signature" d="M52 78 Q62 68 70 78 T88 78 T96 74" fill="none" stroke="#1F2430" stroke-width="2" stroke-linecap="round"/>
+        <path d="M108 46 L112 46 L112 100 L108 100 Z" fill="#C9A227"/>
+      </svg>
+    </div>
     <div class="login-head">
-      <div class="crest"><span>CA</span></div>
+      <div class="crest" id="login-crest"><span>CA</span></div>
       <div>
-        <h1 class="login-title">Clyde Academy</h1>
+        <h1 class="login-title" id="login-school-name">Clyde Academy</h1>
       </div>
     </div>
     <p class="login-sub">Academic register &amp; performance system</p>
@@ -329,7 +400,7 @@
     <p id="login-error" style="display:none;color:var(--brick);font-size:12.5px;font-weight:600;margin:-8px 0 14px;">Incorrect username or password.</p>
 
     <button class="btn-primary" onclick="login()">Enter register</button>
-    <p class="login-foot">Staff access only · Clyde Academy © 2026</p>
+    <p class="login-foot" id="login-footer">Staff access only · Clyde Academy © 2026</p>
     <p class="login-foot" style="margin-top:8px;">First time here as a teacher? <button class="auth-link" onclick="showRegister()">Register an account</button></p>
     <script>
       document.getElementById('login-username').addEventListener('keydown', e=>{ if(e.key==='Enter') login(); });
@@ -342,8 +413,20 @@
 <div id="register-screen" style="display:none;">
   <div style="min-height:100vh; display:flex; align-items:center; justify-content:center; background:linear-gradient(var(--ink), var(--ink)); padding:24px;">
     <div class="login-card">
+      <div class="badge-scene" aria-hidden="true">
+        <svg viewBox="0 0 220 130" class="badge-svg">
+          <rect x="70" y="16" width="80" height="98" rx="10" fill="#F7F2E7" stroke="#C9A227" stroke-width="1.5" class="badge-card"/>
+          <circle cx="110" cy="48" r="14" fill="#C4CBDD" class="badge-photo"/>
+          <rect x="88" y="70" width="44" height="6" rx="3" fill="#C4CBDD" class="badge-line badge-line1"/>
+          <rect x="94" y="82" width="32" height="5" rx="2.5" fill="#C4CBDD" class="badge-line badge-line2"/>
+          <g class="badge-stamp">
+            <circle cx="150" cy="90" r="22" fill="none" stroke="#2E7D32" stroke-width="3"/>
+            <path d="M140 90 L147 98 L162 80" fill="none" stroke="#2E7D32" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </g>
+        </svg>
+      </div>
       <div class="login-head">
-        <div class="crest"><span>CA</span></div>
+        <div class="crest" id="register-crest"><span>CA</span></div>
         <div><h1 class="login-title">Teacher Registration</h1></div>
       </div>
       <p class="login-sub">Create your account for the first time. Your class and subjects will be assigned by the administrator afterward.</p>
@@ -369,8 +452,8 @@
   <div class="shell">
     <div class="sidebar">
       <div class="sidebar-head">
-        <div class="crest"><span>CA</span></div>
-        <div class="brand">Clyde Academy<small>Academic Register</small></div>
+        <div class="crest" id="sidebar-crest"><span>CA</span></div>
+        <div class="brand" id="sidebar-brand">Clyde Academy<small>Academic Register</small></div>
       </div>
       <div class="nav" id="nav-items"></div>
       <div class="sidebar-foot">
@@ -494,6 +577,7 @@ async function loadDB(){
       }
       migrateDB();
       writeLocalCache();
+      applyBranding();
       setSyncBadge(snap.metadata && snap.metadata.fromCache ? 'offline' : 'synced');
 
       // live updates from other devices/browsers
@@ -504,6 +588,7 @@ async function loadDB(){
           DB = incoming;
           migrateDB();
           writeLocalCache();
+          applyBranding();
           if(session) render();
         }
         setSyncBadge(doc.metadata.fromCache ? 'offline' : 'synced');
@@ -521,6 +606,7 @@ async function loadDB(){
   DB = readLocalCache() || seedDB();
   migrateDB();
   writeLocalCache();
+  applyBranding();
   setSyncBadge('local');
 }
 
@@ -547,6 +633,76 @@ function fmtDate(s){
   return d.toLocaleDateString('en-GB', { weekday:'short', day:'2-digit', month:'short' });
 }
 
+/* ============================================================
+   Term week tracking — used to lock weekly SBA entry to "this
+   week only" and to redflag subjects/attendance that missed
+   their Friday deadline.
+============================================================ */
+function addDays(dateStr, n){
+  const d = new Date(dateStr+'T00:00:00');
+  d.setDate(d.getDate()+n);
+  return d.toISOString().slice(0,10);
+}
+function mondayOf(dateStr){
+  const d = new Date(dateStr+'T00:00:00');
+  const day = d.getDay();
+  const diff = (day===0) ? -6 : (1-day);
+  d.setDate(d.getDate()+diff);
+  return d.toISOString().slice(0,10);
+}
+function termStartMonday(){
+  return mondayOf(DB.term?.startDate || todayStr(0));
+}
+function weekMonday(weekNum){ return addDays(termStartMonday(), (weekNum-1)*7); }
+function weekFriday(weekNum){ return addDays(termStartMonday(), (weekNum-1)*7 + 4); }
+/* Which week number "today" falls in, clamped to the term's length. */
+function currentTermWeek(){
+  const weeks = DB.term?.weeks || 12;
+  const mon = termStartMonday(), today = todayStr(0);
+  let wk = Math.floor((new Date(today) - new Date(mon)) / (7*86400000)) + 1;
+  if(wk<1) wk = 1;
+  if(wk>weeks) wk = weeks;
+  return wk;
+}
+function isWeekOverdue(weekNum){ return todayStr(0) > weekFriday(weekNum); }
+function weeklyEntryExists(classId, subj, weekNum){
+  const sub = DB.gradebook[classId]?.[subj];
+  if(!sub) return false;
+  return Object.values(sub.weeklyScores||{}).some(rec=> rec && rec['w'+weekNum]!==undefined && rec['w'+weekNum]!==null);
+}
+function recordWeeklyMeta(classId, subj, week){
+  if(!DB.weeklyMeta[classId]) DB.weeklyMeta[classId] = {};
+  if(!DB.weeklyMeta[classId][subj]) DB.weeklyMeta[classId][subj] = {};
+  const u = userByUsername(session.username);
+  DB.weeklyMeta[classId][subj][week] = { by: session.username, byName: u?u.name:session.username, at: Date.now() };
+}
+function recordAttendanceMeta(classId, date){
+  if(!DB.attendanceMeta[classId]) DB.attendanceMeta[classId] = {};
+  const u = userByUsername(session.username);
+  DB.attendanceMeta[classId][date] = { by: session.username, byName: u?u.name:session.username, at: Date.now() };
+}
+/* Every Mon-Fri school day in the term, up to and including today (never into the future). */
+function schoolDaysSoFar(){
+  const weeks = DB.term?.weeks || 12;
+  const mon = termStartMonday(), today = todayStr(0);
+  const out = [];
+  for(let w=1; w<=weeks; w++){
+    for(let dOff=0; dOff<5; dOff++){
+      const d = addDays(mon, (w-1)*7 + dOff);
+      if(d<=today) out.push({ date:d, week:w });
+    }
+  }
+  return out;
+}
+/* The term is split into 4 roughly-equal blocks, one per CAT, so a subject teacher only ever sees
+   the CAT that's "in season" this week rather than the whole term's worth of categories at once. */
+function activeCatIndex(){
+  const weeks = DB.term?.weeks || 12;
+  const wk = currentTermWeek();
+  const blockSize = Math.max(1, Math.ceil(weeks/4));
+  return Math.min(3, Math.floor((wk-1)/blockSize));
+}
+
 /* Read an <input type=file> image, shrink it down (so it doesn't bloat storage), and return a base64 data URL. */
 function readImageResized(file, maxWidth){
   return new Promise((resolve, reject)=>{
@@ -567,6 +723,23 @@ function readImageResized(file, maxWidth){
     };
     reader.readAsDataURL(file);
   });
+}
+
+/* School branding — reflects DB.school.{name,crest} across the login, registration, and sidebar screens. */
+function schoolInitials(name){
+  return (name||'CA').trim().split(/\s+/).map(w=>w[0]).slice(0,2).join('').toUpperCase() || 'CA';
+}
+function applyBranding(){
+  if(!DB || !DB.school) return;
+  const name = DB.school.name || 'Clyde Academy';
+  const crestHTML = DB.school.crest ? `<img src="${DB.school.crest}">` : `<span>${schoolInitials(name)}</span>`;
+  document.title = name;
+  const loginCrest = document.getElementById('login-crest'); if(loginCrest) loginCrest.innerHTML = crestHTML;
+  const regCrest = document.getElementById('register-crest'); if(regCrest) regCrest.innerHTML = crestHTML;
+  const sidebarCrest = document.getElementById('sidebar-crest'); if(sidebarCrest) sidebarCrest.innerHTML = crestHTML;
+  const loginName = document.getElementById('login-school-name'); if(loginName) loginName.textContent = name;
+  const loginFooter = document.getElementById('login-footer'); if(loginFooter) loginFooter.textContent = `Staff access only · ${name} © ${new Date().getFullYear()}`;
+  const sidebarBrand = document.getElementById('sidebar-brand'); if(sidebarBrand) sidebarBrand.innerHTML = `${name}<small>Academic Register</small>`;
 }
 
 /* ============================================================
@@ -590,13 +763,13 @@ const TERM_NAMES = ['1st Term','2nd Term','3rd Term'];
 function seedDB(){
   const classes = [
     { id:'c1', name:'Form 1A', classTeacher:'owusu', subjects:[
-      {name:'Mathematics', teacher:'owusu'},{name:'English', teacher:'owusu'},{name:'Integrated Science', teacher:'owusu'}
+      {name:'Mathematics', teacher:'owusu', type:'core'},{name:'English', teacher:'owusu', type:'core'},{name:'Integrated Science', teacher:'owusu', type:'core'},{name:'Social Studies', teacher:'owusu', type:'core'},{name:'French', teacher:null, type:'elective'}
     ] },
     { id:'c2', name:'Form 2B', classTeacher:'mensah', subjects:[
-      {name:'Mathematics', teacher:'mensah'},{name:'English', teacher:'mensah'},{name:'Social Studies', teacher:'mensah'}
+      {name:'Mathematics', teacher:'mensah', type:'core'},{name:'English', teacher:'mensah', type:'core'},{name:'Integrated Science', teacher:null, type:'core'},{name:'Social Studies', teacher:'mensah', type:'core'},{name:'ICT', teacher:null, type:'elective'}
     ] },
     { id:'c3', name:'Form 3C', classTeacher:'boateng', subjects:[
-      {name:'Mathematics', teacher:'boateng'},{name:'English', teacher:'boateng'},{name:'Integrated Science', teacher:'boateng'}
+      {name:'Mathematics', teacher:'boateng', type:'core'},{name:'English', teacher:'boateng', type:'core'},{name:'Integrated Science', teacher:'boateng', type:'core'},{name:'Social Studies', teacher:null, type:'core'},{name:'French', teacher:null, type:'elective'}
     ] },
   ];
 
@@ -609,7 +782,7 @@ function seedDB(){
   const students = names.map((n,i)=>({
     id:'s'+(i+1), name:n[0], classId:n[1],
     guardian: '+233 24 '+ (1000000+ i*137).toString().slice(0,3) + ' ' + (1000+i*97),
-    photo: null, remark: '',
+    photo: null, remark: '', arrears: 0,
   }));
 
   // gradebook[classId][subject] = { assessments:[{id,name,max}], scores:{studentId:{assessId:score}},
@@ -632,7 +805,7 @@ function seedDB(){
         weeklyScores[s.id] = {};
         examScores[s.id] = Math.min(100, 48 + (seed*5) % 40);
       });
-      gradebook[c.id][subj] = { assessments, scores, weeklyEnabled:false, weeklyMax:10, weeklyScores, examScores, weeklyMeta:{} };
+      gradebook[c.id][subj] = { assessments, scores, weeklyEnabled:false, weeklyMax:10, weeklyScores, examScores };
     });
   });
 
@@ -654,26 +827,36 @@ function seedDB(){
   });
 
   const users = [
-    { username:'admin', password:'admin123', role:'Admin', name:'Ms. Addo (Head Teacher)', signature:null },
-    { username:'owusu', password:'teach123', role:'Teacher', name:'Mr. Owusu', signature:null },
-    { username:'mensah', password:'teach123', role:'Teacher', name:'Mrs. Mensah', signature:null },
-    { username:'boateng', password:'teach123', role:'Teacher', name:'Mr. Boateng', signature:null },
+    { username:'admin', password:'admin123', role:'Admin', name:'Ms. Addo (Head Teacher)', signature:null, contact:'' },
+    { username:'owusu', password:'teach123', role:'Teacher', name:'Mr. Owusu', signature:null, contact:'+233 24 111 2233' },
+    { username:'mensah', password:'teach123', role:'Teacher', name:'Mrs. Mensah', signature:null, contact:'+233 24 222 3344' },
+    { username:'boateng', password:'teach123', role:'Teacher', name:'Mr. Boateng', signature:null, contact:'+233 24 333 4455' },
   ];
 
-  const term = { startDate: todayStr(0), weeks: 12, termNumber: 1 };
+  const term = { startDate: todayStr(0), weeks: 12, termNumber: 1, examDeclared: false };
 
-  return { classes, students, gradebook, attendance, users, term, headTeacherUsername: 'admin' };
+  return { classes, students, gradebook, attendance, users, term, headTeacherUsername: 'admin', assistantHeadTeacherUsername: null, weeklyMeta: {}, attendanceMeta: {}, billItems: [], school: { name:'Clyde Academy', crest:null } };
 }
 
 function migrateDB(){
   let changed = false;
   if(!DB.users){ DB.users = seedDB().users; changed = true; }
-  if(!DB.term){ DB.term = { startDate: todayStr(0), weeks: 12, termNumber: 1 }; changed = true; }
+  if(!DB.term){ DB.term = { startDate: todayStr(0), weeks: 12, termNumber: 1, examDeclared:false }; changed = true; }
+  if(DB.term.examDeclared === undefined){ DB.term.examDeclared = false; changed = true; }
+  if(!DB.weeklyMeta){ DB.weeklyMeta = {}; changed = true; }
+  if(!DB.attendanceMeta){ DB.attendanceMeta = {}; changed = true; }
   if(DB.headTeacherUsername === undefined){ DB.headTeacherUsername = null; changed = true; }
-  DB.users.forEach(u=>{ if(u.signature===undefined){ u.signature = null; changed = true; } });
+  if(DB.assistantHeadTeacherUsername === undefined){ DB.assistantHeadTeacherUsername = null; changed = true; }
+  if(!DB.billItems){ DB.billItems = []; changed = true; }
+  if(!DB.school){ DB.school = { name:'Clyde Academy', crest:null }; changed = true; }
+  DB.users.forEach(u=>{
+    if(u.signature===undefined){ u.signature = null; changed = true; }
+    if(u.contact===undefined){ u.contact = ''; changed = true; }
+  });
   DB.students.forEach(s=>{
     if(s.photo===undefined){ s.photo = null; changed = true; }
     if(s.remark===undefined){ s.remark = ''; changed = true; }
+    if(s.arrears===undefined){ s.arrears = 0; changed = true; }
   });
   // Restructure each subject's gradebook to the SBA model (4 CATs + weekly toggle + exam score)
   Object.values(DB.gradebook).forEach(subjMap=>{
@@ -691,7 +874,6 @@ function migrateDB(){
       if(sub.weeklyMax===undefined){ sub.weeklyMax = 10; changed = true; }
       if(!sub.weeklyScores){ sub.weeklyScores = {}; changed = true; }
       if(!sub.examScores){ sub.examScores = {}; changed = true; }
-      if(!sub.weeklyMeta){ sub.weeklyMeta = {}; changed = true; }
     });
   });
   DB.classes.forEach(c=>{
@@ -716,6 +898,9 @@ function migrateDB(){
       changed = true;
     }
     if(c.classTeacher===undefined){ c.classTeacher = null; changed = true; }
+    c.subjects.forEach(subj=>{
+      if(subj.type===undefined){ subj.type = 'core'; changed = true; }
+    });
   });
   DB.users.forEach(u=>{
     if(u.role==='Teacher' && u.pendingApproval===undefined){ u.pendingApproval = false; }
@@ -793,7 +978,63 @@ function ordinal(n){
   const s=['th','st','nd','rd'], v=n%100;
   return n + (s[(v-20)%10]||s[v]||s[0]);
 }
-/* Position of a student within their class, ranked by overall average (grand total), highest first.
+/* 1–9 grading scale (best=1). Used everywhere a subject or aggregate grade is shown. */
+function gradePointFor(pct){
+  if(pct===null||pct===undefined) return null;
+  if(pct>=80) return 1;
+  if(pct>=75) return 2;
+  if(pct>=70) return 3;
+  if(pct>=65) return 4;
+  if(pct>=60) return 5;
+  if(pct>=55) return 6;
+  if(pct>=50) return 7;
+  if(pct>=40) return 8;
+  return 9;
+}
+function remarkFor(gp){
+  const map = {1:'EXCELLENT',2:'VERY GOOD',3:'VERY GOOD',4:'GOOD',5:'GOOD',6:'CREDIT',7:'CREDIT',8:'PASS',9:'BUCK - UP'};
+  return (gp===null||gp===undefined) ? '—' : (map[gp]||'—');
+}
+/* Maps a grade point onto the app's existing colour classes (grade-A..grade-F) so no new CSS is needed. */
+function gradeClass(pct){
+  const gp = gradePointFor(pct);
+  if(gp===null) return '';
+  if(gp<=3) return 'A'; if(gp<=5) return 'B'; if(gp<=7) return 'C'; if(gp===8) return 'D'; return 'F';
+}
+/* Position of a student within their class for ONE subject, ranked by that subject's grand total. */
+function subjectPosition(classId, subj, studentId){
+  const roster = studentsOf(classId);
+  const ranked = roster.map(r=>({ id:r.id, val: subjectAverage(classId, subj, r.id) }))
+    .filter(r=>r.val!==null)
+    .sort((a,b)=>b.val-a.val);
+  if(!ranked.length) return null;
+  let rank=0, last=null, seen=0;
+  for(const r of ranked){
+    seen++;
+    if(r.val!==last){ rank=seen; last=r.val; }
+    if(r.id===studentId) return { rank, of: ranked.length };
+  }
+  return null;
+}
+/* The official grading set: every core subject, plus the best two electives by score.
+   raw = sum of the 6 (or however many) subject totals out of 100 each.
+   average = mean percentage across them. aggregate = sum of their 1–9 grade points (lower = better). */
+function sixSubjectSummary(classId, studentId){
+  const cls = classOf(classId);
+  if(!cls) return { subjects:[], raw:null, average:null, aggregate:null, count:0 };
+  const withScores = list => list.map(s=>({ name:s.name, grand: subjectAverage(classId, s.name, studentId) }));
+  const core = withScores(cls.subjects.filter(s=>s.type!=='elective'));
+  const electives = withScores(cls.subjects.filter(s=>s.type==='elective'))
+    .sort((a,b)=>(b.grand??-1)-(a.grand??-1))
+    .slice(0,2);
+  const chosen = [...core, ...electives];
+  if(!chosen.length) return { subjects:[], raw:null, average:null, aggregate:null, count:0 };
+  const raw = chosen.reduce((sum,s)=>sum+(s.grand??0), 0);
+  const average = Math.round(raw/chosen.length);
+  const aggregate = chosen.reduce((sum,s)=>sum+(gradePointFor(s.grand)??9), 0);
+  return { subjects:chosen, raw, average, aggregate, count:chosen.length };
+}
+/* Position of a student within their class, ranked by their official (core + best-two-electives) average, highest first.
    Standard "competition ranking": ties share the same rank, next rank skips accordingly. */
 function classPosition(studentId){
   const s = studentById(studentId);
@@ -814,14 +1055,8 @@ function classPosition(studentId){
 function overallAverage(studentId){
   const st = studentById(studentId);
   if(!st) return null;
-  const subs = classOf(st.classId)?.subjects || [];
-  const vals = subs.map(s=>subjectAverage(st.classId, s, studentId)).filter(v=>v!==null);
-  if(!vals.length) return null;
-  return Math.round(vals.reduce((a,b)=>a+b,0)/vals.length);
-}
-function letterFor(pct){
-  if(pct===null||pct===undefined) return '—';
-  if(pct>=80) return 'A'; if(pct>=70) return 'B'; if(pct>=60) return 'C'; if(pct>=50) return 'D'; return 'F';
+  const sum = sixSubjectSummary(st.classId, studentId);
+  return sum.subjects.length ? sum.average : null;
 }
 function attendanceRate(studentId, classId){
   const days = DB.attendance[classId] || {};
@@ -854,94 +1089,6 @@ function attendanceCounts(studentId, classId){
     if(status){ count++; if(status!=='absent') present++; }
   });
   return { present, total: count };
-}
-/* ============================================================
-   Weekly SBA / attendance tracking helpers
-   ------------------------------------------------------------
-   The term runs Week 1..N starting on DB.term.startDate (assumed
-   to be a Monday). Each week "closes" once its Friday has passed —
-   at that point, a subject teacher who hasn't entered any weekly
-   SBA marks for that week (or a form master who hasn't taken
-   attendance that week) gets redflagged.
-============================================================ */
-function addDaysStr(dateStr, days){
-  const d = new Date(dateStr+'T00:00:00');
-  d.setDate(d.getDate()+days);
-  return d.toISOString().slice(0,10);
-}
-function weekBounds(weekNum){
-  const start = (DB.term && DB.term.startDate) || todayStr(0);
-  const monday = addDaysStr(start, (weekNum-1)*7);
-  const friday = addDaysStr(monday, 4);
-  return { monday, friday };
-}
-/* The week the calendar is currently in, clamped to the term's week range. */
-function currentWeekNumber(){
-  const weeks = (DB.term && DB.term.weeks) || 12;
-  const start = DB.term && DB.term.startDate;
-  if(!start) return 1;
-  const diffDays = Math.round((new Date(todayStr(0)+'T00:00:00') - new Date(start+'T00:00:00'))/86400000);
-  let wk = Math.floor(diffDays/7)+1;
-  if(wk<1) wk=1;
-  if(wk>weeks) wk=weeks;
-  return wk;
-}
-/* A week is "closed" once its Friday has passed — after that point, missing work gets flagged. */
-function weekIsClosed(weekNum){
-  return todayStr(0) > weekBounds(weekNum).friday;
-}
-function weekLabel(weekNum){
-  const {monday, friday} = weekBounds(weekNum);
-  return `Week ${weekNum} (${fmtDate(monday)} – ${fmtDate(friday)})`;
-}
-function weekEnteredCount(classId, subj, weekNum){
-  const sub = DB.gradebook[classId]?.[subj];
-  if(!sub) return 0;
-  let n=0;
-  studentsOf(classId).forEach(s=>{
-    const v = (sub.weeklyScores[s.id]||{})['w'+weekNum];
-    if(v!==undefined && v!==null) n++;
-  });
-  return n;
-}
-/* Status of a subject teacher's weekly SBA entry for one class/subject/week. */
-function subjectWeekStatus(classId, subj, weekNum){
-  const sub = DB.gradebook[classId]?.[subj];
-  const total = studentsOf(classId).length;
-  const entered = weekEnteredCount(classId, subj, weekNum);
-  const closed = weekIsClosed(weekNum);
-  const meta = sub?.weeklyMeta?.['w'+weekNum];
-  return {
-    entered, total,
-    complete: total>0 && entered>=total,
-    closed,
-    flagged: closed && entered===0,
-    partial: closed && entered>0 && entered<total,
-    by: meta ? meta.by : null,
-    at: meta ? meta.at : null,
-  };
-}
-/* Status of a form master's attendance-taking for one class/week — only counts school days
-   (Mon–Fri) that have already occurred, so a week in progress isn't prematurely flagged. */
-function classAttendanceWeekStatus(classId, weekNum){
-  const {monday} = weekBounds(weekNum);
-  const today = todayStr(0);
-  const days = [];
-  for(let i=0;i<5;i++){
-    const d = addDaysStr(monday, i);
-    if(d<=today) days.push(d);
-  }
-  const attRec = DB.attendance[classId] || {};
-  const taken = days.filter(d=> attRec[d] && Object.keys(attRec[d]).length>0);
-  const closed = weekIsClosed(weekNum);
-  return {
-    daysExpected: days.length,
-    daysTaken: taken.length,
-    closed,
-    complete: days.length>0 && taken.length>=days.length,
-    flagged: closed && days.length>0 && taken.length===0,
-    partial: closed && taken.length>0 && taken.length<days.length,
-  };
 }
 function classAvgAttendanceToday(classId){
   const d = todayStr(0);
@@ -1066,12 +1213,18 @@ const NAV_ITEMS = [
   { id:'students', label:'Students', ic:'&#9737;' },
   { id:'gradebook', label:'Gradebook', ic:'&#9998;' },
   { id:'attendance', label:'Attendance', ic:'&#10003;' },
-  { id:'weekly-activity', label:'Weekly Activity', ic:'&#9873;', adminOnly:true },
+  { id:'activity', label:'Staff Activity', ic:'&#9873;', adminOnly:true },
   { id:'classes', label:'Classes', ic:'&#9776;', adminOnly:true },
   { id:'staff', label:'Staff Accounts', ic:'&#128273;', adminOnly:true },
+  { id:'bill', label:'Bill', ic:'&#128176;', visible: ()=>isBillAccess() },
 ];
+/* Only the head teacher and assistant head teacher can see/use the Bill tab — this is checked by
+   account, not by role, so even an Admin account is excluded unless it's specifically one of these two. */
+function isBillAccess(){
+  return !!session && (session.username===DB.headTeacherUsername || session.username===DB.assistantHeadTeacherUsername);
+}
 function renderNav(){
-  const items = NAV_ITEMS.filter(i=> !i.adminOnly || session.role==='Admin');
+  const items = NAV_ITEMS.filter(i=> (!i.adminOnly || session.role==='Admin') && (!i.visible || i.visible()));
   document.getElementById('nav-items').innerHTML = items.map(i=>`
     <button class="nav-item ${view.page===i.id?'active':''}" onclick="goTo('${i.id}')">
       <span class="ic">${i.ic}</span> ${i.label}
@@ -1098,9 +1251,10 @@ function render(){
     case 'students': el.innerHTML = renderStudents(); break;
     case 'gradebook': el.innerHTML = renderGradebook(); break;
     case 'attendance': el.innerHTML = renderAttendance(); break;
-    case 'weekly-activity': el.innerHTML = renderWeeklyActivity(); break;
+    case 'activity': el.innerHTML = renderActivity(); break;
     case 'classes': el.innerHTML = renderClasses(); break;
     case 'staff': el.innerHTML = renderStaff(); break;
+    case 'bill': el.innerHTML = renderBill(); break;
     default: el.innerHTML = renderDashboard();
   }
 }
@@ -1108,33 +1262,6 @@ function render(){
 /* ============================================================
    Dashboard
 ============================================================ */
-/* Redflag banner shown on a teacher's own dashboard for anything they've missed by this week's Friday. */
-function myRedflags(){
-  const curWeek = currentWeekNumber();
-  const items = [];
-  DB.classes.forEach(c=>{
-    c.subjects.forEach(subjObj=>{
-      if(subjObj.teacher!==session.username) return;
-      const sub = DB.gradebook[c.id]?.[subjObj.name];
-      if(!sub || !sub.weeklyEnabled) return;
-      const st = subjectWeekStatus(c.id, subjObj.name, curWeek);
-      if(st.flagged) items.push(`No ${subjObj.name} SBA marks entered yet for ${c.name} — ${weekLabel(curWeek)}.`);
-      else if(st.partial) items.push(`Only ${st.entered}/${st.total} students have ${subjObj.name} marks for ${c.name} — ${weekLabel(curWeek)}.`);
-    });
-    if(c.classTeacher===session.username){
-      const at = classAttendanceWeekStatus(c.id, curWeek);
-      if(at.flagged) items.push(`No attendance taken for ${c.name} — ${weekLabel(curWeek)}.`);
-      else if(at.partial) items.push(`Attendance only taken ${at.daysTaken}/${at.daysExpected} school days for ${c.name} — ${weekLabel(curWeek)}.`);
-    }
-  });
-  if(!items.length) return '';
-  return `
-    <div class="panel" style="border-color:var(--brick);"><div class="panel-body" style="padding:14px 20px;">
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;"><span class="pill absent">Redflagged</span><b style="color:var(--brick);">You have overdue items for this week</b></div>
-      <div style="font-size:13px;color:var(--ink-soft);">${items.join('<br>')}</div>
-    </div></div>
-  `;
-}
 function renderDashboard(){
   const myClasses = accessibleClasses();
   const myClassIds = myClasses.map(c=>c.id);
@@ -1167,11 +1294,10 @@ function renderDashboard(){
     <div class="stat-grid">
       <div class="stat-card"><div class="label">Students</div><div class="value">${total}</div><div class="sub">${session.role==='Admin'?'Across '+numClasses+' classes':'In your classes'}</div></div>
       <div class="stat-card"><div class="label">Present today</div><div class="value">${attToday}${attToday!=='—'?'%':''}</div><div class="sub ${attToday!=='—' && attToday>=90?'up':(attToday!=='—'?'down':'')}">${attToday!=='—' ? (attToday>=90?'Strong turnout':'Needs follow-up') : 'Not yet recorded'}</div></div>
-      <div class="stat-card"><div class="label">Average performance</div><div class="value">${avg}${avg!=='—'?'%':''}</div><div class="sub">Grade ${letterFor(avg)}</div></div>
+      <div class="stat-card"><div class="label">Average performance</div><div class="value">${avg}${avg!=='—'?'%':''}</div><div class="sub">Grade ${avg==='—'?'—':(gradePointFor(avg)??'—')}</div></div>
       <div class="stat-card"><div class="label">Classes</div><div class="value">${numClasses}</div><div class="sub">${session.role==='Admin' ? 'Managed school-wide' : (myClasses.length ? 'Your assignments' : 'Awaiting admin assignment')}</div></div>
     </div>
     ${session.role!=='Admin' && !myClasses.length ? `<div class="panel"><div class="panel-body" style="padding-top:16px;"><p style="margin:0;color:var(--slate);font-size:13.5px;">You haven't been assigned to a class or subject yet. Ask the administrator to assign you from Staff Accounts / Classes.</p></div></div>` : ''}
-    ${session.role!=='Admin' ? myRedflags() : ''}
 
     <div class="panel">
       <div class="panel-head"><h3>Today's register activity</h3><span class="mono" style="font-size:11px;color:var(--slate)">${todayStr(0)}</span></div>
@@ -1254,7 +1380,7 @@ function renderStudents(){
             <div><div class="name">${s.name}</div><div class="cls">${classOf(s.classId).name}</div></div>
           </div>
           <div class="metrics">
-            <div class="metric"><div class="n grade-${letterFor(avg)}">${avg??'—'}${avg!==null?'%':''}</div><div class="l">Average</div></div>
+            <div class="metric"><div class="n grade-${gradeClass(avg)}">${avg??'—'}${avg!==null?'%':''}</div><div class="l">Average</div></div>
             <div class="metric"><div class="n">${att??'—'}${att!==null?'%':''}</div><div class="l">Attendance</div></div>
           </div>
           </div>
@@ -1374,13 +1500,14 @@ function renderStudentDetail(id){
   const classTeacherName = cls.classTeacher ? teacherName(cls.classTeacher) : null;
 
   const pos = classPosition(id);
+  const sixSum = sixSubjectSummary(s.classId, id);
   const canEditProfile = session.role==='Admin' || cls.classTeacher===session.username;
 
   let body = '';
   if(view.tab==='overview'){
     body = `
       <div class="stat-grid" style="grid-template-columns:repeat(4,1fr);">
-        <div class="stat-card"><div class="label">Overall average</div><div class="value grade-${letterFor(avg)}">${avg??'—'}${avg!==null?'%':''}</div><div class="sub">Grade ${letterFor(avg)}</div></div>
+        <div class="stat-card"><div class="label">Overall average</div><div class="value grade-${gradeClass(avg)}">${avg??'—'}${avg!==null?'%':''}</div><div class="sub">Aggregate ${sixSum.aggregate??'—'}</div></div>
         <div class="stat-card"><div class="label">Class position</div><div class="value">${pos?ordinal(pos.rank):'—'}</div><div class="sub">${pos?'out of '+pos.of:'Not enough data yet'}</div></div>
         <div class="stat-card"><div class="label">Attendance rate</div><div class="value">${att??'—'}${att!==null?'%':''}</div><div class="sub">This term</div></div>
         <div class="stat-card"><div class="label">Class</div><div class="value" style="font-size:20px;">${cls.name}</div><div class="sub">${classTeacherName || 'No class teacher assigned'}</div></div>
@@ -1397,9 +1524,10 @@ function renderStudentDetail(id){
       <div class="panel"><div class="panel-head"><h3>Subject performance</h3></div><div class="panel-body">
         ${cls.subjects.map((subj,i)=>{
           const p = subjectAverage(s.classId, subj.name, id);
+          const gp = gradePointFor(p);
           return `<div class="ledger-row"><span class="idx mono">${String(i+1).padStart(2,'0')}</span>
-            <span style="flex:1">${subj.name}<br><span style="font-size:11px;color:var(--slate);">${subj.teacher ? teacherName(subj.teacher) : 'Unassigned teacher'}</span></span>
-            <span class="grade-letter grade-${letterFor(p)}">${p??'—'}${p!==null?'%':''} &nbsp; ${letterFor(p)}</span></div>`;
+            <span style="flex:1">${subj.name} <span style="font-size:10.5px;color:var(--slate);text-transform:uppercase;">(${subj.type||'core'})</span><br><span style="font-size:11px;color:var(--slate);">${subj.teacher ? teacherName(subj.teacher) : 'Unassigned teacher'}</span></span>
+            <span class="grade-letter grade-${gradeClass(p)}">${p??'—'}${p!==null?'%':''} &nbsp; ${gp??'—'}</span></div>`;
         }).join('')}
       </div></div>
       <div class="panel"><div class="panel-head"><h3>Teacher remarks (for report card)</h3></div>
@@ -1412,33 +1540,44 @@ function renderStudentDetail(id){
       </div>
     `;
   } else if(view.tab==='grades'){
+    const isAdminUser = session.role==='Admin';
+    const curWeek = currentTermWeek();
+    const activeIdx = activeCatIndex();
     body = cls.subjects.map(subjObj=>{
       const subj = subjObj.name;
       const sub = DB.gradebook[s.classId][subj];
       const sc = sub.scores[id] || {};
       const canEdit = session.role==='Admin' || subjObj.teacher===session.username;
       const b = subjectBreakdown(s.classId, subj, id);
-      const weeks = DB.term?.weeks || 12;
-      const weeklyRows = sub.weeklyEnabled ? Array.from({length:weeks},(_,i)=>i+1).map(w=>{
-        const v = (sub.weeklyScores[id]||{})['w'+w];
-        return `<tr><td>Week ${w}</td>
-          <td>${canEdit ? `<input class="score-input" type="number" min="0" max="${sub.weeklyMax}" value="${v??''}" placeholder="—" onchange="updateWeeklyScore('${s.classId}','${subj}','${id}',${w},this.value)">` : (v??'—')}</td>
-          <td class="mono">${sub.weeklyMax}</td></tr>`;
-      }).join('') : '';
+      const spos = subjectPosition(s.classId, subj, id);
+      const examOpen = DB.term?.examDeclared || isAdminUser;
+      let assessmentRowsHTML;
+      if(sub.weeklyEnabled){
+        const weeksToShow = isAdminUser ? Array.from({length:DB.term?.weeks||12},(_,i)=>i+1) : [curWeek];
+        assessmentRowsHTML = weeksToShow.map(w=>{
+          const v = (sub.weeklyScores[id]||{})['w'+w];
+          return `<tr><td>Week ${w}${w===curWeek?' (current)':''}</td>
+            <td>${canEdit ? `<input class="score-input" type="number" min="0" max="${sub.weeklyMax}" value="${v??''}" placeholder="—" onchange="updateWeeklyScore('${s.classId}','${subj}','${id}',${w},this.value)">` : (v??'—')}</td>
+            <td class="mono">${sub.weeklyMax}</td></tr>`;
+        }).join('');
+      } else {
+        const catsToShow = isAdminUser ? sub.assessments : [sub.assessments[activeIdx]];
+        assessmentRowsHTML = catsToShow.map(a=>`
+          <tr><td>${a.name}</td>
+          <td>${canEdit ? `<input class="score-input" type="number" min="0" max="${a.max}" value="${sc[a.id]??''}" placeholder="—" onchange="updateScore('${s.classId}','${subj}','${id}','${a.id}',this.value)">` : (sc[a.id]??'—')}</td>
+          <td class="mono">${a.max}</td></tr>`).join('');
+      }
       return `
-      <div class="panel"><div class="panel-head"><h3>${subj}</h3><span class="mono" style="font-size:12px;color:var(--slate)">${b.grand??'—'}${b.grand!==null?'%':''}</span></div>
+      <div class="panel"><div class="panel-head"><h3>${subj} <span style="font-size:10.5px;color:var(--slate);text-transform:uppercase;">(${subjObj.type||'core'})</span></h3><span class="mono" style="font-size:12px;color:var(--slate)">${b.grand??'—'}${b.grand!==null?'%':''} &nbsp; Grade ${gradePointFor(b.grand)??'—'}</span></div>
       <div class="panel-body">
         <table class="reg"><thead><tr><th>Assessment</th><th>Score</th><th>Out of</th></tr></thead>
         <tbody>
-        ${sub.weeklyEnabled ? weeklyRows : sub.assessments.map(a=>`
-          <tr><td>${a.name}</td>
-          <td>${canEdit ? `<input class="score-input" type="number" min="0" max="${a.max}" value="${sc[a.id]??''}" placeholder="—" onchange="updateScore('${s.classId}','${subj}','${id}','${a.id}',this.value)">` : (sc[a.id]??'—')}</td>
-          <td class="mono">${a.max}</td></tr>`).join('')}
+        ${assessmentRowsHTML}
         <tr><td style="font-weight:600;">Exam</td>
-          <td>${canEdit ? `<input class="score-input" type="number" min="0" max="100" value="${b.examScore??''}" placeholder="—" onchange="updateExamScore('${s.classId}','${subj}','${id}',this.value)">` : (b.examScore??'—')}</td>
+          <td>${(canEdit && examOpen) ? `<input class="score-input" type="number" min="0" max="100" value="${b.examScore??''}" placeholder="—" onchange="updateExamScore('${s.classId}','${subj}','${id}',this.value)">` : (examOpen ? (b.examScore??'—') : 'Not open yet')}</td>
           <td class="mono">100</td></tr>
         </tbody></table>
-        <p style="margin:10px 0 0;font-size:12.5px;color:var(--slate);">SBA (50%): <b class="mono">${b.sba50??'—'}</b> &nbsp;+&nbsp; Exam (50%): <b class="mono">${b.exam50??'—'}</b> &nbsp;=&nbsp; Grand total: <b class="mono">${b.grand??'—'}</b></p>
+        <p style="margin:10px 0 0;font-size:12.5px;color:var(--slate);">Class Score (50%): <b class="mono">${b.sba50??'—'}</b> &nbsp;+&nbsp; Exam Score (50%): <b class="mono">${b.exam50??'—'}</b> &nbsp;=&nbsp; Total: <b class="mono">${b.grand??'—'}</b> &nbsp;·&nbsp; Position: <b class="mono">${spos?ordinal(spos.rank)+'/'+spos.of:'—'}</b> &nbsp;·&nbsp; Remark: <b>${remarkFor(gradePointFor(b.grand))}</b></p>
       </div></div>`;
     }).join('');
   } else if(view.tab==='attendance'){
@@ -1482,6 +1621,7 @@ async function updateScore(classId, subj, studentId, assessId, val){
 /* ============================================================
    Gradebook (class-wide)
 ============================================================ */
+let gbWeek = 1;
 function renderGradebook(){
   const classes = accessibleClasses().filter(c=> teachableSubjects(c).length>0);
   if(!classes.length){
@@ -1498,8 +1638,11 @@ function renderGradebook(){
   const subjObj = subjectOf(cls, view.subject);
   const canEdit = session.role==='Admin' || subjObj.teacher===session.username;
   const roster = studentsOf(cls.id);
-  const gbWeek = currentWeekNumber();
-  const wkStatus = subjectWeekStatus(cls.id, view.subject, gbWeek);
+  const weeks = DB.term?.weeks || 12;
+  const curWeek = currentTermWeek();
+  const isAdminUser = session.role==='Admin';
+  if(!isAdminUser){ gbWeek = curWeek; }
+  else if(gbWeek < 1 || gbWeek > weeks){ gbWeek = curWeek; }
 
   const catMax = sub.assessments.reduce((a,c)=>a+c.max,0);
 
@@ -1528,27 +1671,24 @@ function renderGradebook(){
       </label>
     </div>` : ''}
 
+    ${sub.weeklyEnabled && !isAdminUser && isWeekOverdue(gbWeek) && !weeklyEntryExists(cls.id, view.subject, gbWeek) ? `
+    <div class="crud-box" style="border-color:var(--brick);background:#FBEAE8;">
+      <h4 style="color:var(--brick);margin-bottom:2px;">⚑ Week ${gbWeek} not assessed</h4>
+      <span style="font-size:12.5px;color:var(--brick);">Friday's deadline (${fmtDate(weekFriday(gbWeek))}) for Week ${gbWeek} has passed with no marks entered for ${view.subject}. Please enter this week's marks as soon as possible.</span>
+    </div>` : ''}
+
     ${sub.weeklyEnabled ? `
-    ${wkStatus.flagged ? `
-    <div class="panel" style="border-color:var(--brick);"><div class="panel-body" style="padding:14px 20px;display:flex;align-items:center;gap:10px;">
-      <span class="pill absent" style="flex-shrink:0;">Redflagged</span>
-      <span style="font-size:13px;color:var(--brick);">No SBA marks were entered for <b>${view.subject}</b> in ${weekLabel(gbWeek)} — Friday's deadline has passed. Please enter this week's marks as soon as possible.</span>
-    </div></div>
-    ` : wkStatus.partial ? `
-    <div class="panel" style="border-color:var(--brass);"><div class="panel-body" style="padding:14px 20px;display:flex;align-items:center;gap:10px;">
-      <span class="pill late" style="flex-shrink:0;">Incomplete</span>
-      <span style="font-size:13px;color:var(--ink-soft);">Only ${wkStatus.entered} of ${wkStatus.total} students have marks for ${weekLabel(gbWeek)} — Friday's deadline has passed.</span>
-    </div></div>
-    ` : ''}
-    <div class="panel"><div class="panel-head"><h3>Weekly marks — ${weekLabel(gbWeek)}</h3>
+    <div class="panel"><div class="panel-head"><h3>Weekly marks</h3>
       <div style="display:flex;align-items:center;gap:8px;">
-        ${wkStatus.by ? `<span style="font-size:12px;color:var(--slate);">Recorded by <b>${teacherName(wkStatus.by)||wkStatus.by}</b></span>` : `<span style="font-size:12px;color:var(--slate);">Not yet recorded</span>`}
+        <label style="font-size:12.5px;color:var(--slate);">Week</label>
+        ${isAdminUser ? `<select onchange="gbWeek=Number(this.value); render()">
+          ${Array.from({length:weeks},(_,i)=>i+1).map(w=>`<option value="${w}" ${w===gbWeek?'selected':''}>Week ${w}</option>`).join('')}
+        </select>` : `<span class="mono" style="font-weight:600;">Week ${gbWeek} (current — ${fmtDate(weekMonday(gbWeek))} to ${fmtDate(weekFriday(gbWeek))})</span>`}
         ${canEdit ? `<label style="font-size:12.5px;color:var(--slate);">Max for this week</label>
         <input type="number" class="score-input" style="width:56px;" min="1" value="${sub.weeklyMax}" onchange="setWeeklyMax('${cls.id}','${view.subject}',this.value)">` : ''}
       </div>
     </div>
     <div class="panel-body" style="padding-top:0;">
-      <p style="font-size:12px;color:var(--slate);margin:10px 0;">Only the current week is open for entry — past weeks lock automatically so marks can't be backdated or skipped.</p>
       <table class="reg"><thead><tr><th>Student</th><th>Week ${gbWeek} mark<br><span class="mono" style="font-weight:400;">/${sub.weeklyMax}</span></th></tr></thead>
       <tbody>
         ${roster.map(s=>{
@@ -1557,45 +1697,53 @@ function renderGradebook(){
             <td>${canEdit ? `<input class="score-input" type="number" min="0" max="${sub.weeklyMax}" value="${v??''}" placeholder="—" onchange="updateWeeklyScore('${cls.id}','${view.subject}','${s.id}',${gbWeek},this.value)">` : (v??'—')}</td></tr>`;
         }).join('')}
       </tbody></table>
+      ${(()=>{ const meta = DB.weeklyMeta[cls.id]?.[view.subject]?.[gbWeek]; return meta ? `<p style="margin:10px 0 0;font-size:12px;color:var(--slate);">Last recorded by <b>${meta.byName}</b> on ${fmtDate(new Date(meta.at).toISOString().slice(0,10))}.</p>` : ''; })()}
     </div></div>
-    ` : `
-    <div class="panel"><div class="panel-head"><h3>SBA — 4 categories (out of ${catMax}, scaled to 50%)</h3></div>
+    ` : (()=>{
+      const activeIdx = activeCatIndex();
+      const visibleAssessments = isAdminUser ? sub.assessments : [sub.assessments[activeIdx]];
+      return `
+    <div class="panel"><div class="panel-head"><h3>SBA — ${isAdminUser ? `4 categories (out of ${catMax}, scaled to 50%)` : sub.assessments[activeIdx].name+' (this week)'}</h3></div>
     <div class="panel-body" style="padding-top:10px;">
+      ${!isAdminUser ? `<p style="margin:0 0 10px;font-size:12.5px;color:var(--slate);">You're on Week ${gbWeek} of the term, so only <b>${sub.assessments[activeIdx].name}</b> is open for entry right now. Other categories open in their own week.</p>` : ''}
       <table class="reg">
-        <thead><tr><th>Student</th>${sub.assessments.map(a=>`<th>${a.name}<br><span class="mono" style="font-weight:400;">/${a.max}</span></th>`).join('')}</tr></thead>
+        <thead><tr><th>Student</th>${visibleAssessments.map(a=>`<th>${a.name}<br><span class="mono" style="font-weight:400;">/${a.max}</span></th>`).join('')}</tr></thead>
         <tbody>
           ${roster.map(s=>{
             const sc = sub.scores[s.id] || {};
             return `<tr>
               <td style="font-weight:600;">${s.name}</td>
-              ${sub.assessments.map(a=>`<td>${canEdit ? `<input class="score-input" type="number" min="0" max="${a.max}" value="${sc[a.id]??''}" placeholder="—" onchange="updateScore('${cls.id}','${view.subject}','${s.id}','${a.id}',this.value)">` : (sc[a.id]??'—')}</td>`).join('')}
+              ${visibleAssessments.map(a=>`<td>${canEdit ? `<input class="score-input" type="number" min="0" max="${a.max}" value="${sc[a.id]??''}" placeholder="—" onchange="updateScore('${cls.id}','${view.subject}','${s.id}','${a.id}',this.value)">` : (sc[a.id]??'—')}</td>`).join('')}
             </tr>`;
           }).join('')}
         </tbody>
       </table>
     </div></div>
-    `}
+    `; })()}
 
     <div class="panel"><div class="panel-head"><h3>End-of-term exam &amp; grand total</h3></div>
     <div class="panel-body" style="padding-top:10px;">
+      ${!DB.term?.examDeclared && !isAdminUser ? `<p style="margin:0 0 10px;font-size:12.5px;color:var(--slate);">Exam marks entry isn't open yet — the head teacher will declare exams week when it's time.</p>` : ''}
       <table class="reg">
-        <thead><tr><th>Student</th><th>SBA<br><span class="mono" style="font-weight:400;">/50</span></th><th>Exam<br><span class="mono" style="font-weight:400;">/100</span></th><th>Exam<br><span class="mono" style="font-weight:400;">/50</span></th><th>Grand total<br><span class="mono" style="font-weight:400;">/100</span></th><th>Position</th></tr></thead>
+        <thead><tr><th>Student</th><th>Class Score<br><span class="mono" style="font-weight:400;">/50</span></th><th>Exam<br><span class="mono" style="font-weight:400;">/100</span></th><th>Exam Score<br><span class="mono" style="font-weight:400;">/50</span></th><th>Total<br><span class="mono" style="font-weight:400;">/100</span></th><th>Grade</th><th>Position</th></tr></thead>
         <tbody>
           ${roster.map(s=>{
             const b = subjectBreakdown(cls.id, view.subject, s.id);
-            const pos = classPosition(s.id);
+            const spos = subjectPosition(cls.id, view.subject, s.id);
+            const examOpen = DB.term?.examDeclared || isAdminUser;
             return `<tr>
               <td onclick="openStudent('${s.id}')" style="cursor:pointer;font-weight:600;">${s.name}</td>
               <td class="mono">${b.sba50??'—'}</td>
-              <td>${canEdit ? `<input class="score-input" type="number" min="0" max="100" value="${b.examScore??''}" placeholder="—" onchange="updateExamScore('${cls.id}','${view.subject}','${s.id}',this.value)">` : (b.examScore??'—')}</td>
+              <td>${(canEdit && examOpen) ? `<input class="score-input" type="number" min="0" max="100" value="${b.examScore??''}" placeholder="—" onchange="updateExamScore('${cls.id}','${view.subject}','${s.id}',this.value)">` : (examOpen ? (b.examScore??'—') : '—')}</td>
               <td class="mono">${b.exam50??'—'}</td>
-              <td class="grade-letter grade-${letterFor(b.grand)}">${b.grand??'—'}${b.grand!==null?'%':''}</td>
-              <td class="mono">${pos?ordinal(pos.rank)+' / '+pos.of:'—'}</td>
+              <td class="grade-letter grade-${gradeClass(b.grand)}">${b.grand??'—'}${b.grand!==null?'%':''}</td>
+              <td class="mono">${gradePointFor(b.grand)??'—'}</td>
+              <td class="mono">${spos?ordinal(spos.rank)+' / '+spos.of:'—'}</td>
             </tr>`;
           }).join('')}
         </tbody>
       </table>
-      <p style="margin:12px 0 4px;font-size:12px;color:var(--slate);">Position shown here is the student's overall class position (average across all subjects), not just this one subject.</p>
+      <p style="margin:12px 0 4px;font-size:12px;color:var(--slate);">Position shown here is this student's rank in this subject specifically.</p>
     </div></div>
   `;
 }
@@ -1615,12 +1763,7 @@ async function updateWeeklyScore(classId, subj, studentId, week, val){
   if(!sub.weeklyScores[studentId]) sub.weeklyScores[studentId] = {};
   if(val===''){ delete sub.weeklyScores[studentId]['w'+week]; }
   else{ sub.weeklyScores[studentId]['w'+week] = Math.max(0, Number(val)||0); }
-  if(!sub.weeklyMeta) sub.weeklyMeta = {};
-  if(weekEnteredCount(classId, subj, week)>0){
-    sub.weeklyMeta['w'+week] = { by: session.username, at: new Date().toISOString() };
-  } else {
-    delete sub.weeklyMeta['w'+week];
-  }
+  recordWeeklyMeta(classId, subj, week);
   await saveDB();
   render();
 }
@@ -1679,106 +1822,9 @@ async function markAttendance(classId, date, studentId, status){
   if(!DB.attendance[classId]) DB.attendance[classId] = {};
   if(!DB.attendance[classId][date]) DB.attendance[classId][date] = {};
   DB.attendance[classId][date][studentId] = status;
+  recordAttendanceMeta(classId, date);
   await saveDB();
   render();
-}
-
-/* ============================================================
-   Weekly Activity (admin) — oversight of subject teachers' weekly
-   SBA entries and form masters' weekly attendance, with redflags
-   for anyone who missed the Friday deadline for the current week.
-============================================================ */
-function weekStatusCell(status){
-  if(status.complete) return `<span class="pill present" title="All done">&#10003;</span>`;
-  if(status.flagged) return `<span class="pill absent" title="Redflagged — nothing recorded and the week is closed">&#9873;</span>`;
-  if(status.partial) return `<span class="pill late" title="Incomplete — week is closed">&#8211;</span>`;
-  if(status.closed) return `<span class="pill present" title="Nothing required">&middot;</span>`;
-  return `<span style="color:var(--slate);font-size:12px;" title="Week in progress">&hellip;</span>`;
-}
-function renderWeeklyActivity(){
-  const curWeek = currentWeekNumber();
-  const weekRange = Array.from({length:curWeek},(_,i)=>i+1);
-
-  // Subject teachers running weekly SBA
-  const sbaRows = [];
-  DB.classes.forEach(c=>{
-    c.subjects.forEach(subjObj=>{
-      const sub = DB.gradebook[c.id]?.[subjObj.name];
-      if(!sub || !sub.weeklyEnabled) return;
-      sbaRows.push({ classId:c.id, className:c.name, subject:subjObj.name, teacher:subjObj.teacher });
-    });
-  });
-  const flaggedSba = sbaRows.filter(r=> subjectWeekStatus(r.classId, r.subject, curWeek).flagged);
-
-  // Form masters and their attendance
-  const attRows = DB.classes.filter(c=>c.classTeacher);
-  const flaggedAtt = attRows.filter(c=> classAttendanceWeekStatus(c.id, curWeek).flagged);
-
-  return `
-    <div class="topbar">
-      <div><div class="eyebrow">Oversight</div><h1>Weekly Activity</h1></div>
-      <div class="date-badge">${weekLabel(curWeek)}</div>
-    </div>
-
-    ${(flaggedSba.length || flaggedAtt.length) ? `
-    <div class="panel" style="border-color:var(--brick);"><div class="panel-body" style="padding:14px 20px;">
-      <div style="font-weight:600;color:var(--brick);margin-bottom:4px;">${flaggedSba.length + flaggedAtt.length} redflag(s) this week</div>
-      <div style="font-size:13px;color:var(--ink-soft);">
-        ${flaggedSba.map(r=>`${teacherName(r.teacher)||'Unassigned'} — no ${r.subject} SBA entered for ${r.className}`).join('<br>')}
-        ${flaggedSba.length && flaggedAtt.length ? '<br>' : ''}
-        ${flaggedAtt.map(c=>`${teacherName(c.classTeacher)||'Unassigned'} — no attendance taken for ${c.name}`).join('<br>')}
-      </div>
-    </div></div>
-    ` : `
-    <div class="panel"><div class="panel-body" style="padding:14px 20px;color:var(--sage);font-weight:600;">No redflags this week — everyone is up to date.</div></div>
-    `}
-
-    <div class="panel">
-      <div class="panel-head"><h3>Subject teachers — weekly SBA</h3></div>
-      <div class="panel-body" style="padding-top:10px;overflow-x:auto;">
-        ${!sbaRows.length ? `<div class="empty">No subjects have weekly assessment switched on yet.</div>` : `
-        <table class="reg">
-          <thead><tr><th>Class</th><th>Subject</th><th>Teacher</th>${weekRange.map(w=>`<th>W${w}</th>`).join('')}<th>This week</th></tr></thead>
-          <tbody>
-            ${sbaRows.map(r=>{
-              const cur = subjectWeekStatus(r.classId, r.subject, curWeek);
-              return `<tr>
-                <td>${r.className}</td>
-                <td>${r.subject}</td>
-                <td style="font-weight:600;">${teacherName(r.teacher)||'—'}</td>
-                ${weekRange.map(w=>`<td>${weekStatusCell(subjectWeekStatus(r.classId, r.subject, w))}</td>`).join('')}
-                <td>${cur.by ? `<span style="font-size:12px;color:var(--slate);">by ${teacherName(cur.by)||cur.by}</span>` : (cur.flagged ? `<span style="font-size:12px;color:var(--brick);font-weight:600;">Redflagged</span>` : `<span style="font-size:12px;color:var(--slate);">Pending</span>`)}</td>
-              </tr>`;
-            }).join('')}
-          </tbody>
-        </table>
-        <p style="margin:12px 0 4px;font-size:12px;color:var(--slate);">&#10003; complete &nbsp; &#9873; redflagged (nothing entered by Friday) &nbsp; &#8211; incomplete &nbsp; &hellip; week still in progress</p>
-        `}
-      </div>
-    </div>
-
-    <div class="panel">
-      <div class="panel-head"><h3>Form masters — weekly attendance</h3></div>
-      <div class="panel-body" style="padding-top:10px;overflow-x:auto;">
-        ${!attRows.length ? `<div class="empty">No classes have a form master assigned yet.</div>` : `
-        <table class="reg">
-          <thead><tr><th>Class</th><th>Form master</th>${weekRange.map(w=>`<th>W${w}</th>`).join('')}<th>This week</th></tr></thead>
-          <tbody>
-            ${attRows.map(c=>{
-              const cur = classAttendanceWeekStatus(c.id, curWeek);
-              return `<tr>
-                <td>${c.name}</td>
-                <td style="font-weight:600;">${teacherName(c.classTeacher)||'—'}</td>
-                ${weekRange.map(w=>`<td>${weekStatusCell(classAttendanceWeekStatus(c.id, w))}</td>`).join('')}
-                <td>${cur.flagged ? `<span style="font-size:12px;color:var(--brick);font-weight:600;">Redflagged</span>` : `<span style="font-size:12px;color:var(--slate);">${cur.daysTaken}/${cur.daysExpected} days taken</span>`}</td>
-              </tr>`;
-            }).join('')}
-          </tbody>
-        </table>
-        `}
-      </div>
-    </div>
-  `;
 }
 
 /* ============================================================
@@ -1799,8 +1845,8 @@ function renderClasses(){
 
     <div class="crud-box">
       <h4>Bulk add subjects</h4>
-      <p style="margin:0 0 10px;font-size:12.5px;color:var(--slate);">Paste one subject per line as <span class="mono">Class, Subject, Teacher username</span> (teacher is optional; class name must match an existing class) — or upload an Excel/CSV file with columns <span class="mono">Class, Subject, Teacher</span>. Works across multiple classes at once.</p>
-      <textarea id="bulk-subject-text" rows="4" placeholder="Form 1A, French&#10;Form 1A, ICT, owusu&#10;Form 2B, French" style="width:100%;padding:9px 10px;border-radius:8px;border:1.5px solid var(--line);font-family:'IBM Plex Mono',monospace;font-size:12.5px;"></textarea>
+      <p style="margin:0 0 10px;font-size:12.5px;color:var(--slate);">Paste one subject per line as <span class="mono">Class, Subject, Teacher username, Type</span> (Teacher and Type are optional — Type is "Core" or "Elective", defaults to Core; class name must match an existing class) — or upload an Excel/CSV file with columns <span class="mono">Class, Subject, Teacher, Type</span>. Works across multiple classes at once.</p>
+      <textarea id="bulk-subject-text" rows="4" placeholder="Form 1A, French,, Elective&#10;Form 1A, ICT, owusu, Elective&#10;Form 2B, Ghanaian Language" style="width:100%;padding:9px 10px;border-radius:8px;border:1.5px solid var(--line);font-family:'IBM Plex Mono',monospace;font-size:12.5px;"></textarea>
       <div class="inline-form" style="margin-top:8px;">
         <button class="btn-small brass" onclick="bulkAddSubjectsFromText()">Add pasted subjects</button>
         <span style="color:var(--slate);font-size:12.5px;">or</span>
@@ -1831,6 +1877,10 @@ function renderClasses(){
           ${c.subjects.map(s=>`
             <div class="subject-row">
               <span class="sname">${s.name}</span>
+              <select onchange="setSubjectType('${c.id}','${s.name.replace(/'/g,"\\'")}', this.value)" style="font-size:12px;">
+                <option value="core" ${s.type!=='elective'?'selected':''}>Core</option>
+                <option value="elective" ${s.type==='elective'?'selected':''}>Elective</option>
+              </select>
               ${!s.teacher ? `<span class="badge-unassigned">No teacher</span>` : ''}
               <select onchange="assignSubjectTeacher('${c.id}','${s.name.replace(/'/g,"\\'")}', this.value)">
                 <option value="">— Unassigned —</option>
@@ -1841,6 +1891,10 @@ function renderClasses(){
           `).join('')}
           <div class="inline-form" style="margin-top:12px;">
             <input type="text" id="new-subject-${c.id}" placeholder="New subject name" style="flex:1;min-width:150px;">
+            <select id="new-subject-type-${c.id}">
+              <option value="core">Core</option>
+              <option value="elective">Elective</option>
+            </select>
             <button class="btn-small" onclick="addSubject('${c.id}')">Add subject</button>
           </div>
         </div>
@@ -1873,10 +1927,11 @@ async function removeClass(classId){
 async function addSubject(classId){
   const input = document.getElementById('new-subject-'+classId);
   const name = input.value.trim();
+  const type = document.getElementById('new-subject-type-'+classId).value;
   if(!name) return;
   const c = classOf(classId);
   if(c.subjects.some(s=>s.name.toLowerCase()===name.toLowerCase())){ alert('That subject already exists in this class.'); return; }
-  c.subjects.push({ name, teacher:null });
+  c.subjects.push({ name, teacher:null, type });
   DB.gradebook[classId][name] = {
     assessments: SBA_CATEGORIES.slice(), scores:{}, weeklyEnabled:false, weeklyMax:10, weeklyScores:{}, examScores:{}
   };
@@ -1884,12 +1939,18 @@ async function addSubject(classId){
   await saveDB();
   render();
 }
+async function setSubjectType(classId, subjName, type){
+  const c = classOf(classId);
+  const s = subjectOf(c, subjName);
+  if(s){ s.type = type; await saveDB(); render(); }
+}
 async function processSubjectRows(rows){
   let added=0; const skipped=[];
   rows.forEach((r,i)=>{
     const className = fieldVal(r,'class','classname','class name','form');
     const subjectName = fieldVal(r,'subject','subject name');
     const teacherUsername = fieldVal(r,'teacher','teacher username','username').toLowerCase();
+    const type = /elective/i.test(fieldVal(r,'type','subject type')) ? 'elective' : 'core';
     if(!subjectName){ skipped.push(`Row ${i+1}: no subject name given`); return; }
     const cls = findClassByName(className);
     if(!cls){ skipped.push(`Row ${i+1} (${subjectName}): class "${className}" not found`); return; }
@@ -1900,7 +1961,7 @@ async function processSubjectRows(rows){
       if(match) teacher = match.username;
       else skipped.push(`Row ${i+1}: teacher "${teacherUsername}" not found — subject added without a teacher`);
     }
-    cls.subjects.push({ name: subjectName, teacher });
+    cls.subjects.push({ name: subjectName, teacher, type });
     DB.gradebook[cls.id][subjectName] = {
       assessments: SBA_CATEGORIES.slice(), scores:{}, weeklyEnabled:false, weeklyMax:10, weeklyScores:{}, examScores:{}
     };
@@ -1914,7 +1975,7 @@ async function processSubjectRows(rows){
 async function bulkAddSubjectsFromText(){
   const text = document.getElementById('bulk-subject-text').value;
   if(!text.trim()) return;
-  const rows = parsePastedRows(text, ['class','subject','teacher']);
+  const rows = parsePastedRows(text, ['class','subject','teacher','type']);
   await processSubjectRows(rows);
 }
 async function bulkAddSubjectsFromFile(){
@@ -1949,6 +2010,175 @@ async function assignSubjectTeacher(classId, subjectName, username){
 /* ============================================================
    Staff accounts (admin)
 ============================================================ */
+/* ============================================================
+   Staff Activity — admin oversight of weekly SBA entry and
+   daily attendance-taking, with redflags for missed deadlines.
+============================================================ */
+function renderActivity(){
+  const curWeek = currentTermWeek();
+
+  const sbaRows = [];
+  DB.classes.forEach(c=>{
+    c.subjects.forEach(subjObj=>{
+      const sub = DB.gradebook[c.id]?.[subjObj.name];
+      if(!sub || !sub.weeklyEnabled) return;
+      for(let w=1; w<=curWeek; w++){
+        const done = weeklyEntryExists(c.id, subjObj.name, w);
+        const meta = DB.weeklyMeta[c.id]?.[subjObj.name]?.[w];
+        const overdue = isWeekOverdue(w);
+        sbaRows.push({
+          className: c.name, subject: subjObj.name,
+          teacher: subjObj.teacher ? teacherName(subjObj.teacher) : 'Unassigned',
+          week: w, done, overdue, meta
+        });
+      }
+    });
+  });
+  sbaRows.sort((a,b)=> (b.overdue&&!b.done) - (a.overdue&&!a.done) || b.week-a.week);
+
+  const attRows = [];
+  DB.classes.forEach(c=>{
+    schoolDaysSoFar().forEach(({date, week})=>{
+      const taken = !!(DB.attendance[c.id] && DB.attendance[c.id][date] && Object.keys(DB.attendance[c.id][date]).length);
+      const meta = DB.attendanceMeta[c.id]?.[date];
+      attRows.push({
+        className: c.name,
+        classTeacher: c.classTeacher ? teacherName(c.classTeacher) : 'Unassigned',
+        date, week, taken, meta, isPast: date < todayStr(0)
+      });
+    });
+  });
+  attRows.sort((a,b)=> (b.isPast&&!b.taken) - (a.isPast&&!a.taken) || (b.date>a.date?1:-1));
+
+  const sbaFlags = sbaRows.filter(r=>r.overdue && !r.done).length;
+  const attFlags = attRows.filter(r=>r.isPast && !r.taken).length;
+
+  return `
+    <div class="topbar"><div><div class="eyebrow">Oversight</div><h1>Staff Activity</h1></div></div>
+
+    <div class="stat-grid" style="grid-template-columns:repeat(2,1fr);">
+      <div class="stat-card"><div class="label">Missed weekly SBA deadlines</div><div class="value" style="${sbaFlags?'color:var(--brick);':''}">${sbaFlags}</div><div class="sub">Through Week ${curWeek}</div></div>
+      <div class="stat-card"><div class="label">Days without attendance taken</div><div class="value" style="${attFlags?'color:var(--brick);':''}">${attFlags}</div><div class="sub">Since term start</div></div>
+    </div>
+
+    <div class="panel"><div class="panel-head"><h3>Weekly SBA activity — subject teachers</h3></div>
+      <div class="panel-body" style="padding-top:10px;">
+        ${!sbaRows.length ? '<p style="margin:0;font-size:13px;color:var(--slate);">No subjects have weekly assessment switched on yet.</p>' : `
+        <table class="reg">
+          <thead><tr><th>Class</th><th>Subject</th><th>Teacher</th><th>Week</th><th>Status</th></tr></thead>
+          <tbody>
+            ${sbaRows.map(r=>`<tr>
+              <td>${r.className}</td><td>${r.subject}</td><td>${r.teacher}</td><td class="mono">Wk ${r.week}</td>
+              <td>${r.done
+                ? `<span style="color:var(--green,#2E7D32);font-weight:600;">✓ Entered${r.meta?' by '+r.meta.byName:''}</span>`
+                : (r.overdue
+                  ? `<span style="color:var(--brick);font-weight:600;">⚑ Missed (deadline ${fmtDate(weekFriday(r.week))})</span>`
+                  : `<span style="color:var(--slate);">Pending — due ${fmtDate(weekFriday(r.week))}</span>`)}
+              </td>
+            </tr>`).join('')}
+          </tbody>
+        </table>`}
+      </div>
+    </div>
+
+    <div class="panel"><div class="panel-head"><h3>Attendance activity — class teachers</h3></div>
+      <div class="panel-body" style="padding-top:10px;">
+        <table class="reg">
+          <thead><tr><th>Class</th><th>Class teacher</th><th>Date</th><th>Status</th></tr></thead>
+          <tbody>
+            ${attRows.slice(0,60).map(r=>`<tr>
+              <td>${r.className}</td><td>${r.classTeacher}</td><td class="mono">${fmtDate(r.date)}</td>
+              <td>${r.taken
+                ? `<span style="color:var(--green,#2E7D32);font-weight:600;">✓ Taken${r.meta?' by '+r.meta.byName:''}</span>`
+                : (r.isPast
+                  ? `<span style="color:var(--brick);font-weight:600;">⚑ Not taken</span>`
+                  : `<span style="color:var(--slate);">Today</span>`)}
+              </td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+        ${attRows.length>60 ? `<p style="margin:10px 0 0;font-size:12px;color:var(--slate);">Showing the most recent 60 of ${attRows.length} school days.</p>` : ''}
+      </div>
+    </div>
+  `;
+}
+
+/* ============================================================
+   Bill — restricted to the head teacher and assistant head
+   teacher only. They set line items (name + price) that print
+   on every report card, and can record each student's arrears.
+============================================================ */
+function renderBill(){
+  if(!isBillAccess()){
+    return `
+      <div class="topbar"><div><div class="eyebrow">Restricted</div><h1>Bill</h1></div></div>
+      <div class="empty">Only the head teacher and assistant head teacher can access the bill.</div>
+    `;
+  }
+  const items = DB.billItems || [];
+  const total = items.reduce((sum,it)=>sum+(Number(it.price)||0), 0);
+  const allStudents = DB.classes.flatMap(c=> studentsOf(c.id).map(s=>({ ...s, className:c.name })));
+  return `
+    <div class="topbar"><div><div class="eyebrow">Head teacher &amp; assistant head teacher only</div><h1>Bill</h1></div></div>
+
+    <div class="panel"><div class="panel-head"><h3>Bill items (this term)</h3></div>
+      <div class="panel-body" style="padding-top:10px;">
+        ${!items.length ? '<p style="margin:0 0 12px;font-size:13px;color:var(--slate);">No bill items yet — add the first one below.</p>' : `
+        <table class="reg">
+          <thead><tr><th>Item</th><th>Price (GHS)</th><th></th></tr></thead>
+          <tbody>
+            ${items.map(it=>`<tr>
+              <td>${it.name}</td>
+              <td class="mono">${(Number(it.price)||0).toFixed(2)}</td>
+              <td><button class="btn-danger" onclick="removeBillItem('${it.id}')">Remove</button></td>
+            </tr>`).join('')}
+            <tr style="font-weight:700;"><td>Total</td><td class="mono">${total.toFixed(2)}</td><td></td></tr>
+          </tbody>
+        </table>`}
+        <div class="inline-form" style="margin-top:14px;">
+          <input type="text" id="new-bill-name" placeholder="e.g. Tuition fee" style="flex:1;min-width:150px;">
+          <input type="number" id="new-bill-price" placeholder="Price (GHS)" min="0" step="0.01" style="width:140px;">
+          <button class="btn-small brass" onclick="addBillItem()">Add item</button>
+        </div>
+        <p style="margin:12px 0 0;font-size:12px;color:var(--slate);">These items print on every student's report card under "Fees / Bill", along with their own arrears below.</p>
+      </div>
+    </div>
+
+    <div class="panel"><div class="panel-head"><h3>Student arrears (amount owed from before this term)</h3></div>
+      <div class="panel-body" style="padding-top:10px;">
+        <table class="reg">
+          <thead><tr><th>Student</th><th>Class</th><th>Arrears (GHS)</th></tr></thead>
+          <tbody>
+            ${allStudents.map(s=>`<tr>
+              <td>${s.name}</td><td>${s.className}</td>
+              <td><input class="score-input" type="number" min="0" step="0.01" value="${s.arrears||0}" onchange="updateStudentArrears('${s.id}',this.value)"></td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+async function addBillItem(){
+  const name = document.getElementById('new-bill-name').value.trim();
+  const price = Number(document.getElementById('new-bill-price').value);
+  if(!name || !price || price<0) return;
+  DB.billItems.push({ id:'bill'+Date.now(), name, price });
+  await saveDB();
+  render();
+}
+async function removeBillItem(id){
+  DB.billItems = DB.billItems.filter(it=>it.id!==id);
+  await saveDB();
+  render();
+}
+async function updateStudentArrears(studentId, val){
+  const s = studentById(studentId);
+  if(!s) return;
+  s.arrears = Math.max(0, Number(val)||0);
+  await saveDB();
+}
+
 function renderStaff(){
   const term = DB.term || { startDate: todayStr(0), weeks:12, termNumber:1 };
   const termEndDate = todayStr(term.weeks*7);
@@ -1958,7 +2188,7 @@ function renderStaff(){
 
     <div class="panel"><div class="panel-head"><h3>Term setup</h3></div>
       <div class="panel-body" style="padding-top:14px;padding-bottom:16px;">
-        <p style="margin:0 0 10px;font-size:13px;color:var(--slate);">This controls attendance totals and the term shown on report cards. Set it once at the start of each term. Use the Monday of week 1 — the weekly SBA and attendance windows (Monday–Friday) are calculated from this date.</p>
+        <p style="margin:0 0 10px;font-size:13px;color:var(--slate);">This controls attendance totals and the term shown on report cards. Set it once at the start of each term.</p>
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;align-items:end;">
           <div><label style="display:block;font-size:11.5px;color:var(--slate);font-weight:600;margin-bottom:5px;">Term start date</label>
             <input type="date" id="term-start" value="${term.startDate}"></div>
@@ -1971,16 +2201,53 @@ function renderStaff(){
           <button class="btn-small brass" onclick="saveTermSetup()">Save term setup</button>
         </div>
         <p style="margin:10px 0 0;font-size:12px;color:var(--slate);">Ends around <span class="mono">${fmtDate(termEndDate)}</span> · attendance and report cards use this range.</p>
+        <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
+          <div>
+            <h4 style="margin-bottom:2px;">Exams week</h4>
+            <span style="font-size:12.5px;color:var(--slate);">Subject teachers can't enter exam scores until you declare exams week.</span>
+          </div>
+          <label style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;">
+            <input type="checkbox" ${term.examDeclared?'checked':''} onchange="setExamDeclared(this.checked)"> Exams week declared
+          </label>
+        </div>
       </div>
     </div>
 
-    <div class="panel"><div class="panel-head"><h3>Head teacher</h3></div>
+    <div class="panel"><div class="panel-head"><h3>School branding</h3></div>
       <div class="panel-body" style="padding-top:14px;padding-bottom:16px;">
-        <p style="margin:0 0 10px;font-size:13px;color:var(--slate);">Choose who signs as head teacher on every report card. They can then upload their own signature from the sidebar after signing in.</p>
-        <select onchange="setHeadTeacher(this.value)">
-          <option value="">— Not set —</option>
-          ${staffAndAdmins.map(u=>`<option value="${u.username}" ${DB.headTeacherUsername===u.username?'selected':''}>${u.name}</option>`).join('')}
-        </select>
+        <p style="margin:0 0 10px;font-size:13px;color:var(--slate);">Shown on the sign-in screen, the sidebar, and every report card.</p>
+        <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;">
+          <div style="position:relative;">
+            <div class="crest" style="width:64px;height:64px;">${DB.school.crest ? `<img src="${DB.school.crest}">` : `<span style="font-size:20px;">${schoolInitials(DB.school.name)}</span>`}</div>
+            <button class="btn-ghost" style="position:absolute;bottom:-8px;left:50%;transform:translateX(-50%);padding:2px 8px;font-size:10.5px;white-space:nowrap;" onclick="document.getElementById('crest-upload').click()">Change crest</button>
+            <input type="file" id="crest-upload" accept="image/*" style="display:none;" onchange="uploadSchoolCrest(this.files[0])">
+          </div>
+          <div style="flex:1;min-width:200px;">
+            <label style="display:block;font-size:11.5px;color:var(--slate);font-weight:600;margin-bottom:5px;">School name</label>
+            <div class="inline-form">
+              <input type="text" id="school-name-input" value="${DB.school.name}" style="flex:1;min-width:180px;">
+              <button class="btn-small brass" onclick="saveSchoolName()">Save name</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel"><div class="panel-head"><h3>Head teacher &amp; assistant head teacher</h3></div>
+      <div class="panel-body" style="padding-top:14px;padding-bottom:16px;">
+        <p style="margin:0 0 10px;font-size:13px;color:var(--slate);">Both sign report cards and can upload their own signature from the sidebar. Both — and only these two — can access the Bill tab.</p>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px;">
+          <div><label style="display:block;font-size:11.5px;color:var(--slate);font-weight:600;margin-bottom:5px;">Head teacher</label>
+            <select onchange="setHeadTeacher(this.value)">
+              <option value="">— Not set —</option>
+              ${staffAndAdmins.map(u=>`<option value="${u.username}" ${DB.headTeacherUsername===u.username?'selected':''}>${u.name}</option>`).join('')}
+            </select></div>
+          <div><label style="display:block;font-size:11.5px;color:var(--slate);font-weight:600;margin-bottom:5px;">Assistant head teacher</label>
+            <select onchange="setAssistantHeadTeacher(this.value)">
+              <option value="">— Not set —</option>
+              ${staffAndAdmins.map(u=>`<option value="${u.username}" ${DB.assistantHeadTeacherUsername===u.username?'selected':''}>${u.name}</option>`).join('')}
+            </select></div>
+        </div>
       </div>
     </div>
 
@@ -2000,6 +2267,7 @@ function renderStaff(){
           <input type="text" id="new-staff-name" placeholder="Full name">
           <input type="text" id="new-staff-username" placeholder="Username">
           <input type="password" id="new-staff-password" placeholder="Password">
+          <input type="text" id="new-staff-contact" placeholder="Contact phone (optional)">
           <select id="new-staff-role">
             <option value="Teacher">Teacher</option>
             <option value="Admin">Administrator</option>
@@ -2062,7 +2330,12 @@ async function saveTermSetup(){
   const weeks = Math.max(1, Number(document.getElementById('term-weeks').value)||12);
   const termNumber = Number(document.getElementById('term-number').value);
   if(!startDate) return;
-  DB.term = { startDate, weeks, termNumber };
+  DB.term = { startDate, weeks, termNumber, examDeclared: DB.term?.examDeclared || false };
+  await saveDB();
+  render();
+}
+async function setExamDeclared(on){
+  DB.term.examDeclared = !!on;
   await saveDB();
   render();
 }
@@ -2070,6 +2343,29 @@ async function setHeadTeacher(username){
   DB.headTeacherUsername = username || null;
   await saveDB();
   render();
+}
+async function setAssistantHeadTeacher(username){
+  DB.assistantHeadTeacherUsername = username || null;
+  await saveDB();
+  render();
+}
+async function saveSchoolName(){
+  const name = document.getElementById('school-name-input').value.trim();
+  if(!name) return;
+  DB.school.name = name;
+  await saveDB();
+  applyBranding();
+  render();
+}
+async function uploadSchoolCrest(file){
+  if(!file) return;
+  try{
+    const dataUrl = await readImageResized(file, 200);
+    DB.school.crest = dataUrl;
+    await saveDB();
+    applyBranding();
+    render();
+  }catch(e){ alert('Could not read that image — please try another file.'); }
 }
 function copyRegLink(){
   const link = location.origin + location.pathname + '#register';
@@ -2086,12 +2382,13 @@ async function addStaff(){
   const name = document.getElementById('new-staff-name').value.trim();
   const username = document.getElementById('new-staff-username').value.trim().toLowerCase();
   const password = document.getElementById('new-staff-password').value;
+  const contact = document.getElementById('new-staff-contact').value.trim();
   const role = document.getElementById('new-staff-role').value;
   const errEl = document.getElementById('staff-error');
   if(!name || !username || !password){ return; }
   if(DB.users.find(u=>u.username.toLowerCase()===username)){ errEl.style.display='block'; return; }
   errEl.style.display='none';
-  DB.users.push({ name, username, password, role, signature:null });
+  DB.users.push({ name, username, password, role, signature:null, contact });
   await saveDB();
   render();
 }
@@ -2101,11 +2398,12 @@ async function processStaffRows(rows){
     const name = fieldVal(r,'name','full name','staff name');
     const username = fieldVal(r,'username','user name','login').toLowerCase();
     const password = fieldVal(r,'password','pass');
+    const contact = fieldVal(r,'contact','phone','contact phone');
     let role = fieldVal(r,'role','position');
     role = /admin/i.test(role) ? 'Admin' : 'Teacher';
     if(!name || !username || !password){ skipped.push(`Row ${i+1}: missing name, username, or password`); return; }
     if(DB.users.find(u=>u.username.toLowerCase()===username)){ skipped.push(`Row ${i+1} (${name}): username "${username}" already taken`); return; }
-    DB.users.push({ name, username, password, role, signature:null });
+    DB.users.push({ name, username, password, role, signature:null, contact });
     added++;
   });
   await saveDB();
@@ -2115,7 +2413,7 @@ async function processStaffRows(rows){
 async function bulkAddStaffFromText(){
   const text = document.getElementById('bulk-staff-text').value;
   if(!text.trim()) return;
-  const rows = parsePastedRows(text, ['name','username','password','role']);
+  const rows = parsePastedRows(text, ['name','username','password','role','contact']);
   await processStaffRows(rows);
 }
 async function bulkAddStaffFromFile(){
@@ -2188,10 +2486,13 @@ async function removeStaff(username){
 function buildReportCardHTML(studentId){
   const s = studentById(studentId);
   const cls = classOf(s.classId);
+  const roster = studentsOf(s.classId);
   const avg = overallAverage(studentId);
   const att = attendanceRate(studentId, s.classId);
   const attCounts = attendanceCounts(studentId, s.classId);
   const pos = classPosition(studentId);
+  const sixSum = sixSubjectSummary(s.classId, studentId);
+  const chosenNames = new Set(sixSum.subjects.map(x=>x.name));
   const classTeacherName = cls.classTeacher ? teacherName(cls.classTeacher) : '—';
   const classTeacherUser = cls.classTeacher ? userByUsername(cls.classTeacher) : null;
   const headUser = DB.headTeacherUsername ? userByUsername(DB.headTeacherUsername) : null;
@@ -2199,40 +2500,61 @@ function buildReportCardHTML(studentId){
   const photoHTML = s.photo
     ? `<img src="${s.photo}" style="width:64px;height:64px;border-radius:50%;object-fit:cover;border:1px solid var(--line);">`
     : `<div class="avatar" style="width:64px;height:64px;background:var(--ink);color:var(--brass-soft);">${s.name.split(' ').map(w=>w[0]).slice(0,2).join('')}</div>`;
+  const billTotal = (DB.billItems||[]).reduce((sum,it)=>sum+(Number(it.price)||0), 0);
+  const arrears = Number(s.arrears)||0;
+  const payable = billTotal + arrears;
   return `
     <div class="rc-page">
       <div class="rc-head">
-        <div class="crest"><span>CA</span></div>
-        <div><h2>Clyde Academy</h2><p>Student Report Card — ${termLabel}</p></div>
+        <div class="crest">${DB.school.crest ? `<img src="${DB.school.crest}">` : `<span>${schoolInitials(DB.school.name)}</span>`}</div>
+        <div><h2>${DB.school.name}</h2><p>Student Report Card — ${termLabel}</p></div>
         <div style="margin-left:auto;">${photoHTML}</div>
       </div>
       <div class="rc-meta">
         <div><b>Student</b>${s.name}</div>
         <div><b>Class</b>${cls.name}</div>
-        <div><b>Class teacher</b>${classTeacherName}</div>
-        <div><b>Guardian contact</b>${s.guardian}</div>
+        <div><b>Class Teacher</b>${classTeacherName}</div>
+        <div><b>Class Teacher contact</b>${(classTeacherUser && classTeacherUser.contact) || '—'}</div>
         <div><b>Date issued</b>${fmtDate(todayStr(0))}</div>
         <div><b>Attendance</b>${attCounts.total ? attCounts.present+' / '+attCounts.total+' ('+(att??'—')+'%)' : '—'}</div>
-        <div><b>Class position</b>${pos ? ordinal(pos.rank)+' out of '+pos.of : '—'}</div>
       </div>
       <table class="rc-table">
-        <thead><tr><th>Subject</th><th>SBA /50</th><th>Exam /50</th><th>Total /100</th><th>Grade</th></tr></thead>
+        <thead><tr><th>Subject</th><th>Class Score /50</th><th>Exams Score /50</th><th>Total</th><th>Grade</th><th>Position</th><th>Remarks</th></tr></thead>
         <tbody>
           ${cls.subjects.map(subj=>{
             const b = subjectBreakdown(s.classId, subj.name, studentId);
-            return `<tr><td>${subj.name}</td><td>${b.sba50??'—'}</td><td>${b.exam50??'—'}</td><td>${b.grand??'—'}${b.grand!==null?'%':''}</td><td>${letterFor(b.grand)}</td></tr>`;
+            const spos = subjectPosition(s.classId, subj.name, studentId);
+            const gp = gradePointFor(b.grand);
+            const inSix = chosenNames.has(subj.name);
+            return `<tr${inSix?'':' style="opacity:0.55;"'}><td>${subj.name}${inSix?'':' <span style="font-size:9.5px;">(not counted)</span>'}</td><td>${b.sba50??'—'}</td><td>${b.exam50??'—'}</td><td>${b.grand??'—'}${b.grand!==null?'%':''}</td><td>${gp??'—'}</td><td>${spos?ordinal(spos.rank)+'/'+spos.of:'—'}</td><td>${remarkFor(gp)}</td></tr>`;
           }).join('')}
         </tbody>
       </table>
-      <div class="rc-summary">
-        <div><div class="n">${avg??'—'}${avg!==null?'%':''}</div><div class="l">Overall average</div></div>
-        <div><div class="n">${letterFor(avg)}</div><div class="l">Overall grade</div></div>
-        <div><div class="n">${pos?ordinal(pos.rank):'—'}</div><div class="l">Class position</div></div>
-      </div>
-      <div class="panel" style="box-shadow:none;margin-bottom:24px;"><div class="panel-body" style="padding-top:14px;">
+      <table class="rc-table" style="margin-top:0;">
+        <thead><tr><th>No. on Roll</th><th>Raw Marks</th><th>Average Mark</th><th>Grade</th><th>Position</th></tr></thead>
+        <tbody>
+          <tr>
+            <td class="mono">${roster.length}</td>
+            <td class="mono">${sixSum.raw??'—'}</td>
+            <td class="mono">${sixSum.average??'—'}${sixSum.average!==null?'%':''}</td>
+            <td class="mono">${sixSum.aggregate??'—'}</td>
+            <td class="mono">${pos ? ordinal(pos.rank)+' / '+pos.of : '—'}</td>
+          </tr>
+        </tbody>
+      </table>
+      <div class="panel" style="box-shadow:none;margin-bottom:16px;"><div class="panel-body" style="padding-top:14px;">
         <div style="font-size:11px;text-transform:uppercase;letter-spacing:0.05em;color:var(--slate);font-weight:600;margin-bottom:4px;">Teacher's remarks</div>
         <div style="font-size:13px;">${s.remark || '—'}</div>
       </div></div>
+      ${(DB.billItems && DB.billItems.length) || arrears ? `
+      <table class="rc-table" style="margin-top:0;">
+        <thead><tr><th colspan="2">Fees / Bill</th></tr></thead>
+        <tbody>
+          ${(DB.billItems||[]).map(it=>`<tr><td>${it.name}</td><td class="mono">GHS ${(Number(it.price)||0).toFixed(2)}</td></tr>`).join('')}
+          ${arrears ? `<tr><td>Arrears b/f</td><td class="mono">GHS ${arrears.toFixed(2)}</td></tr>` : ''}
+          <tr style="font-weight:700;"><td>Total payable</td><td class="mono">GHS ${payable.toFixed(2)}</td></tr>
+        </tbody>
+      </table>` : ''}
       <div class="rc-sign">
         <div>
           ${classTeacherUser && classTeacherUser.signature ? `<img src="${classTeacherUser.signature}" style="height:40px;object-fit:contain;display:block;margin:0 auto 4px;">` : '<div style="height:44px;"></div>'}
