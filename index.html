@@ -2526,7 +2526,7 @@ function buildReportCardHTML(studentId){
             const spos = subjectPosition(s.classId, subj.name, studentId);
             const gp = gradePointFor(b.grand);
             const inSix = chosenNames.has(subj.name);
-            return `<tr${inSix?'':' style="opacity:0.55;"'}><td>${subj.name}${inSix?'':' <span style="font-size:9.5px;">(not counted)</span>'}</td><td>${b.sba50??'—'}</td><td>${b.exam50??'—'}</td><td>${b.grand??'—'}${b.grand!==null?'%':''}</td><td>${gp??'—'}</td><td>${spos?ordinal(spos.rank)+'/'+spos.of:'—'}</td><td>${remarkFor(gp)}</td></tr>`;
+            return `<tr${inSix?'':' style="opacity:0.55;"'}><td>${subj.name}${inSix?'':' <span style="font-size:9.5px;">(not counted)</span>'}</td><td>${b.sba50??'—'}</td><td>${b.exam50??'—'}</td><td>${b.grand??'—'}${b.grand!==null?'%':''}</td><td>${gp??'—'}</td><td>${spos?ordinal(spos.rank):'—'}</td><td>${remarkFor(gp)}</td></tr>`;
           }).join('')}
         </tbody>
       </table>
@@ -2538,7 +2538,7 @@ function buildReportCardHTML(studentId){
             <td class="mono">${sixSum.raw??'—'}</td>
             <td class="mono">${sixSum.average??'—'}${sixSum.average!==null?'%':''}</td>
             <td class="mono">${sixSum.aggregate??'—'}</td>
-            <td class="mono">${pos ? ordinal(pos.rank)+' / '+pos.of : '—'}</td>
+            <td class="mono">${pos ? ordinal(pos.rank) : '—'}</td>
           </tr>
         </tbody>
       </table>
