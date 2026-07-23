@@ -632,7 +632,7 @@ function seedDB(){
         weeklyScores[s.id] = {};
         examScores[s.id] = Math.min(100, 48 + (seed*5) % 40);
       });
-      gradebook[c.id][subj] = { assessments, scores, weeklyEnabled:false, weeklyMax:10, weeklyScores, examScores };
+      gradebook[c.id][subj] = { assessments, scores, weeklyEnabled:false, weeklyMax:10, weeklyScores, examScores, weeklyMeta:{} };
     });
   });
 
@@ -691,6 +691,7 @@ function migrateDB(){
       if(sub.weeklyMax===undefined){ sub.weeklyMax = 10; changed = true; }
       if(!sub.weeklyScores){ sub.weeklyScores = {}; changed = true; }
       if(!sub.examScores){ sub.examScores = {}; changed = true; }
+      if(!sub.weeklyMeta){ sub.weeklyMeta = {}; changed = true; }
     });
   });
   DB.classes.forEach(c=>{
@@ -854,6 +855,94 @@ function attendanceCounts(studentId, classId){
   });
   return { present, total: count };
 }
+/* ============================================================
+   Weekly SBA / attendance tracking helpers
+   ------------------------------------------------------------
+   The term runs Week 1..N starting on DB.term.startDate (assumed
+   to be a Monday). Each week "closes" once its Friday has passed —
+   at that point, a subject teacher who hasn't entered any weekly
+   SBA marks for that week (or a form master who hasn't taken
+   attendance that week) gets redflagged.
+============================================================ */
+function addDaysStr(dateStr, days){
+  const d = new Date(dateStr+'T00:00:00');
+  d.setDate(d.getDate()+days);
+  return d.toISOString().slice(0,10);
+}
+function weekBounds(weekNum){
+  const start = (DB.term && DB.term.startDate) || todayStr(0);
+  const monday = addDaysStr(start, (weekNum-1)*7);
+  const friday = addDaysStr(monday, 4);
+  return { monday, friday };
+}
+/* The week the calendar is currently in, clamped to the term's week range. */
+function currentWeekNumber(){
+  const weeks = (DB.term && DB.term.weeks) || 12;
+  const start = DB.term && DB.term.startDate;
+  if(!start) return 1;
+  const diffDays = Math.round((new Date(todayStr(0)+'T00:00:00') - new Date(start+'T00:00:00'))/86400000);
+  let wk = Math.floor(diffDays/7)+1;
+  if(wk<1) wk=1;
+  if(wk>weeks) wk=weeks;
+  return wk;
+}
+/* A week is "closed" once its Friday has passed — after that point, missing work gets flagged. */
+function weekIsClosed(weekNum){
+  return todayStr(0) > weekBounds(weekNum).friday;
+}
+function weekLabel(weekNum){
+  const {monday, friday} = weekBounds(weekNum);
+  return `Week ${weekNum} (${fmtDate(monday)} – ${fmtDate(friday)})`;
+}
+function weekEnteredCount(classId, subj, weekNum){
+  const sub = DB.gradebook[classId]?.[subj];
+  if(!sub) return 0;
+  let n=0;
+  studentsOf(classId).forEach(s=>{
+    const v = (sub.weeklyScores[s.id]||{})['w'+weekNum];
+    if(v!==undefined && v!==null) n++;
+  });
+  return n;
+}
+/* Status of a subject teacher's weekly SBA entry for one class/subject/week. */
+function subjectWeekStatus(classId, subj, weekNum){
+  const sub = DB.gradebook[classId]?.[subj];
+  const total = studentsOf(classId).length;
+  const entered = weekEnteredCount(classId, subj, weekNum);
+  const closed = weekIsClosed(weekNum);
+  const meta = sub?.weeklyMeta?.['w'+weekNum];
+  return {
+    entered, total,
+    complete: total>0 && entered>=total,
+    closed,
+    flagged: closed && entered===0,
+    partial: closed && entered>0 && entered<total,
+    by: meta ? meta.by : null,
+    at: meta ? meta.at : null,
+  };
+}
+/* Status of a form master's attendance-taking for one class/week — only counts school days
+   (Mon–Fri) that have already occurred, so a week in progress isn't prematurely flagged. */
+function classAttendanceWeekStatus(classId, weekNum){
+  const {monday} = weekBounds(weekNum);
+  const today = todayStr(0);
+  const days = [];
+  for(let i=0;i<5;i++){
+    const d = addDaysStr(monday, i);
+    if(d<=today) days.push(d);
+  }
+  const attRec = DB.attendance[classId] || {};
+  const taken = days.filter(d=> attRec[d] && Object.keys(attRec[d]).length>0);
+  const closed = weekIsClosed(weekNum);
+  return {
+    daysExpected: days.length,
+    daysTaken: taken.length,
+    closed,
+    complete: days.length>0 && taken.length>=days.length,
+    flagged: closed && days.length>0 && taken.length===0,
+    partial: closed && taken.length>0 && taken.length<days.length,
+  };
+}
 function classAvgAttendanceToday(classId){
   const d = todayStr(0);
   const rec = DB.attendance[classId]?.[d];
@@ -977,6 +1066,7 @@ const NAV_ITEMS = [
   { id:'students', label:'Students', ic:'&#9737;' },
   { id:'gradebook', label:'Gradebook', ic:'&#9998;' },
   { id:'attendance', label:'Attendance', ic:'&#10003;' },
+  { id:'weekly-activity', label:'Weekly Activity', ic:'&#9873;', adminOnly:true },
   { id:'classes', label:'Classes', ic:'&#9776;', adminOnly:true },
   { id:'staff', label:'Staff Accounts', ic:'&#128273;', adminOnly:true },
 ];
@@ -1008,6 +1098,7 @@ function render(){
     case 'students': el.innerHTML = renderStudents(); break;
     case 'gradebook': el.innerHTML = renderGradebook(); break;
     case 'attendance': el.innerHTML = renderAttendance(); break;
+    case 'weekly-activity': el.innerHTML = renderWeeklyActivity(); break;
     case 'classes': el.innerHTML = renderClasses(); break;
     case 'staff': el.innerHTML = renderStaff(); break;
     default: el.innerHTML = renderDashboard();
@@ -1017,6 +1108,33 @@ function render(){
 /* ============================================================
    Dashboard
 ============================================================ */
+/* Redflag banner shown on a teacher's own dashboard for anything they've missed by this week's Friday. */
+function myRedflags(){
+  const curWeek = currentWeekNumber();
+  const items = [];
+  DB.classes.forEach(c=>{
+    c.subjects.forEach(subjObj=>{
+      if(subjObj.teacher!==session.username) return;
+      const sub = DB.gradebook[c.id]?.[subjObj.name];
+      if(!sub || !sub.weeklyEnabled) return;
+      const st = subjectWeekStatus(c.id, subjObj.name, curWeek);
+      if(st.flagged) items.push(`No ${subjObj.name} SBA marks entered yet for ${c.name} — ${weekLabel(curWeek)}.`);
+      else if(st.partial) items.push(`Only ${st.entered}/${st.total} students have ${subjObj.name} marks for ${c.name} — ${weekLabel(curWeek)}.`);
+    });
+    if(c.classTeacher===session.username){
+      const at = classAttendanceWeekStatus(c.id, curWeek);
+      if(at.flagged) items.push(`No attendance taken for ${c.name} — ${weekLabel(curWeek)}.`);
+      else if(at.partial) items.push(`Attendance only taken ${at.daysTaken}/${at.daysExpected} school days for ${c.name} — ${weekLabel(curWeek)}.`);
+    }
+  });
+  if(!items.length) return '';
+  return `
+    <div class="panel" style="border-color:var(--brick);"><div class="panel-body" style="padding:14px 20px;">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;"><span class="pill absent">Redflagged</span><b style="color:var(--brick);">You have overdue items for this week</b></div>
+      <div style="font-size:13px;color:var(--ink-soft);">${items.join('<br>')}</div>
+    </div></div>
+  `;
+}
 function renderDashboard(){
   const myClasses = accessibleClasses();
   const myClassIds = myClasses.map(c=>c.id);
@@ -1053,6 +1171,7 @@ function renderDashboard(){
       <div class="stat-card"><div class="label">Classes</div><div class="value">${numClasses}</div><div class="sub">${session.role==='Admin' ? 'Managed school-wide' : (myClasses.length ? 'Your assignments' : 'Awaiting admin assignment')}</div></div>
     </div>
     ${session.role!=='Admin' && !myClasses.length ? `<div class="panel"><div class="panel-body" style="padding-top:16px;"><p style="margin:0;color:var(--slate);font-size:13.5px;">You haven't been assigned to a class or subject yet. Ask the administrator to assign you from Staff Accounts / Classes.</p></div></div>` : ''}
+    ${session.role!=='Admin' ? myRedflags() : ''}
 
     <div class="panel">
       <div class="panel-head"><h3>Today's register activity</h3><span class="mono" style="font-size:11px;color:var(--slate)">${todayStr(0)}</span></div>
@@ -1363,7 +1482,6 @@ async function updateScore(classId, subj, studentId, assessId, val){
 /* ============================================================
    Gradebook (class-wide)
 ============================================================ */
-let gbWeek = 1;
 function renderGradebook(){
   const classes = accessibleClasses().filter(c=> teachableSubjects(c).length>0);
   if(!classes.length){
@@ -1380,8 +1498,8 @@ function renderGradebook(){
   const subjObj = subjectOf(cls, view.subject);
   const canEdit = session.role==='Admin' || subjObj.teacher===session.username;
   const roster = studentsOf(cls.id);
-  const weeks = DB.term?.weeks || 12;
-  if(gbWeek < 1 || gbWeek > weeks) gbWeek = 1;
+  const gbWeek = currentWeekNumber();
+  const wkStatus = subjectWeekStatus(cls.id, view.subject, gbWeek);
 
   const catMax = sub.assessments.reduce((a,c)=>a+c.max,0);
 
@@ -1411,17 +1529,26 @@ function renderGradebook(){
     </div>` : ''}
 
     ${sub.weeklyEnabled ? `
-    <div class="panel"><div class="panel-head"><h3>Weekly marks</h3>
+    ${wkStatus.flagged ? `
+    <div class="panel" style="border-color:var(--brick);"><div class="panel-body" style="padding:14px 20px;display:flex;align-items:center;gap:10px;">
+      <span class="pill absent" style="flex-shrink:0;">Redflagged</span>
+      <span style="font-size:13px;color:var(--brick);">No SBA marks were entered for <b>${view.subject}</b> in ${weekLabel(gbWeek)} — Friday's deadline has passed. Please enter this week's marks as soon as possible.</span>
+    </div></div>
+    ` : wkStatus.partial ? `
+    <div class="panel" style="border-color:var(--brass);"><div class="panel-body" style="padding:14px 20px;display:flex;align-items:center;gap:10px;">
+      <span class="pill late" style="flex-shrink:0;">Incomplete</span>
+      <span style="font-size:13px;color:var(--ink-soft);">Only ${wkStatus.entered} of ${wkStatus.total} students have marks for ${weekLabel(gbWeek)} — Friday's deadline has passed.</span>
+    </div></div>
+    ` : ''}
+    <div class="panel"><div class="panel-head"><h3>Weekly marks — ${weekLabel(gbWeek)}</h3>
       <div style="display:flex;align-items:center;gap:8px;">
-        <label style="font-size:12.5px;color:var(--slate);">Week</label>
-        <select onchange="gbWeek=Number(this.value); render()">
-          ${Array.from({length:weeks},(_,i)=>i+1).map(w=>`<option value="${w}" ${w===gbWeek?'selected':''}>Week ${w}</option>`).join('')}
-        </select>
+        ${wkStatus.by ? `<span style="font-size:12px;color:var(--slate);">Recorded by <b>${teacherName(wkStatus.by)||wkStatus.by}</b></span>` : `<span style="font-size:12px;color:var(--slate);">Not yet recorded</span>`}
         ${canEdit ? `<label style="font-size:12.5px;color:var(--slate);">Max for this week</label>
         <input type="number" class="score-input" style="width:56px;" min="1" value="${sub.weeklyMax}" onchange="setWeeklyMax('${cls.id}','${view.subject}',this.value)">` : ''}
       </div>
     </div>
     <div class="panel-body" style="padding-top:0;">
+      <p style="font-size:12px;color:var(--slate);margin:10px 0;">Only the current week is open for entry — past weeks lock automatically so marks can't be backdated or skipped.</p>
       <table class="reg"><thead><tr><th>Student</th><th>Week ${gbWeek} mark<br><span class="mono" style="font-weight:400;">/${sub.weeklyMax}</span></th></tr></thead>
       <tbody>
         ${roster.map(s=>{
@@ -1488,6 +1615,12 @@ async function updateWeeklyScore(classId, subj, studentId, week, val){
   if(!sub.weeklyScores[studentId]) sub.weeklyScores[studentId] = {};
   if(val===''){ delete sub.weeklyScores[studentId]['w'+week]; }
   else{ sub.weeklyScores[studentId]['w'+week] = Math.max(0, Number(val)||0); }
+  if(!sub.weeklyMeta) sub.weeklyMeta = {};
+  if(weekEnteredCount(classId, subj, week)>0){
+    sub.weeklyMeta['w'+week] = { by: session.username, at: new Date().toISOString() };
+  } else {
+    delete sub.weeklyMeta['w'+week];
+  }
   await saveDB();
   render();
 }
@@ -1548,6 +1681,104 @@ async function markAttendance(classId, date, studentId, status){
   DB.attendance[classId][date][studentId] = status;
   await saveDB();
   render();
+}
+
+/* ============================================================
+   Weekly Activity (admin) — oversight of subject teachers' weekly
+   SBA entries and form masters' weekly attendance, with redflags
+   for anyone who missed the Friday deadline for the current week.
+============================================================ */
+function weekStatusCell(status){
+  if(status.complete) return `<span class="pill present" title="All done">&#10003;</span>`;
+  if(status.flagged) return `<span class="pill absent" title="Redflagged — nothing recorded and the week is closed">&#9873;</span>`;
+  if(status.partial) return `<span class="pill late" title="Incomplete — week is closed">&#8211;</span>`;
+  if(status.closed) return `<span class="pill present" title="Nothing required">&middot;</span>`;
+  return `<span style="color:var(--slate);font-size:12px;" title="Week in progress">&hellip;</span>`;
+}
+function renderWeeklyActivity(){
+  const curWeek = currentWeekNumber();
+  const weekRange = Array.from({length:curWeek},(_,i)=>i+1);
+
+  // Subject teachers running weekly SBA
+  const sbaRows = [];
+  DB.classes.forEach(c=>{
+    c.subjects.forEach(subjObj=>{
+      const sub = DB.gradebook[c.id]?.[subjObj.name];
+      if(!sub || !sub.weeklyEnabled) return;
+      sbaRows.push({ classId:c.id, className:c.name, subject:subjObj.name, teacher:subjObj.teacher });
+    });
+  });
+  const flaggedSba = sbaRows.filter(r=> subjectWeekStatus(r.classId, r.subject, curWeek).flagged);
+
+  // Form masters and their attendance
+  const attRows = DB.classes.filter(c=>c.classTeacher);
+  const flaggedAtt = attRows.filter(c=> classAttendanceWeekStatus(c.id, curWeek).flagged);
+
+  return `
+    <div class="topbar">
+      <div><div class="eyebrow">Oversight</div><h1>Weekly Activity</h1></div>
+      <div class="date-badge">${weekLabel(curWeek)}</div>
+    </div>
+
+    ${(flaggedSba.length || flaggedAtt.length) ? `
+    <div class="panel" style="border-color:var(--brick);"><div class="panel-body" style="padding:14px 20px;">
+      <div style="font-weight:600;color:var(--brick);margin-bottom:4px;">${flaggedSba.length + flaggedAtt.length} redflag(s) this week</div>
+      <div style="font-size:13px;color:var(--ink-soft);">
+        ${flaggedSba.map(r=>`${teacherName(r.teacher)||'Unassigned'} — no ${r.subject} SBA entered for ${r.className}`).join('<br>')}
+        ${flaggedSba.length && flaggedAtt.length ? '<br>' : ''}
+        ${flaggedAtt.map(c=>`${teacherName(c.classTeacher)||'Unassigned'} — no attendance taken for ${c.name}`).join('<br>')}
+      </div>
+    </div></div>
+    ` : `
+    <div class="panel"><div class="panel-body" style="padding:14px 20px;color:var(--sage);font-weight:600;">No redflags this week — everyone is up to date.</div></div>
+    `}
+
+    <div class="panel">
+      <div class="panel-head"><h3>Subject teachers — weekly SBA</h3></div>
+      <div class="panel-body" style="padding-top:10px;overflow-x:auto;">
+        ${!sbaRows.length ? `<div class="empty">No subjects have weekly assessment switched on yet.</div>` : `
+        <table class="reg">
+          <thead><tr><th>Class</th><th>Subject</th><th>Teacher</th>${weekRange.map(w=>`<th>W${w}</th>`).join('')}<th>This week</th></tr></thead>
+          <tbody>
+            ${sbaRows.map(r=>{
+              const cur = subjectWeekStatus(r.classId, r.subject, curWeek);
+              return `<tr>
+                <td>${r.className}</td>
+                <td>${r.subject}</td>
+                <td style="font-weight:600;">${teacherName(r.teacher)||'—'}</td>
+                ${weekRange.map(w=>`<td>${weekStatusCell(subjectWeekStatus(r.classId, r.subject, w))}</td>`).join('')}
+                <td>${cur.by ? `<span style="font-size:12px;color:var(--slate);">by ${teacherName(cur.by)||cur.by}</span>` : (cur.flagged ? `<span style="font-size:12px;color:var(--brick);font-weight:600;">Redflagged</span>` : `<span style="font-size:12px;color:var(--slate);">Pending</span>`)}</td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+        <p style="margin:12px 0 4px;font-size:12px;color:var(--slate);">&#10003; complete &nbsp; &#9873; redflagged (nothing entered by Friday) &nbsp; &#8211; incomplete &nbsp; &hellip; week still in progress</p>
+        `}
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head"><h3>Form masters — weekly attendance</h3></div>
+      <div class="panel-body" style="padding-top:10px;overflow-x:auto;">
+        ${!attRows.length ? `<div class="empty">No classes have a form master assigned yet.</div>` : `
+        <table class="reg">
+          <thead><tr><th>Class</th><th>Form master</th>${weekRange.map(w=>`<th>W${w}</th>`).join('')}<th>This week</th></tr></thead>
+          <tbody>
+            ${attRows.map(c=>{
+              const cur = classAttendanceWeekStatus(c.id, curWeek);
+              return `<tr>
+                <td>${c.name}</td>
+                <td style="font-weight:600;">${teacherName(c.classTeacher)||'—'}</td>
+                ${weekRange.map(w=>`<td>${weekStatusCell(classAttendanceWeekStatus(c.id, w))}</td>`).join('')}
+                <td>${cur.flagged ? `<span style="font-size:12px;color:var(--brick);font-weight:600;">Redflagged</span>` : `<span style="font-size:12px;color:var(--slate);">${cur.daysTaken}/${cur.daysExpected} days taken</span>`}</td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+        `}
+      </div>
+    </div>
+  `;
 }
 
 /* ============================================================
@@ -1727,7 +1958,7 @@ function renderStaff(){
 
     <div class="panel"><div class="panel-head"><h3>Term setup</h3></div>
       <div class="panel-body" style="padding-top:14px;padding-bottom:16px;">
-        <p style="margin:0 0 10px;font-size:13px;color:var(--slate);">This controls attendance totals and the term shown on report cards. Set it once at the start of each term.</p>
+        <p style="margin:0 0 10px;font-size:13px;color:var(--slate);">This controls attendance totals and the term shown on report cards. Set it once at the start of each term. Use the Monday of week 1 — the weekly SBA and attendance windows (Monday–Friday) are calculated from this date.</p>
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;align-items:end;">
           <div><label style="display:block;font-size:11.5px;color:var(--slate);font-weight:600;margin-bottom:5px;">Term start date</label>
             <input type="date" id="term-start" value="${term.startDate}"></div>
