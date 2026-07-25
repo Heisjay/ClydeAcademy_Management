@@ -315,6 +315,11 @@
 
   /* ---------- Register screen ---------- */
   .auth-link{background:none;border:none;padding:0;color:var(--brass);font-weight:700;font-size:inherit;text-decoration:underline;cursor:pointer;}
+  .role-toggle-btn{
+    flex:1; padding:10px 8px; border-radius:9px; border:1.5px solid var(--line);
+    background:#fff; font-weight:700; font-size:13px; color:var(--slate);
+  }
+  .role-toggle-btn.active{ background:var(--ink); color:var(--brass-soft); border-color:var(--ink); }
   .auth-link:hover{color:#a3781f;}
 
   /* ---------- Admin CRUD widgets ---------- */
@@ -409,7 +414,7 @@
   </div>
 </div>
 
-<!-- ===================== TEACHER REGISTRATION ===================== -->
+<!-- ===================== REGISTRATION (TEACHER OR PARENT) ===================== -->
 <div id="register-screen" style="display:none;">
   <div style="min-height:100vh; display:flex; align-items:center; justify-content:center; background:linear-gradient(var(--ink), var(--ink)); padding:24px;">
     <div class="login-card">
@@ -427,17 +432,35 @@
       </div>
       <div class="login-head">
         <div class="crest" id="register-crest"><span>CA</span></div>
-        <div><h1 class="login-title">Teacher Registration</h1></div>
+        <div><h1 class="login-title">Registration</h1></div>
       </div>
-      <p class="login-sub">Create your account for the first time. Your class and subjects will be assigned by the administrator afterward.</p>
+      <p class="login-sub">Choose which kind of account you're creating.</p>
 
-      <div class="field"><label>Full name</label><input type="text" id="reg-name" placeholder="e.g. Mr. Owusu"></div>
+      <div class="role-toggle" style="display:flex;gap:8px;margin-bottom:16px;">
+        <button type="button" id="reg-role-teacher-btn" class="role-toggle-btn active" onclick="setRegRole('teacher')">I'm a Teacher</button>
+        <button type="button" id="reg-role-parent-btn" class="role-toggle-btn" onclick="setRegRole('parent')">I'm a Parent</button>
+      </div>
+
+      <p id="reg-teacher-note" class="login-sub" style="margin-top:-8px;">Your class and subjects will be assigned by the administrator afterward.</p>
+      <p id="reg-parent-note" class="login-sub" style="margin-top:-8px;display:none;">Find your child below, then set up your login. You'll only be able to see their progress report and fees — not their marks.</p>
+
+      <div id="parent-ward-section" style="display:none;margin-bottom:14px;">
+        <div class="field">
+          <label>Search for your child's name</label>
+          <input type="text" id="ward-search-input" placeholder="Start typing a name…" oninput="searchWards(this.value)">
+        </div>
+        <div id="ward-search-results" style="max-height:140px;overflow-y:auto;margin-bottom:8px;"></div>
+        <label style="display:block;font-size:11.5px;color:var(--slate);font-weight:600;margin-bottom:5px;">Selected child(ren)</label>
+        <div id="selected-wards"><span style="font-size:12px;color:var(--slate);">No children selected yet.</span></div>
+      </div>
+
+      <div class="field"><label id="reg-name-label">Full name</label><input type="text" id="reg-name" placeholder="e.g. Mr. Owusu"></div>
       <div class="field"><label>Choose a username</label><input type="text" id="reg-username" placeholder="e.g. owusu"></div>
       <div class="field"><label>Choose a password</label><input type="password" id="reg-password" placeholder="••••••••"></div>
       <div class="field"><label>Confirm password</label><input type="password" id="reg-password2" placeholder="••••••••"></div>
       <p id="register-error" style="display:none;color:var(--brick);font-size:12.5px;font-weight:600;margin:-8px 0 14px;"></p>
 
-      <button class="btn-primary" onclick="registerTeacher()">Create account</button>
+      <button class="btn-primary" onclick="submitRegistration()">Create account</button>
       <p class="login-foot">Already registered? <button class="auth-link" onclick="hideRegister()">Back to sign in</button></p>
     </div>
   </div>
@@ -835,7 +858,7 @@ function seedDB(){
 
   const term = { startDate: todayStr(0), weeks: 12, termNumber: 1, examDeclared: false };
 
-  return { classes, students, gradebook, attendance, users, term, headTeacherUsername: 'admin', assistantHeadTeacherUsername: null, weeklyMeta: {}, attendanceMeta: {}, billItems: [], school: { name:'Clyde Academy', crest:null } };
+  return { classes, students, gradebook, attendance, users, term, headTeacherUsername: 'admin', assistantHeadTeacherUsername: null, weeklyMeta: {}, attendanceMeta: {}, billItems: [], school: { name:'Clyde Academy', crest:null }, systemStatus: 'term' };
 }
 
 function migrateDB(){
@@ -849,6 +872,7 @@ function migrateDB(){
   if(DB.assistantHeadTeacherUsername === undefined){ DB.assistantHeadTeacherUsername = null; changed = true; }
   if(!DB.billItems){ DB.billItems = []; changed = true; }
   if(!DB.school){ DB.school = { name:'Clyde Academy', crest:null }; changed = true; }
+  if(!DB.systemStatus){ DB.systemStatus = 'term'; changed = true; }
   DB.users.forEach(u=>{
     if(u.signature===undefined){ u.signature = null; changed = true; }
     if(u.contact===undefined){ u.contact = ''; changed = true; }
@@ -1168,18 +1192,66 @@ async function login(){
   document.getElementById('user-role').textContent = session.role + (session.role!=='Admin' && myClasses.length ? ' · '+myClasses.map(c=>c.name).join(', ') : '');
   document.getElementById('user-avatar').textContent = user.name.split(' ').map(w=>w[0]).slice(0,2).join('').toUpperCase();
   const defaultClassId = (myClasses[0] || accessibleClasses()[0] || DB.classes[0])?.id || null;
-  view = { page:'dashboard', studentId:null, tab:'overview', classId: defaultClassId, subject:null, date: todayStr(0) };
+  view = { page: (session.role==='Parent' ? 'parent' : 'dashboard'), studentId:null, tab:'overview', classId: defaultClassId, subject:null, date: todayStr(0), parentWardId: null };
   renderNav();
   render();
 }
+let regRole = 'teacher';
+let selectedWards = [];
 function showRegister(){
   document.getElementById('login-screen').style.display = 'none';
   document.getElementById('register-screen').style.display = 'block';
+  setRegRole('teacher');
 }
 function hideRegister(){
   document.getElementById('register-screen').style.display = 'none';
   document.getElementById('login-screen').style.display = 'flex';
   history.replaceState(null, '', location.pathname + location.search);
+}
+function setRegRole(role){
+  regRole = role;
+  selectedWards = [];
+  document.getElementById('reg-role-teacher-btn').classList.toggle('active', role==='teacher');
+  document.getElementById('reg-role-parent-btn').classList.toggle('active', role==='parent');
+  document.getElementById('reg-teacher-note').style.display = role==='teacher' ? 'block' : 'none';
+  document.getElementById('reg-parent-note').style.display = role==='parent' ? 'block' : 'none';
+  document.getElementById('parent-ward-section').style.display = role==='parent' ? 'block' : 'none';
+  document.getElementById('reg-name-label').textContent = role==='parent' ? 'Your name (parent/guardian)' : 'Full name';
+  document.getElementById('ward-search-input').value = '';
+  document.getElementById('ward-search-results').innerHTML = '';
+  document.getElementById('register-error').style.display = 'none';
+  renderSelectedWards();
+}
+function searchWards(query){
+  const q = query.trim().toLowerCase();
+  const resultsEl = document.getElementById('ward-search-results');
+  if(!q){ resultsEl.innerHTML = ''; return; }
+  const matches = DB.students.filter(s=>s.name.toLowerCase().includes(q)).slice(0,8);
+  resultsEl.innerHTML = matches.length ? matches.map(s=>{
+    const cls = classOf(s.classId);
+    const checked = selectedWards.includes(s.id);
+    return `<label style="display:flex;align-items:center;gap:8px;padding:6px 2px;font-size:13px;border-bottom:1px solid var(--line);">
+      <input type="checkbox" ${checked?'checked':''} onchange="toggleWard('${s.id}', this.checked)"> ${s.name} <span style="color:var(--slate);font-size:11.5px;">— ${cls?cls.name:'—'}</span>
+    </label>`;
+  }).join('') : '<p style="font-size:12.5px;color:var(--slate);margin:6px 0;">No matching students found.</p>';
+}
+function toggleWard(id, checked){
+  if(checked){ if(!selectedWards.includes(id)) selectedWards.push(id); }
+  else{ selectedWards = selectedWards.filter(x=>x!==id); }
+  renderSelectedWards();
+}
+function renderSelectedWards(){
+  const el = document.getElementById('selected-wards');
+  if(!selectedWards.length){ el.innerHTML = '<span style="font-size:12px;color:var(--slate);">No children selected yet.</span>'; return; }
+  el.innerHTML = selectedWards.map(id=>{
+    const s = studentById(id);
+    return `<span class="pill" style="margin:2px 6px 2px 0;display:inline-flex;align-items:center;gap:6px;">${s?s.name:'?'}
+      <button type="button" onclick="toggleWard('${id}', false); searchWards(document.getElementById('ward-search-input').value);" style="border:none;background:none;cursor:pointer;font-weight:700;color:inherit;">×</button></span>`;
+  }).join('');
+}
+function submitRegistration(){
+  if(regRole==='parent') return registerParent();
+  return registerTeacher();
 }
 async function registerTeacher(){
   const name = document.getElementById('reg-name').value.trim();
@@ -1193,9 +1265,28 @@ async function registerTeacher(){
   if(password!==password2){ showErr('Passwords do not match.'); return; }
   if(DB.users.find(u=>u.username.toLowerCase()===username)){ showErr('That username is already taken — choose another.'); return; }
   errEl.style.display='none';
-  DB.users.push({ name, username, password, role:'Teacher' });
+  DB.users.push({ name, username, password, role:'Teacher', signature:null, contact:'' });
   await saveDB();
   alert('Account created! You can now sign in. Your administrator still needs to assign you a class and subjects before you\'ll see any students.');
+  hideRegister();
+  document.getElementById('login-username').value = username;
+}
+async function registerParent(){
+  const name = document.getElementById('reg-name').value.trim();
+  const username = document.getElementById('reg-username').value.trim().toLowerCase();
+  const password = document.getElementById('reg-password').value;
+  const password2 = document.getElementById('reg-password2').value;
+  const errEl = document.getElementById('register-error');
+  const showErr = msg=>{ errEl.textContent = msg; errEl.style.display='block'; };
+  if(!name || !username || !password){ showErr('Please fill in your name, username, and password.'); return; }
+  if(password.length<4){ showErr('Password should be at least 4 characters.'); return; }
+  if(password!==password2){ showErr('Passwords do not match.'); return; }
+  if(DB.users.find(u=>u.username.toLowerCase()===username)){ showErr('That username is already taken — choose another.'); return; }
+  if(!selectedWards.length){ showErr('Please search for and select at least one child.'); return; }
+  errEl.style.display='none';
+  DB.users.push({ name, username, password, role:'Parent', wardIds: selectedWards.slice(), signature:null, contact:'' });
+  await saveDB();
+  alert('Account created! You can now sign in to view your child\'s progress report and fees.');
   hideRegister();
   document.getElementById('login-username').value = username;
 }
@@ -1217,6 +1308,7 @@ const NAV_ITEMS = [
   { id:'classes', label:'Classes', ic:'&#9776;', adminOnly:true },
   { id:'staff', label:'Staff Accounts', ic:'&#128273;', adminOnly:true },
   { id:'bill', label:'Bill', ic:'&#128176;', visible: ()=>isBillAccess() },
+  { id:'parent', label:'My Ward(s)', ic:'&#128118;' },
 ];
 /* Only the head teacher and assistant head teacher can see/use the Bill tab — this is checked by
    account, not by role, so even an Admin account is excluded unless it's specifically one of these two. */
@@ -1224,7 +1316,11 @@ function isBillAccess(){
   return !!session && (session.username===DB.headTeacherUsername || session.username===DB.assistantHeadTeacherUsername);
 }
 function renderNav(){
-  const items = NAV_ITEMS.filter(i=> (!i.adminOnly || session.role==='Admin') && (!i.visible || i.visible()));
+  const items = NAV_ITEMS.filter(i=>{
+    if(session.role==='Parent') return i.id==='parent';
+    if(i.id==='parent') return false;
+    return (!i.adminOnly || session.role==='Admin') && (!i.visible || i.visible());
+  });
   document.getElementById('nav-items').innerHTML = items.map(i=>`
     <button class="nav-item ${view.page===i.id?'active':''}" onclick="goTo('${i.id}')">
       <span class="ic">${i.ic}</span> ${i.label}
@@ -1245,6 +1341,13 @@ function goTo(page){
 function render(){
   renderNav();
   const el = document.getElementById('main-content');
+  if(session.role!=='Admin' && DB.systemStatus==='inactive'){
+    el.innerHTML = `
+      <div class="topbar"><div><div class="eyebrow">Notice</div><h1>System currently inactive</h1></div></div>
+      <div class="empty">The school hasn't opened this system for term or vacation classes yet. Please check back once the administrator activates it.</div>
+    `;
+    return;
+  }
   if(view.studentId) { el.innerHTML = renderStudentDetail(view.studentId); return; }
   switch(view.page){
     case 'dashboard': el.innerHTML = renderDashboard(); break;
@@ -1255,7 +1358,8 @@ function render(){
     case 'classes': el.innerHTML = renderClasses(); break;
     case 'staff': el.innerHTML = renderStaff(); break;
     case 'bill': el.innerHTML = renderBill(); break;
-    default: el.innerHTML = renderDashboard();
+    case 'parent': el.innerHTML = renderParentPortal(); break;
+    default: el.innerHTML = session.role==='Parent' ? renderParentPortal() : renderDashboard();
   }
 }
 
@@ -1298,6 +1402,7 @@ function renderDashboard(){
       <div class="stat-card"><div class="label">Classes</div><div class="value">${numClasses}</div><div class="sub">${session.role==='Admin' ? 'Managed school-wide' : (myClasses.length ? 'Your assignments' : 'Awaiting admin assignment')}</div></div>
     </div>
     ${session.role!=='Admin' && !myClasses.length ? `<div class="panel"><div class="panel-body" style="padding-top:16px;"><p style="margin:0;color:var(--slate);font-size:13.5px;">You haven't been assigned to a class or subject yet. Ask the administrator to assign you from Staff Accounts / Classes.</p></div></div>` : ''}
+    ${DB.systemStatus==='vacation' ? `<div class="panel" style="border-color:var(--brass);"><div class="panel-body" style="padding-top:14px;padding-bottom:14px;"><p style="margin:0;font-size:13px;font-weight:600;color:var(--brass);">🏖 Vacation classes are currently in session.</p></div></div>` : ''}
 
     <div class="panel">
       <div class="panel-head"><h3>Today's register activity</h3><span class="mono" style="font-size:11px;color:var(--slate)">${todayStr(0)}</span></div>
@@ -2179,10 +2284,97 @@ async function updateStudentArrears(studentId, val){
   await saveDB();
 }
 
+/* ============================================================
+   Parent Portal — read-only. Shows attendance, the teacher's
+   written progress remark, and fees owing for the chosen ward.
+   Deliberately does NOT show subject marks, grades, or position.
+============================================================ */
+function renderParentPortal(){
+  const me = userByUsername(session.username);
+  const wardIds = (me && me.wardIds) || [];
+  if(!wardIds.length){
+    return `
+      <div class="topbar"><div><div class="eyebrow">Welcome</div><h1>My Ward(s)</h1></div></div>
+      <div class="empty">No children are linked to your account yet. Please contact the school administrator.</div>
+    `;
+  }
+  if(!view.parentWardId || !wardIds.includes(view.parentWardId)) view.parentWardId = wardIds[0];
+  const s = studentById(view.parentWardId);
+  const cls = classOf(s.classId);
+  const att = attendanceRate(s.id, s.classId);
+  const attCounts = attendanceCounts(s.id, s.classId);
+  const sixSum = sixSubjectSummary(s.classId, s.id);
+  const pos = classPosition(s.id);
+  const classTeacherUser = cls.classTeacher ? userByUsername(cls.classTeacher) : null;
+  const billTotal = (DB.billItems||[]).reduce((sum,it)=>sum+(Number(it.price)||0), 0);
+  const arrears = Number(s.arrears)||0;
+  const payable = billTotal + arrears;
+  const termLabel = TERM_NAMES[(DB.term?.termNumber||1)-1] || '1st Term';
+  return `
+    <div class="topbar"><div><div class="eyebrow">${termLabel}</div><h1>My Ward(s)</h1></div></div>
+
+    ${wardIds.length>1 ? `<div class="toolbar">
+      <select onchange="view.parentWardId=this.value; render()">
+        ${wardIds.map(id=>{ const w = studentById(id); return w ? `<option value="${id}" ${id===view.parentWardId?'selected':''}>${w.name}</option>` : ''; }).join('')}
+      </select>
+    </div>` : ''}
+
+    <div class="panel"><div class="panel-body" style="padding-top:16px;display:flex;gap:16px;align-items:center;flex-wrap:wrap;">
+      ${s.photo ? `<img src="${s.photo}" style="width:64px;height:64px;border-radius:50%;object-fit:cover;border:1px solid var(--line);">` : `<div class="avatar" style="width:64px;height:64px;background:var(--ink);color:var(--brass-soft);">${s.name.split(' ').map(w=>w[0]).slice(0,2).join('')}</div>`}
+      <div>
+        <div style="font-size:18px;font-weight:700;">${s.name}</div>
+        <div style="font-size:13px;color:var(--slate);">${cls.name} · Class Teacher: ${classTeacherUser?classTeacherUser.name:'—'}</div>
+      </div>
+    </div></div>
+
+    <div class="stat-grid" style="grid-template-columns:repeat(2,1fr);">
+      <div class="stat-card"><div class="label">Attendance</div><div class="value">${att??'—'}${att!==null?'%':''}</div><div class="sub">${attCounts.total ? attCounts.present+' / '+attCounts.total+' days this term' : 'No attendance recorded yet'}</div></div>
+      <div class="stat-card"><div class="label">Amount owing</div><div class="value" style="${payable?'color:var(--brick);':''}">GHS ${payable.toFixed(2)}</div><div class="sub">${arrears?'Includes GHS '+arrears.toFixed(2)+' arrears':'This term fees'}</div></div>
+    </div>
+
+    <div class="panel"><div class="panel-head"><h3>Progress report</h3></div>
+      <div class="panel-body" style="padding-top:10px;padding-bottom:16px;">
+        <table class="reg">
+          <thead><tr><th>Subject</th><th>Grade</th><th>Remark</th></tr></thead>
+          <tbody>
+            ${cls.subjects.map(subj=>{
+              const p = subjectAverage(s.classId, subj.name, s.id);
+              const gp = gradePointFor(p);
+              return `<tr><td>${subj.name}</td><td class="mono">${gp??'—'}</td><td>${remarkFor(gp)}</td></tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+        <div class="stat-grid" style="grid-template-columns:repeat(2,1fr);margin-top:14px;">
+          <div class="stat-card"><div class="label">Overall grade (aggregate)</div><div class="value">${sixSum.aggregate??'—'}</div><div class="sub">Lower is better · 4 core + best 2 electives</div></div>
+          <div class="stat-card"><div class="label">Class position</div><div class="value">${pos?ordinal(pos.rank):'—'}</div><div class="sub">${pos?'out of '+pos.of:'Not enough data yet'}</div></div>
+        </div>
+        <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--line);">
+          <div style="font-size:11px;text-transform:uppercase;letter-spacing:0.05em;color:var(--slate);font-weight:600;margin-bottom:4px;">Class teacher's remark</div>
+          <div style="font-size:13.5px;">${s.remark || 'The class teacher has not added a remark yet.'}</div>
+        </div>
+      </div>
+    </div>
+
+    ${(DB.billItems||[]).length ? `
+    <div class="panel"><div class="panel-head"><h3>Fees breakdown</h3></div>
+      <div class="panel-body" style="padding-top:10px;">
+        <table class="reg">
+          <thead><tr><th>Item</th><th>Amount (GHS)</th></tr></thead>
+          <tbody>
+            ${(DB.billItems||[]).map(it=>`<tr><td>${it.name}</td><td class="mono">${(Number(it.price)||0).toFixed(2)}</td></tr>`).join('')}
+            ${arrears ? `<tr><td>Arrears b/f</td><td class="mono">${arrears.toFixed(2)}</td></tr>` : ''}
+            <tr style="font-weight:700;"><td>Total</td><td class="mono">${payable.toFixed(2)}</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>` : ''}
+  `;
+}
+
 function renderStaff(){
   const term = DB.term || { startDate: todayStr(0), weeks:12, termNumber:1 };
   const termEndDate = todayStr(term.weeks*7);
-  const staffAndAdmins = DB.users;
+  const staffAndAdmins = DB.users.filter(u=>u.role!=='Parent');
   return `
     <div class="topbar"><div><div class="eyebrow">Administration</div><h1>Staff Accounts</h1></div></div>
 
@@ -2210,6 +2402,17 @@ function renderStaff(){
             <input type="checkbox" ${term.examDeclared?'checked':''} onchange="setExamDeclared(this.checked)"> Exams week declared
           </label>
         </div>
+      </div>
+    </div>
+
+    <div class="panel"><div class="panel-head"><h3>System status</h3></div>
+      <div class="panel-body" style="padding-top:14px;padding-bottom:16px;">
+        <p style="margin:0 0 10px;font-size:13px;color:var(--slate);">Controls whether teachers and parents can use the system at all. When set to Inactive, only your Admin account can sign in normally — everyone else sees a "system inactive" notice.</p>
+        <select onchange="setSystemStatus(this.value)">
+          <option value="term" ${DB.systemStatus==='term'?'selected':''}>School term in session</option>
+          <option value="vacation" ${DB.systemStatus==='vacation'?'selected':''}>Vacation classes in session</option>
+          <option value="inactive" ${DB.systemStatus==='inactive'?'selected':''}>Inactive (system closed)</option>
+        </select>
       </div>
     </div>
 
@@ -2301,12 +2504,14 @@ function renderStaff(){
             home.length ? 'Class teacher: '+home.join(', ') : null,
             subjAssign.length ? 'Teaches: '+subjAssign.join(', ') : null
           ].filter(Boolean).join(' · ') || 'No class or subject assigned yet' : '';
+          const wardNames = u.role==='Parent' ? (u.wardIds||[]).map(id=>{ const st=studentById(id); return st?st.name:null; }).filter(Boolean) : [];
+          const wardSummary = u.role==='Parent' ? (wardNames.length ? 'Ward(s): '+wardNames.join(', ') : 'No child linked') : '';
           return `
           <div class="ledger-row">
             <span class="idx mono">${String(i+1).padStart(2,'0')}</span>
             <div style="flex:1;">
               <div style="font-weight:600;">${u.name} ${u.username===session.username ? '<span class="mono" style=\'font-size:10.5px;color:var(--slate);\'>(you)</span>':''}</div>
-              <div style="font-size:12px;color:var(--slate);">@${u.username} · ${u.role}${assignSummary ? ' · '+assignSummary : ''}</div>
+              <div style="font-size:12px;color:var(--slate);">@${u.username} · ${u.role}${assignSummary ? ' · '+assignSummary : ''}${wardSummary ? ' · '+wardSummary : ''}</div>
             </div>
             <button class="btn-ghost" onclick="editAccount('${u.username}')">Edit</button>
             <button class="btn-ghost" onclick="resetPassword('${u.username}')">Reset password</button>
@@ -2336,6 +2541,11 @@ async function saveTermSetup(){
 }
 async function setExamDeclared(on){
   DB.term.examDeclared = !!on;
+  await saveDB();
+  render();
+}
+async function setSystemStatus(status){
+  DB.systemStatus = status;
   await saveDB();
   render();
 }
