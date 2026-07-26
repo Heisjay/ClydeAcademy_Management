@@ -2684,6 +2684,13 @@ function renderStaff(){
           <option value="vacation" ${DB.systemStatus==='vacation'?'selected':''}>Vacation classes in session</option>
           <option value="inactive" ${DB.systemStatus==='inactive'?'selected':''}>Inactive (system closed)</option>
         </select>
+        <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
+          <div>
+            <h4 style="margin-bottom:2px;">Reset attendance</h4>
+            <span style="font-size:12.5px;color:var(--slate);">Use this when a new term or a new round of vacation classes is starting, so attendance monitoring begins fresh from zero instead of carrying over old records. This does not touch marks, students, or fees.</span>
+          </div>
+          <button class="btn-danger" onclick="resetAttendance()">Reset attendance</button>
+        </div>
       </div>
     </div>
 
@@ -2819,6 +2826,15 @@ async function setSystemStatus(status){
   DB.systemStatus = status;
   await saveDB();
   render();
+}
+async function resetAttendance(){
+  const label = DB.systemStatus==='vacation' ? 'vacation classes' : 'the new term';
+  if(!confirm(`This will permanently clear all attendance records taken so far, so monitoring for ${label} starts fresh from zero. Marks, students, and fees are not affected. This can't be undone — continue?`)) return;
+  DB.attendance = {};
+  DB.attendanceMeta = {};
+  await saveDB();
+  render();
+  alert('Attendance has been reset. Monitoring starts fresh from today.');
 }
 async function setHeadTeacher(username){
   DB.headTeacherUsername = username || null;
