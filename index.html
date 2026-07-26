@@ -59,9 +59,73 @@
   }
   .crest img{ width:100%; height:100%; border-radius:50%; object-fit:cover; }
 
+  /* ---------- Parent portal ---------- */
+  .parent-hero{
+    background: linear-gradient(135deg, var(--ink), var(--ink-soft));
+    border-radius:16px; padding:22px 24px; color:var(--white);
+    display:flex; align-items:center; gap:18px; flex-wrap:wrap; margin-bottom:18px;
+    box-shadow:0 8px 24px rgba(22,33,62,0.22);
+  }
+  .parent-hero .photo{ width:68px; height:68px; border-radius:50%; object-fit:cover; border:2px solid rgba(255,255,255,0.35); flex-shrink:0; }
+  .parent-hero .avatar-fallback{ width:68px; height:68px; border-radius:50%; background:rgba(255,255,255,0.12); display:flex; align-items:center; justify-content:center; font-family:'Fraunces',serif; font-weight:700; font-size:22px; color:var(--brass-soft); flex-shrink:0; }
+  .parent-hero h2{ margin:0 0 3px; font-size:21px; color:var(--white); }
+  .parent-hero .sub{ font-size:13px; color:#C4CBDD; }
+  .parent-hero .term-chip{ margin-left:auto; background:rgba(255,255,255,0.1); border-radius:20px; padding:8px 14px; font-size:12px; text-align:center; }
+  .parent-hero .term-chip .bar{ width:120px; height:5px; border-radius:3px; background:rgba(255,255,255,0.2); margin-top:6px; overflow:hidden; }
+  .parent-hero .term-chip .bar span{ display:block; height:100%; background:var(--brass-soft); border-radius:3px; transition:width 1s ease; }
+
+  .ward-switch{ display:flex; gap:10px; margin-bottom:16px; flex-wrap:wrap; }
+  .ward-switch button{
+    display:flex; align-items:center; gap:8px; padding:6px 14px 6px 6px; border-radius:24px;
+    border:1.5px solid var(--line); background:var(--white); font-size:13px; font-weight:600; color:var(--ink);
+  }
+  .ward-switch button.active{ border-color:var(--brass); background:var(--brass-soft); }
+  .ward-switch .mini-avatar{ width:26px;height:26px;border-radius:50%;object-fit:cover; }
+  .ward-switch .mini-fallback{ width:26px;height:26px;border-radius:50%;background:var(--ink);color:var(--brass-soft);display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700; }
+
+  .ring-row{ display:flex; gap:10px; justify-content:space-around; flex-wrap:wrap; padding:18px 6px 8px; }
+  .ring-wrap{ position:relative; display:inline-flex; align-items:center; justify-content:center; }
+  .ring-progress{ transition: stroke-dashoffset 1.2s cubic-bezier(.2,.8,.2,1); }
+  .ring-center{ position:absolute; text-align:center; }
+  .ring-big{ font-family:'Fraunces',serif; font-weight:700; font-size:22px; color:var(--ink); line-height:1; }
+  .ring-small{ font-size:9.5px; color:var(--slate); text-transform:uppercase; letter-spacing:0.05em; margin-top:3px; }
+
+  .subj-grade-grid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(140px,1fr)); gap:12px; }
+  .subj-grade-card{
+    background:var(--white); border:1px solid var(--line); border-radius:12px; padding:14px 12px;
+    text-align:center; box-shadow:var(--shadow); transition:transform 0.15s ease;
+  }
+  .subj-grade-card:hover{ transform:translateY(-2px); }
+  .subj-grade-card .badge{
+    width:40px; height:40px; border-radius:50%; margin:0 auto 8px; display:flex; align-items:center; justify-content:center;
+    color:#fff; font-weight:700; font-family:'Fraunces',serif; font-size:16px;
+  }
+  .subj-grade-card .sname{ font-size:12.5px; font-weight:600; color:var(--ink); margin-bottom:3px; }
+  .subj-grade-card .sremark{ font-size:10.5px; color:var(--slate); text-transform:uppercase; letter-spacing:0.03em; }
+
+  .fee-card{ border-radius:14px; padding:20px; color:var(--white); position:relative; overflow:hidden; }
+  .fee-card.owing{ background:linear-gradient(135deg, var(--brick), #7d332a); }
+  .fee-card.clear{ background:linear-gradient(135deg, var(--sage), #3f5a3e); }
+  .fee-card .fee-label{ font-size:12px; text-transform:uppercase; letter-spacing:0.06em; opacity:0.85; }
+  .fee-card .fee-amount{ font-family:'Fraunces',serif; font-weight:700; font-size:32px; margin:4px 0 2px; }
+  .fee-card .fee-note{ font-size:12.5px; opacity:0.9; }
+  .fee-card .fee-icon{ position:absolute; right:16px; top:14px; opacity:0.25; font-size:44px; }
+  .fee-item-row{ display:flex; justify-content:space-between; padding:9px 0; border-bottom:1px dashed var(--line); font-size:13px; }
+  .fee-item-row:last-child{ border-bottom:none; }
+
   /* ---------- Login book animation ---------- */
-  .book-scene{ display:flex; justify-content:center; margin-bottom:6px; }
-  .book-svg{ width:150px; height:auto; overflow:visible; }
+  .book-scene{ display:flex; justify-content:center; margin-bottom:6px; position:relative; }
+  .book-scene::before{
+    content:''; position:absolute; top:50%; left:50%; width:180px; height:180px;
+    transform:translate(-50%,-50%); border-radius:50%;
+    background:radial-gradient(circle, rgba(201,162,39,0.30), rgba(201,162,39,0) 70%);
+    animation:glowPulse 3.2s ease-in-out infinite; z-index:0;
+  }
+  @keyframes glowPulse{
+    0%,100%{ opacity:0.6; transform:translate(-50%,-50%) scale(0.9); }
+    50%{ opacity:1; transform:translate(-50%,-50%) scale(1.08); }
+  }
+  .book-svg{ width:150px; height:auto; overflow:visible; position:relative; z-index:1; }
   .book-left{ transform-origin:110px 74px; animation:pageOpenLeft 2.6s ease-in-out infinite; }
   .book-right{ transform-origin:110px 74px; animation:pageOpenRight 2.6s ease-in-out infinite; }
   @keyframes pageOpenLeft{
@@ -88,8 +152,14 @@
   }
 
   /* ---------- Register badge animation ---------- */
-  .badge-scene{ display:flex; justify-content:center; margin-bottom:6px; }
-  .badge-svg{ width:150px; height:auto; overflow:visible; }
+  .badge-scene{ display:flex; justify-content:center; margin-bottom:6px; position:relative; }
+  .badge-scene::before{
+    content:''; position:absolute; top:50%; left:50%; width:180px; height:180px;
+    transform:translate(-50%,-50%); border-radius:50%;
+    background:radial-gradient(circle, rgba(46,125,50,0.24), rgba(46,125,50,0) 70%);
+    animation:glowPulse 3.2s ease-in-out infinite; z-index:0;
+  }
+  .badge-svg{ width:150px; height:auto; overflow:visible; position:relative; z-index:1; }
   .badge-card{ animation:cardRise 2.8s ease-in-out infinite; }
   @keyframes cardRise{
     0%,100%{ transform:translateY(3px); }
@@ -110,6 +180,25 @@
     0%,55%{ opacity:0; transform:scale(1.6) rotate(-12deg); }
     72%{ opacity:1; transform:scale(0.92) rotate(-12deg); }
     82%,100%{ opacity:1; transform:scale(1) rotate(-12deg); }
+  }
+
+  /* ---------- Floating decorations (login/register) ---------- */
+  #login-screen, .register-bg{ position:relative; overflow:hidden; }
+  .floaties{ position:absolute; inset:0; pointer-events:none; z-index:0; }
+  .floatie{ position:absolute; opacity:0.85; filter:drop-shadow(0 4px 10px rgba(0,0,0,0.25)); animation:floatBob ease-in-out infinite; }
+  .floatie svg{ width:100%; height:100%; display:block; }
+  @keyframes floatBob{
+    0%,100%{ transform:translateY(0) rotate(-4deg); }
+    50%{ transform:translateY(-18px) rotate(6deg); }
+  }
+  @keyframes floatBobAlt{
+    0%,100%{ transform:translateY(0) rotate(5deg); }
+    50%{ transform:translateY(16px) rotate(-6deg); }
+  }
+  .login-card, .badge-scene, .book-scene{ position:relative; z-index:1; }
+  @keyframes sparkleTwinkle{
+    0%,100%{ opacity:0.25; transform:scale(0.8); }
+    50%{ opacity:1; transform:scale(1.15); }
   }
 
   /* ---------- Login ---------- */
@@ -368,6 +457,48 @@
 
 <!-- ===================== LOGIN ===================== -->
 <div id="login-screen">
+  <div class="floaties" aria-hidden="true">
+    <div class="floatie" style="top:8%; left:9%; width:46px; height:46px; animation-duration:5.2s;">
+      <svg viewBox="0 0 64 64">
+        <defs><linearGradient id="pencilGrad" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stop-color="#F3D57A"/><stop offset="100%" stop-color="#C9A227"/>
+        </linearGradient></defs>
+        <g transform="rotate(45 32 32)">
+          <rect x="28" y="6" width="8" height="40" rx="2" fill="url(#pencilGrad)"/>
+          <path d="M28 46 L36 46 L32 58 Z" fill="#D9A441"/>
+          <rect x="28" y="6" width="8" height="8" fill="#3B2E23"/>
+          <rect x="27" y="44" width="10" height="4" fill="#F2E8D5"/>
+        </g>
+      </svg>
+    </div>
+    <div class="floatie" style="top:12%; right:10%; width:30px; height:30px; animation:sparkleTwinkle 2.4s ease-in-out infinite;">
+      <svg viewBox="0 0 24 24"><path d="M12 1 L14.5 9 L23 12 L14.5 15 L12 23 L9.5 15 L1 12 L9.5 9 Z" fill="#E8C24A"/></svg>
+    </div>
+    <div class="floatie" style="bottom:10%; left:7%; width:44px; height:44px; animation-duration:6s; animation-name:floatBobAlt;">
+      <svg viewBox="0 0 64 64">
+        <defs><radialGradient id="appleGrad" cx="35%" cy="30%" r="75%">
+          <stop offset="0%" stop-color="#D5645A"/><stop offset="100%" stop-color="#96332C"/>
+        </radialGradient></defs>
+        <path d="M32 22c-9 0-16 8-16 20 0 10 7 16 16 16s16-6 16-16c0-12-7-20-16-20z" fill="url(#appleGrad)"/>
+        <path d="M31 22c0-6 3-10 3-10" stroke="#5B7A4A" stroke-width="3" fill="none" stroke-linecap="round"/>
+        <ellipse cx="37" cy="14" rx="6" ry="3" fill="#6E9958" transform="rotate(-30 37 14)"/>
+        <ellipse cx="25" cy="34" rx="4" ry="7" fill="rgba(255,255,255,0.25)"/>
+      </svg>
+    </div>
+    <div class="floatie" style="bottom:14%; right:8%; width:42px; height:42px; animation-duration:5.6s;">
+      <svg viewBox="0 0 64 64">
+        <defs><radialGradient id="bulbGrad" cx="40%" cy="30%" r="70%">
+          <stop offset="0%" stop-color="#FFF3C4"/><stop offset="100%" stop-color="#D9A441"/>
+        </radialGradient></defs>
+        <path d="M32 8a16 16 0 0 1 9 29c-1 6-2 8-2 11H25c0-3-1-5-2-11A16 16 0 0 1 32 8z" fill="url(#bulbGrad)"/>
+        <rect x="25" y="50" width="14" height="4" rx="1" fill="#9A9A9A"/>
+        <rect x="26" y="55" width="12" height="4" rx="1" fill="#9A9A9A"/>
+      </svg>
+    </div>
+    <div class="floatie" style="top:46%; left:4%; width:18px; height:18px; animation:sparkleTwinkle 3.1s ease-in-out infinite; animation-delay:0.6s;">
+      <svg viewBox="0 0 24 24"><path d="M12 1 L14.5 9 L23 12 L14.5 15 L12 23 L9.5 15 L1 12 L9.5 9 Z" fill="#8FAF7C"/></svg>
+    </div>
+  </div>
   <div class="login-card">
     <div class="book-scene" aria-hidden="true">
       <svg viewBox="0 0 220 130" class="book-svg">
@@ -416,7 +547,38 @@
 
 <!-- ===================== REGISTRATION (TEACHER OR PARENT) ===================== -->
 <div id="register-screen" style="display:none;">
-  <div style="min-height:100vh; display:flex; align-items:center; justify-content:center; background:linear-gradient(var(--ink), var(--ink)); padding:24px;">
+  <div class="register-bg" style="min-height:100vh; display:flex; align-items:center; justify-content:center; background:linear-gradient(var(--ink), var(--ink)); padding:24px;">
+    <div class="floaties" aria-hidden="true">
+      <div class="floatie" style="top:9%; left:8%; width:46px; height:46px; animation-duration:5.4s;">
+        <svg viewBox="0 0 64 64">
+          <defs><linearGradient id="capGrad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="#333A47"/><stop offset="100%" stop-color="#1F2430"/>
+          </linearGradient></defs>
+          <path d="M32 10 L58 22 L32 34 L6 22 Z" fill="url(#capGrad)"/>
+          <path d="M16 26 L16 40 Q32 48 48 40 L48 26" fill="none" stroke="#1F2430" stroke-width="3"/>
+          <circle cx="58" cy="22" r="2.5" fill="#E8C24A"/>
+          <line x1="58" y1="22" x2="58" y2="38" stroke="#E8C24A" stroke-width="2"/>
+          <circle cx="58" cy="40" r="3" fill="#E8C24A"/>
+        </svg>
+      </div>
+      <div class="floatie" style="top:14%; right:9%; width:26px; height:26px; animation:sparkleTwinkle 2.6s ease-in-out infinite;">
+        <svg viewBox="0 0 24 24"><path d="M12 1 L14.5 9 L23 12 L14.5 15 L12 23 L9.5 15 L1 12 L9.5 9 Z" fill="#E8C24A"/></svg>
+      </div>
+      <div class="floatie" style="bottom:11%; right:8%; width:44px; height:44px; animation-duration:5.8s; animation-name:floatBobAlt;">
+        <svg viewBox="0 0 64 64">
+          <defs><linearGradient id="bookGrad" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0%" stop-color="#3D6B85"/><stop offset="100%" stop-color="#213B49"/>
+          </linearGradient></defs>
+          <path d="M14 12 L50 12 Q54 12 54 16 L54 50 Q54 54 50 54 L14 54 Q10 54 10 50 L10 16 Q10 12 14 12Z" fill="url(#bookGrad)"/>
+          <line x1="32" y1="12" x2="32" y2="54" stroke="#F2E8D5" stroke-width="2"/>
+          <line x1="17" y1="22" x2="27" y2="22" stroke="#F2E8D5" stroke-width="2"/>
+          <line x1="17" y1="30" x2="27" y2="30" stroke="#F2E8D5" stroke-width="2"/>
+        </svg>
+      </div>
+      <div class="floatie" style="bottom:9%; left:9%; width:20px; height:20px; animation:sparkleTwinkle 3s ease-in-out infinite; animation-delay:0.4s;">
+        <svg viewBox="0 0 24 24"><path d="M12 1 L14.5 9 L23 12 L14.5 15 L12 23 L9.5 15 L1 12 L9.5 9 Z" fill="#8FAF7C"/></svg>
+      </div>
+    </div>
     <div class="login-card">
       <div class="badge-scene" aria-hidden="true">
         <svg viewBox="0 0 220 130" class="badge-svg">
@@ -778,7 +940,7 @@ function applyBranding(){
 const SBA_CATEGORIES = [
   {id:'cat1', name:'CAT 1 (Individual Test)', max:20},
   {id:'cat2', name:'CAT 2 (Group Test)', max:10},
-  {id:'cat3', name:'CAT 3 (Individual Test)', max:10},
+  {id:'cat3', name:'CAT 3 (Individual Test)', max:20},
   {id:'cat4', name:'CAT 4 (Primary Test)', max:10},
 ];
 const TERM_NAMES = ['1st Term','2nd Term','3rd Term'];
@@ -858,7 +1020,7 @@ function seedDB(){
 
   const term = { startDate: todayStr(0), weeks: 12, termNumber: 1, examDeclared: false };
 
-  return { classes, students, gradebook, attendance, users, term, headTeacherUsername: 'admin', assistantHeadTeacherUsername: null, weeklyMeta: {}, attendanceMeta: {}, billItems: [], school: { name:'Clyde Academy', crest:null }, systemStatus: 'term' };
+  return { classes, students, gradebook, attendance, users, term, headTeacherUsername: 'admin', assistantHeadTeacherUsername: null, weeklyMeta: {}, attendanceMeta: {}, billItems: [], school: { name:'Clyde Academy', crest:null }, systemStatus: 'term', presence: {} };
 }
 
 function migrateDB(){
@@ -871,6 +1033,7 @@ function migrateDB(){
   if(DB.headTeacherUsername === undefined){ DB.headTeacherUsername = null; changed = true; }
   if(DB.assistantHeadTeacherUsername === undefined){ DB.assistantHeadTeacherUsername = null; changed = true; }
   if(!DB.billItems){ DB.billItems = []; changed = true; }
+  if(!DB.presence){ DB.presence = {}; changed = true; }
   if(!DB.school){ DB.school = { name:'Clyde Academy', crest:null }; changed = true; }
   if(!DB.systemStatus){ DB.systemStatus = 'term'; changed = true; }
   DB.users.forEach(u=>{
@@ -893,6 +1056,13 @@ function migrateDB(){
         // moving to the new SBA structure — new marks get entered against the new categories.
         Object.keys(sub.scores||{}).forEach(sid=>{ sub.scores[sid] = {}; });
         changed = true;
+      } else {
+        // keep each category's max mark in sync with SBA_CATEGORIES (e.g. CAT 3 moving from 10 to 20)
+        // without touching any marks already entered.
+        sub.assessments.forEach(a=>{
+          const current = SBA_CATEGORIES.find(c=>c.id===a.id);
+          if(current && a.max !== current.max){ a.max = current.max; changed = true; }
+        });
       }
       if(sub.weeklyEnabled===undefined){ sub.weeklyEnabled = false; changed = true; }
       if(sub.weeklyMax===undefined){ sub.weeklyMax = 10; changed = true; }
@@ -1024,6 +1194,34 @@ function gradeClass(pct){
   const gp = gradePointFor(pct);
   if(gp===null) return '';
   if(gp<=3) return 'A'; if(gp<=5) return 'B'; if(gp<=7) return 'C'; if(gp===8) return 'D'; return 'F';
+}
+/* Colour for a grade point (1-9, lower=better) — used on parent-facing grade badges. */
+function gradeColor(gp){
+  if(gp===null||gp===undefined) return 'var(--slate)';
+  if(gp<=3) return 'var(--sage)'; if(gp<=5) return '#4A7BAA'; if(gp<=7) return 'var(--brass)'; return 'var(--brick)';
+}
+/* A simple 3-tier read for parents — no raw grades or numbers, just how their ward is doing overall.
+   Based on the average grade point across the 6 official subjects (1 = best, 9 = worst). */
+function parentStatusFor(aggregate, count){
+  if(aggregate===null || !count) return { label:'Not enough data yet', color:'var(--slate)', icon:'&#8213;' };
+  const avgGP = aggregate / count;
+  if(avgGP<=3) return { label:'Improving', color:'var(--sage)', icon:'&#9650;' };
+  if(avgGP<=6) return { label:'Moderate', color:'var(--brass)', icon:'&#9679;' };
+  return { label:'Needs to Buck-Up', color:'var(--brick)', icon:'&#9888;' };
+}
+/* A round animated progress ring used on the parent portal. pct is 0-100. */
+function ringSVG(pct, colorVar, size=104, strokeW=9){
+  const r = (size-strokeW)/2, c = 2*Math.PI*r;
+  const clamped = Math.max(0, Math.min(100, pct||0));
+  const dash = c * clamped/100;
+  return `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" style="transform:rotate(-90deg);flex-shrink:0;">
+    <circle cx="${size/2}" cy="${size/2}" r="${r}" fill="none" stroke="var(--paper-dim)" stroke-width="${strokeW}"/>
+    <circle cx="${size/2}" cy="${size/2}" r="${r}" fill="none" stroke="${colorVar}" stroke-width="${strokeW}" stroke-linecap="round"
+      stroke-dasharray="${c.toFixed(1)}" stroke-dashoffset="${(c-dash).toFixed(1)}" class="ring-progress"/>
+  </svg>`;
+}
+function ringStat(pct, colorVar, big, small){
+  return `<div class="ring-wrap">${ringSVG(pct, colorVar)}<div class="ring-center"><div class="ring-big">${big}</div><div class="ring-small">${small}</div></div></div>`;
 }
 /* Position of a student within their class for ONE subject, ranked by that subject's grand total. */
 function subjectPosition(classId, subj, studentId){
@@ -1195,7 +1393,22 @@ async function login(){
   view = { page: (session.role==='Parent' ? 'parent' : 'dashboard'), studentId:null, tab:'overview', classId: defaultClassId, subject:null, date: todayStr(0), parentWardId: null };
   renderNav();
   render();
+  startPresenceHeartbeat();
 }
+/* Lightweight "who's online" tracking — pings a shared timestamp every so often while a session is
+   open, so the admin can see who's currently active without needing a separate backend. */
+function startPresenceHeartbeat(){
+  markPresent();
+  if(presenceTimer) clearInterval(presenceTimer);
+  presenceTimer = setInterval(markPresent, 60000);
+}
+async function markPresent(){
+  if(!session) return;
+  if(!DB.presence) DB.presence = {};
+  DB.presence[session.username] = Date.now();
+  await saveDB();
+}
+let presenceTimer = null;
 let regRole = 'teacher';
 let selectedWards = [];
 function showRegister(){
@@ -1715,10 +1928,19 @@ function renderStudentDetail(id){
   `;
 }
 async function updateScore(classId, subj, studentId, assessId, val){
-  const sc = DB.gradebook[classId][subj].scores;
+  const sub = DB.gradebook[classId][subj];
+  const sc = sub.scores;
   if(!sc[studentId]) sc[studentId] = {};
-  if(val===''){ delete sc[studentId][assessId]; }
-  else{ sc[studentId][assessId] = Math.max(0, Number(val)||0); }
+  if(val===''){ delete sc[studentId][assessId]; await saveDB(); render(); return; }
+  const n = Math.max(0, Number(val)||0);
+  const assess = sub.assessments.find(a=>a.id===assessId);
+  const max = assess ? assess.max : 100;
+  if(n > max){
+    alert(`That mark is too high — ${assess?assess.name:'this category'} is out of ${max}. Please enter ${max} or less.`);
+    render();
+    return;
+  }
+  sc[studentId][assessId] = n;
   await saveDB();
   render();
 }
@@ -1866,16 +2088,28 @@ async function setWeeklyMax(classId, subj, val){
 async function updateWeeklyScore(classId, subj, studentId, week, val){
   const sub = DB.gradebook[classId][subj];
   if(!sub.weeklyScores[studentId]) sub.weeklyScores[studentId] = {};
-  if(val===''){ delete sub.weeklyScores[studentId]['w'+week]; }
-  else{ sub.weeklyScores[studentId]['w'+week] = Math.max(0, Number(val)||0); }
+  if(val===''){ delete sub.weeklyScores[studentId]['w'+week]; await saveDB(); render(); return; }
+  const n = Math.max(0, Number(val)||0);
+  if(n > sub.weeklyMax){
+    alert(`That mark is too high — this week's assessment is out of ${sub.weeklyMax}. Please enter ${sub.weeklyMax} or less.`);
+    render();
+    return;
+  }
+  sub.weeklyScores[studentId]['w'+week] = n;
   recordWeeklyMeta(classId, subj, week);
   await saveDB();
   render();
 }
 async function updateExamScore(classId, subj, studentId, val){
   const sub = DB.gradebook[classId][subj];
-  if(val===''){ delete sub.examScores[studentId]; }
-  else{ sub.examScores[studentId] = Math.max(0, Math.min(100, Number(val)||0)); }
+  if(val===''){ delete sub.examScores[studentId]; await saveDB(); render(); return; }
+  const n = Math.max(0, Number(val)||0);
+  if(n > 100){
+    alert('That mark is too high — the exam is out of 100. Please enter 100 or less.');
+    render();
+    return;
+  }
+  sub.examScores[studentId] = n;
   await saveDB();
   render();
 }
@@ -2158,8 +2392,30 @@ function renderActivity(){
   const sbaFlags = sbaRows.filter(r=>r.overdue && !r.done).length;
   const attFlags = attRows.filter(r=>r.isPast && !r.taken).length;
 
+  const now = Date.now();
+  const onlineWindow = 5*60*1000; // 5 minutes
+  const onlineUsers = DB.users
+    .map(u=>({ ...u, lastSeen: (DB.presence||{})[u.username] || null }))
+    .filter(u=>u.lastSeen && (now - u.lastSeen) <= onlineWindow)
+    .sort((a,b)=>b.lastSeen-a.lastSeen);
+
   return `
     <div class="topbar"><div><div class="eyebrow">Oversight</div><h1>Staff Activity</h1></div></div>
+
+    <div class="panel"><div class="panel-head"><h3>Online now</h3><span class="mono" style="font-size:12px;color:var(--slate);">${onlineUsers.length} active</span></div>
+      <div class="panel-body" style="padding-top:10px;">
+        ${!onlineUsers.length ? '<p style="margin:0;font-size:13px;color:var(--slate);">No one else is currently online.</p>' : `
+        <table class="reg">
+          <thead><tr><th>Name</th><th>Role</th><th>Last active</th></tr></thead>
+          <tbody>
+            ${onlineUsers.map(u=>{
+              const mins = Math.max(0, Math.round((now-u.lastSeen)/60000));
+              return `<tr><td><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--sage);margin-right:6px;"></span>${u.name}</td><td>${u.role}</td><td class="mono">${mins===0?'Just now':mins+'m ago'}</td></tr>`;
+            }).join('')}
+          </tbody>
+        </table>`}
+      </div>
+    </div>
 
     <div class="stat-grid" style="grid-template-columns:repeat(2,1fr);">
       <div class="stat-card"><div class="label">Missed weekly SBA deadlines</div><div class="value" style="${sbaFlags?'color:var(--brick);':''}">${sbaFlags}</div><div class="sub">Through Week ${curWeek}</div></div>
@@ -2310,64 +2566,79 @@ function renderParentPortal(){
   const arrears = Number(s.arrears)||0;
   const payable = billTotal + arrears;
   const termLabel = TERM_NAMES[(DB.term?.termNumber||1)-1] || '1st Term';
-  return `
-    <div class="topbar"><div><div class="eyebrow">${termLabel}</div><h1>My Ward(s)</h1></div></div>
+  const weeks = DB.term?.weeks || 12;
+  const curWeek = Math.min(weeks, currentTermWeek());
+  const termPct = Math.round((curWeek/weeks)*100);
+  const posPct = pos ? Math.round(((pos.of - pos.rank + 1)/pos.of)*100) : 0;
+  const status = parentStatusFor(sixSum.aggregate, sixSum.count);
+  const statusPct = sixSum.aggregate!==null && sixSum.count ? Math.max(0, 100 - Math.round(((sixSum.aggregate/sixSum.count - 1)/8)*100)) : 0;
 
-    ${wardIds.length>1 ? `<div class="toolbar">
-      <select onchange="view.parentWardId=this.value; render()">
-        ${wardIds.map(id=>{ const w = studentById(id); return w ? `<option value="${id}" ${id===view.parentWardId?'selected':''}>${w.name}</option>` : ''; }).join('')}
-      </select>
+  return `
+    <div class="topbar"><div><div class="eyebrow">${DB.school?.name||'Clyde Academy'}</div><h1>My Ward(s)</h1></div></div>
+
+    ${wardIds.length>1 ? `<div class="ward-switch">
+      ${wardIds.map(id=>{
+        const w = studentById(id); if(!w) return '';
+        const active = id===view.parentWardId;
+        return `<button class="${active?'active':''}" onclick="view.parentWardId='${id}'; render()">
+          ${w.photo ? `<img class="mini-avatar" src="${w.photo}">` : `<span class="mini-fallback">${w.name.split(' ').map(x=>x[0]).slice(0,2).join('')}</span>`}
+          ${w.name}
+        </button>`;
+      }).join('')}
     </div>` : ''}
 
-    <div class="panel"><div class="panel-body" style="padding-top:16px;display:flex;gap:16px;align-items:center;flex-wrap:wrap;">
-      ${s.photo ? `<img src="${s.photo}" style="width:64px;height:64px;border-radius:50%;object-fit:cover;border:1px solid var(--line);">` : `<div class="avatar" style="width:64px;height:64px;background:var(--ink);color:var(--brass-soft);">${s.name.split(' ').map(w=>w[0]).slice(0,2).join('')}</div>`}
+    <div class="parent-hero">
+      ${s.photo ? `<img class="photo" src="${s.photo}">` : `<div class="avatar-fallback">${s.name.split(' ').map(w=>w[0]).slice(0,2).join('')}</div>`}
       <div>
-        <div style="font-size:18px;font-weight:700;">${s.name}</div>
-        <div style="font-size:13px;color:var(--slate);">${cls.name} · Class Teacher: ${classTeacherUser?classTeacherUser.name:'—'}</div>
+        <h2>${s.name}</h2>
+        <div class="sub">${cls.name} · Class Teacher: ${classTeacherUser?classTeacherUser.name:'—'}</div>
       </div>
-    </div></div>
+      <div class="term-chip">
+        ${termLabel} · Week ${curWeek} of ${weeks}
+        <div class="bar"><span style="width:${termPct}%"></span></div>
+      </div>
+    </div>
 
-    <div class="stat-grid" style="grid-template-columns:repeat(2,1fr);">
-      <div class="stat-card"><div class="label">Attendance</div><div class="value">${att??'—'}${att!==null?'%':''}</div><div class="sub">${attCounts.total ? attCounts.present+' / '+attCounts.total+' days this term' : 'No attendance recorded yet'}</div></div>
-      <div class="stat-card"><div class="label">Amount owing</div><div class="value" style="${payable?'color:var(--brick);':''}">GHS ${payable.toFixed(2)}</div><div class="sub">${arrears?'Includes GHS '+arrears.toFixed(2)+' arrears':'This term fees'}</div></div>
+    <div class="panel"><div class="panel-head"><h3>At a glance</h3></div>
+      <div class="ring-row">
+        ${ringStat(att??0, 'var(--brass)', (att??'—')+(att!==null?'%':''), 'Attendance')}
+        ${ringStat(posPct, 'var(--sage)', pos?ordinal(pos.rank):'—', pos?'Position of '+pos.of:'Position')}
+        ${ringStat(statusPct, status.color, `<span style="font-size:22px;">${status.icon}</span>`, status.label)}
+      </div>
     </div>
 
     <div class="panel"><div class="panel-head"><h3>Progress report</h3></div>
-      <div class="panel-body" style="padding-top:10px;padding-bottom:16px;">
-        <table class="reg">
-          <thead><tr><th>Subject</th><th>Grade</th><th>Remark</th></tr></thead>
-          <tbody>
-            ${cls.subjects.map(subj=>{
-              const p = subjectAverage(s.classId, subj.name, s.id);
-              const gp = gradePointFor(p);
-              return `<tr><td>${subj.name}</td><td class="mono">${gp??'—'}</td><td>${remarkFor(gp)}</td></tr>`;
-            }).join('')}
-          </tbody>
-        </table>
-        <div class="stat-grid" style="grid-template-columns:repeat(2,1fr);margin-top:14px;">
-          <div class="stat-card"><div class="label">Overall grade (aggregate)</div><div class="value">${sixSum.aggregate??'—'}</div><div class="sub">Lower is better · 4 core + best 2 electives</div></div>
-          <div class="stat-card"><div class="label">Class position</div><div class="value">${pos?ordinal(pos.rank):'—'}</div><div class="sub">${pos?'out of '+pos.of:'Not enough data yet'}</div></div>
+      <div class="panel-body" style="padding-top:14px;">
+        <div class="fee-card" style="border-color:${status.color};">
+          <div class="fee-icon" style="color:${status.color};">${status.icon}</div>
+          <div class="fee-label">${s.name.split(' ')[0]} is</div>
+          <div class="fee-amount" style="color:${status.color};font-size:22px;">${status.label}</div>
+          <div class="fee-note">Based on overall performance across this term so far</div>
         </div>
-        <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--line);">
+        <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--line);">
           <div style="font-size:11px;text-transform:uppercase;letter-spacing:0.05em;color:var(--slate);font-weight:600;margin-bottom:4px;">Class teacher's remark</div>
           <div style="font-size:13.5px;">${s.remark || 'The class teacher has not added a remark yet.'}</div>
         </div>
+        <p style="margin:14px 0 0;font-size:12px;color:var(--slate);">Full subject-by-subject grades appear on the printed report card issued by the school.</p>
       </div>
     </div>
 
-    ${(DB.billItems||[]).length ? `
-    <div class="panel"><div class="panel-head"><h3>Fees breakdown</h3></div>
-      <div class="panel-body" style="padding-top:10px;">
-        <table class="reg">
-          <thead><tr><th>Item</th><th>Amount (GHS)</th></tr></thead>
-          <tbody>
-            ${(DB.billItems||[]).map(it=>`<tr><td>${it.name}</td><td class="mono">${(Number(it.price)||0).toFixed(2)}</td></tr>`).join('')}
-            ${arrears ? `<tr><td>Arrears b/f</td><td class="mono">${arrears.toFixed(2)}</td></tr>` : ''}
-            <tr style="font-weight:700;"><td>Total</td><td class="mono">${payable.toFixed(2)}</td></tr>
-          </tbody>
-        </table>
+    <div class="panel"><div class="panel-head"><h3>Fees status</h3></div>
+      <div class="panel-body" style="padding-top:14px;padding-bottom:18px;">
+        <div class="fee-card ${payable>0?'owing':'clear'}">
+          <div class="fee-icon">${payable>0?'&#9888;':'&#10003;'}</div>
+          <div class="fee-label">${payable>0?'Amount owing':'All fees settled'}</div>
+          <div class="fee-amount">GHS ${payable.toFixed(2)}</div>
+          <div class="fee-note">${arrears?'Includes GHS '+arrears.toFixed(2)+' arrears from before this term':'This term' + String.fromCharCode(8217) + 's fees'}</div>
+        </div>
+        ${(DB.billItems||[]).length || arrears ? `
+        <div style="margin-top:14px;">
+          ${(DB.billItems||[]).map(it=>`<div class="fee-item-row"><span>${it.name}</span><span class="mono">GHS ${(Number(it.price)||0).toFixed(2)}</span></div>`).join('')}
+          ${arrears ? `<div class="fee-item-row"><span>Arrears b/f</span><span class="mono">GHS ${arrears.toFixed(2)}</span></div>` : ''}
+          <div class="fee-item-row" style="font-weight:700;border-top:1.5px solid var(--line);"><span>Total</span><span class="mono">GHS ${payable.toFixed(2)}</span></div>
+        </div>` : ''}
       </div>
-    </div>` : ''}
+    </div>
   `;
 }
 
@@ -2741,11 +3012,12 @@ function buildReportCardHTML(studentId){
         </tbody>
       </table>
       <table class="rc-table" style="margin-top:0;">
-        <thead><tr><th>No. on Roll</th><th>Raw Marks</th><th>Average Mark</th><th>Grade</th><th>Position</th></tr></thead>
+        <thead><tr><th>No. on Roll</th><th>Raw Marks</th><th>Total Marks</th><th>Average Mark</th><th>Grade</th><th>Position</th></tr></thead>
         <tbody>
           <tr>
             <td class="mono">${roster.length}</td>
             <td class="mono">${sixSum.raw??'—'}</td>
+            <td class="mono">${sixSum.count ? sixSum.count*100 : '—'}</td>
             <td class="mono">${sixSum.average??'—'}${sixSum.average!==null?'%':''}</td>
             <td class="mono">${sixSum.aggregate??'—'}</td>
             <td class="mono">${pos ? ordinal(pos.rank) : '—'}</td>
