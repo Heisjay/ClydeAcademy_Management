@@ -1062,23 +1062,26 @@ function seedDB(){
   const vacation = { startDate: todayStr(0), weeks: 4 };
 
   const timetableSlots = {
-    JHS: [
-      { id:'slot1', start:'08:00', end:'08:40', label:'Period 1', isBreak:false },
-      { id:'slot2', start:'08:40', end:'09:20', label:'Period 2', isBreak:false },
-      { id:'slot3', start:'09:20', end:'09:40', label:'Break', isBreak:true },
-      { id:'slot4', start:'09:40', end:'10:20', label:'Period 3', isBreak:false },
-      { id:'slot5', start:'10:20', end:'11:00', label:'Period 4', isBreak:false },
-    ],
-    Primary: [
-      { id:'pslot1', start:'08:00', end:'08:35', label:'Period 1', isBreak:false },
-      { id:'pslot2', start:'08:35', end:'09:10', label:'Period 2', isBreak:false },
-      { id:'pslot3', start:'09:10', end:'09:45', label:'Period 3', isBreak:false },
-      { id:'pslot4', start:'09:45', end:'10:05', label:'Break', isBreak:true },
-      { id:'pslot5', start:'10:05', end:'10:40', label:'Period 4', isBreak:false },
-    ],
+    term: {
+      JHS: [
+        { id:'slot1', start:'08:00', end:'08:40', label:'Period 1', isBreak:false },
+        { id:'slot2', start:'08:40', end:'09:20', label:'Period 2', isBreak:false },
+        { id:'slot3', start:'09:20', end:'09:40', label:'Break', isBreak:true },
+        { id:'slot4', start:'09:40', end:'10:20', label:'Period 3', isBreak:false },
+        { id:'slot5', start:'10:20', end:'11:00', label:'Period 4', isBreak:false },
+      ],
+      Primary: [
+        { id:'pslot1', start:'08:00', end:'08:35', label:'Period 1', isBreak:false },
+        { id:'pslot2', start:'08:35', end:'09:10', label:'Period 2', isBreak:false },
+        { id:'pslot3', start:'09:10', end:'09:45', label:'Period 3', isBreak:false },
+        { id:'pslot4', start:'09:45', end:'10:05', label:'Break', isBreak:true },
+        { id:'pslot5', start:'10:05', end:'10:40', label:'Period 4', isBreak:false },
+      ],
+    },
+    vacation: { JHS: [], Primary: [] },
   };
 
-  return { classes, students, gradebook, attendance, users, term, vacation, headTeacherUsername: 'admin', assistantHeadTeacherUsername: null, weeklyMeta: {}, attendanceMeta: {}, billItems: [], school: { name:'Clyde Academy', crest:null }, systemStatus: 'term', presence: {}, timetableSlots, timetable: {} };
+  return { classes, students, gradebook, attendance, users, term, vacation, headTeacherUsername: 'admin', assistantHeadTeacherUsername: null, weeklyMeta: {}, attendanceMeta: {}, billItems: [], school: { name:'Clyde Academy', crest:null }, systemStatus: 'term', presence: {}, timetableSlots, timetable: { term: {}, vacation: {} } };
 }
 
 function migrateDB(){
@@ -1095,38 +1098,62 @@ function migrateDB(){
   if(!DB.vacation){ DB.vacation = { startDate: todayStr(0), weeks: 4 }; changed = true; }
   if(!DB.timetableSlots){
     DB.timetableSlots = {
-      JHS: [
-        { id:'slot1', start:'08:00', end:'08:40', label:'Period 1', isBreak:false },
-        { id:'slot2', start:'08:40', end:'09:20', label:'Period 2', isBreak:false },
-        { id:'slot3', start:'09:20', end:'09:40', label:'Break', isBreak:true },
-        { id:'slot4', start:'09:40', end:'10:20', label:'Period 3', isBreak:false },
-        { id:'slot5', start:'10:20', end:'11:00', label:'Period 4', isBreak:false },
-      ],
-      Primary: [
-        { id:'pslot1', start:'08:00', end:'08:35', label:'Period 1', isBreak:false },
-        { id:'pslot2', start:'08:35', end:'09:10', label:'Period 2', isBreak:false },
-        { id:'pslot3', start:'09:10', end:'09:45', label:'Period 3', isBreak:false },
-        { id:'pslot4', start:'09:45', end:'10:05', label:'Break', isBreak:true },
-        { id:'pslot5', start:'10:05', end:'10:40', label:'Period 4', isBreak:false },
-      ],
+      term: {
+        JHS: [
+          { id:'slot1', start:'08:00', end:'08:40', label:'Period 1', isBreak:false },
+          { id:'slot2', start:'08:40', end:'09:20', label:'Period 2', isBreak:false },
+          { id:'slot3', start:'09:20', end:'09:40', label:'Break', isBreak:true },
+          { id:'slot4', start:'09:40', end:'10:20', label:'Period 3', isBreak:false },
+          { id:'slot5', start:'10:20', end:'11:00', label:'Period 4', isBreak:false },
+        ],
+        Primary: [
+          { id:'pslot1', start:'08:00', end:'08:35', label:'Period 1', isBreak:false },
+          { id:'pslot2', start:'08:35', end:'09:10', label:'Period 2', isBreak:false },
+          { id:'pslot3', start:'09:10', end:'09:45', label:'Period 3', isBreak:false },
+          { id:'pslot4', start:'09:45', end:'10:05', label:'Break', isBreak:true },
+          { id:'pslot5', start:'10:05', end:'10:40', label:'Period 4', isBreak:false },
+        ],
+      },
+      vacation: { JHS: [], Primary: [] },
     };
     changed = true;
   } else if(Array.isArray(DB.timetableSlots)){
-    // old shape: one flat array shared school-wide — carry it over as the JHS schedule and
-    // seed a fresh, separately-editable Primary schedule alongside it.
+    // oldest shape: one flat array shared school-wide — carry it over as the JHS term schedule,
+    // seed a fresh Primary term schedule, and start vacation empty.
     DB.timetableSlots = {
-      JHS: DB.timetableSlots,
-      Primary: [
-        { id:'pslot1', start:'08:00', end:'08:35', label:'Period 1', isBreak:false },
-        { id:'pslot2', start:'08:35', end:'09:10', label:'Period 2', isBreak:false },
-        { id:'pslot3', start:'09:10', end:'09:45', label:'Period 3', isBreak:false },
-        { id:'pslot4', start:'09:45', end:'10:05', label:'Break', isBreak:true },
-        { id:'pslot5', start:'10:05', end:'10:40', label:'Period 4', isBreak:false },
-      ],
+      term: {
+        JHS: DB.timetableSlots,
+        Primary: [
+          { id:'pslot1', start:'08:00', end:'08:35', label:'Period 1', isBreak:false },
+          { id:'pslot2', start:'08:35', end:'09:10', label:'Period 2', isBreak:false },
+          { id:'pslot3', start:'09:10', end:'09:45', label:'Period 3', isBreak:false },
+          { id:'pslot4', start:'09:45', end:'10:05', label:'Break', isBreak:true },
+          { id:'pslot5', start:'10:05', end:'10:40', label:'Period 4', isBreak:false },
+        ],
+      },
+      vacation: { JHS: [], Primary: [] },
     };
     changed = true;
+  } else if(!DB.timetableSlots.term && !DB.timetableSlots.vacation){
+    // shape with JHS/Primary but no term/vacation split yet — that's the term schedule;
+    // vacation starts empty for the admin to build out separately.
+    DB.timetableSlots = { term: DB.timetableSlots, vacation: { JHS: [], Primary: [] } };
+    changed = true;
+  } else if(!DB.timetableSlots.vacation){
+    DB.timetableSlots.vacation = { JHS: [], Primary: [] };
+    changed = true;
   }
-  if(!DB.timetable){ DB.timetable = {}; changed = true; }
+  if(!DB.timetable){
+    DB.timetable = { term: {}, vacation: {} };
+    changed = true;
+  } else if(!DB.timetable.term && !DB.timetable.vacation){
+    // old flat classId-keyed shape — that was always the term timetable.
+    DB.timetable = { term: DB.timetable, vacation: {} };
+    changed = true;
+  } else if(!DB.timetable.vacation){
+    DB.timetable.vacation = {};
+    changed = true;
+  }
   if(DB.vacation.weeks > 4){ DB.vacation.weeks = 4; changed = true; }
   if(!DB.school){ DB.school = { name:'Clyde Academy', crest:null }; changed = true; }
   if(!DB.systemStatus){ DB.systemStatus = 'term'; changed = true; }
@@ -1257,8 +1284,9 @@ function subjectBreakdown(classId, subj, studentId){
   if(sub.weeklyEnabled){
     const weeks = activeSession().weeks;
     let earned = 0, weeksEntered = 0;
+    const weeklyRec = sub.weeklyScores[studentId] || {};
     for(let w=1; w<=weeks; w++){
-      const v = wk['w'+w];
+      const v = weeklyRec['w'+w];
       if(v!==undefined && v!==null){ earned += Number(v)||0; weeksEntered++; }
     }
     if(weeksEntered>0){ sbaRaw = earned; sbaMax = weeksEntered * (sub.weeklyMax||10); }
@@ -1390,6 +1418,26 @@ function classPosition(studentId){
     if(r.id === studentId) return { rank, of: ranked.length };
   }
   return null;
+}
+/* True once the school term's final week is behind us — based on DB.term specifically, so this
+   keeps working correctly even while System status is switched over to vacation classes. */
+function termHasEnded(){
+  const t = DB.term;
+  if(!t || !t.startDate || !t.weeks) return false;
+  const lastFriday = addDays(mondayOf(t.startDate), t.weeks*7 - 3);
+  return todayStr(0) > lastFriday;
+}
+/* Whether at least one subject has an exam mark recorded for this student — used, alongside
+   termHasEnded(), to decide when it's appropriate to reveal class position to parents. */
+function examScoresEnteredFor(studentId){
+  const s = studentById(studentId);
+  if(!s) return false;
+  const cls = classOf(s.classId);
+  return subjectNames(cls).some(subj=>{
+    const sub = DB.gradebook[cls.id]?.[subj];
+    const ex = sub && sub.examScores ? sub.examScores[studentId] : null;
+    return ex!==undefined && ex!==null;
+  });
 }
 function overallAverage(studentId){
   const st = studentById(studentId);
@@ -1713,10 +1761,11 @@ function myUpcomingLessons(limit=4){
     d.setDate(d.getDate()+offset);
     const dayName = dayIndexToName[d.getDay()];
     if(!dayName) continue;
+    const mode = activeTimetableMode();
     assignments.forEach(a=>{
       const cls = classOf(a.classId);
-      const slots = timetableSlotsFor(cls.level||'JHS');
-      const classTT = (DB.timetable[a.classId]||{})[dayName] || {};
+      const slots = timetableSlotsFor(cls.level||'JHS', mode);
+      const classTT = (DB.timetable[mode][a.classId]||{})[dayName] || {};
       slots.forEach(s=>{
         if(s.isBreak) return;
         if(classTT[s.id] !== a.subject) return;
@@ -2475,32 +2524,47 @@ async function markAttendance(classId, date, studentId, status){
 const TIMETABLE_DAYS = ['Monday','Tuesday','Wednesday','Thursday','Friday'];
 let ttSelectedClass = null;
 let ttSelectedLevel = 'JHS';
-/* Primary and JHS run on separate daily schedules, so every timetable lookup goes through this
-   instead of touching DB.timetableSlots directly. */
-function timetableSlotsFor(level){
-  return ((DB.timetableSlots && DB.timetableSlots[level==='Primary'?'Primary':'JHS']) || []).slice().sort((a,b)=> a.start.localeCompare(b.start));
+let ttSelectedMode = 'term';
+/* Primary and JHS run on separate daily schedules, and term vs vacation run on separate
+   schedules too, so every timetable lookup goes through this instead of touching
+   DB.timetableSlots directly. mode defaults to whichever is actually in session right now. */
+function timetableSlotsFor(level, mode){
+  mode = mode || activeTimetableMode();
+  const forMode = (DB.timetableSlots && DB.timetableSlots[mode]) || {};
+  return (forMode[level==='Primary'?'Primary':'JHS'] || []).slice().sort((a,b)=> a.start.localeCompare(b.start));
+}
+/* Which timetable is "live" right now — follows System status, same as attendance/SBA weeks. */
+function activeTimetableMode(){
+  return DB.systemStatus==='vacation' ? 'vacation' : 'term';
 }
 
 function renderTimetable(){
   if(!DB.classes.find(c=>c.id===ttSelectedClass && c.level===ttSelectedLevel)){
     ttSelectedClass = DB.classes.find(c=>c.level===ttSelectedLevel)?.id || null;
   }
-  const slots = timetableSlotsFor(ttSelectedLevel);
+  const slots = timetableSlotsFor(ttSelectedLevel, ttSelectedMode);
   const cls = ttSelectedClass ? classOf(ttSelectedClass) : null;
-  const classTT = cls ? (DB.timetable[cls.id] || {}) : {};
+  const classTT = cls ? (DB.timetable[ttSelectedMode][cls.id] || {}) : {};
   const levelClasses = DB.classes.filter(c=>c.level===ttSelectedLevel);
+  const modeLabel = ttSelectedMode==='vacation' ? 'vacation classes' : 'term';
 
   return `
     <div class="topbar"><div><div class="eyebrow">Administration</div><h1>Timetable</h1></div></div>
+
+    <div class="ward-switch">
+      <button class="${ttSelectedMode==='term'?'active':''}" style="padding:6px 16px;" onclick="ttSelectedMode='term'; render()">Term</button>
+      <button class="${ttSelectedMode==='vacation'?'active':''}" style="padding:6px 16px;" onclick="ttSelectedMode='vacation'; render()">Vacation classes</button>
+    </div>
+    ${ttSelectedMode==='vacation' ? `<p style="margin:0 0 14px;font-size:12.5px;color:var(--slate);">This is a completely separate schedule from the term timetable — its own periods, breaks, and subjects. It's what teachers and the dashboard follow whenever System status is set to "Vacation classes in session."</p>` : ''}
 
     <div class="ward-switch">
       <button class="${ttSelectedLevel==='JHS'?'active':''}" style="padding:6px 16px;" onclick="ttSelectedLevel='JHS'; ttSelectedClass=null; render()">JHS</button>
       <button class="${ttSelectedLevel==='Primary'?'active':''}" style="padding:6px 16px;" onclick="ttSelectedLevel='Primary'; ttSelectedClass=null; render()">Primary</button>
     </div>
 
-    <div class="panel"><div class="panel-head"><h3>Step 1 — Daily periods &amp; break times (${ttSelectedLevel})</h3></div>
+    <div class="panel"><div class="panel-head"><h3>Step 1 — Daily periods &amp; break times (${ttSelectedLevel}, ${modeLabel})</h3></div>
       <div class="panel-body" style="padding-top:10px;padding-bottom:16px;">
-        <p style="margin:0 0 10px;font-size:13px;color:var(--slate);">These apply to every ${ttSelectedLevel} class. Primary and JHS keep their own separate schedules — add every period and break in order, from the first period of the day to the last.</p>
+        <p style="margin:0 0 10px;font-size:13px;color:var(--slate);">These apply to every ${ttSelectedLevel} class during ${modeLabel}. Primary and JHS keep their own separate schedules — add every period and break in order, from the first period of the day to the last.</p>
         ${!slots.length ? '<p style="margin:0 0 10px;font-size:13px;color:var(--slate);">No periods added yet — add the first one below.</p>' : `
         <table class="reg">
           <thead><tr><th>Start</th><th>End</th><th>Label</th><th>Type</th><th></th></tr></thead>
@@ -2522,7 +2586,7 @@ function renderTimetable(){
       </div>
     </div>
 
-    <div class="panel"><div class="panel-head"><h3>Step 2 — Subjects per day</h3></div>
+    <div class="panel"><div class="panel-head"><h3>Step 2 — Subjects per day (${modeLabel})</h3></div>
       <div class="panel-body" style="padding-top:10px;padding-bottom:16px;">
         <div class="toolbar" style="margin-bottom:14px;">
           ${levelClasses.length ? `<select onchange="ttSelectedClass=this.value; render()">
@@ -2539,7 +2603,7 @@ function renderTimetable(){
               ${TIMETABLE_DAYS.map(d=>{
                 if(s.isBreak) return `<td style="background:var(--paper);text-align:center;font-size:11px;color:var(--slate);">${s.label}</td>`;
                 const current = (classTT[d]||{})[s.id] || '';
-                return `<td><select onchange="setTimetableCell('${cls.id}','${d}','${s.id}',this.value)">
+                return `<td><select onchange="setTimetableCell('${ttSelectedMode}','${cls.id}','${d}','${s.id}',this.value)">
                   <option value="">—</option>
                   ${cls.subjects.map(sub=>`<option value="${sub.name}" ${current===sub.name?'selected':''}>${sub.name}</option>`).join('')}
                 </select></td>`;
@@ -2552,8 +2616,8 @@ function renderTimetable(){
     </div>
 
     <div class="crud-box">
-      <h4>Bulk feed subjects into the timetable</h4>
-      <p style="margin:0 0 10px;font-size:12.5px;color:var(--slate);">Paste one entry per line as <span class="mono">Class, Day, Period label, Subject</span> (period label must match one you added in Step 1, e.g. "Period 1"; day must be Monday–Friday) — or upload an Excel/CSV file with columns <span class="mono">Class, Day, Period, Subject</span>. Works across multiple classes and days at once.</p>
+      <h4>Bulk feed subjects into the timetable (${modeLabel})</h4>
+      <p style="margin:0 0 10px;font-size:12.5px;color:var(--slate);">Paste one entry per line as <span class="mono">Class, Day, Period label, Subject</span> (period label must match one you added in Step 1 above for ${modeLabel}, e.g. "Period 1"; day must be Monday–Friday) — or upload an Excel/CSV file with columns <span class="mono">Class, Day, Period, Subject</span>. Works across multiple classes and days at once, and applies to whichever schedule — Term or Vacation classes — is selected above.</p>
       <textarea id="bulk-tt-text" rows="4" placeholder="Form 1A, Monday, Period 1, Mathematics&#10;Form 1A, Monday, Period 2, English&#10;Form 1A, Tuesday, Period 1, Integrated Science" style="width:100%;padding:9px 10px;border-radius:8px;border:1.5px solid var(--line);font-family:'IBM Plex Mono',monospace;font-size:12.5px;"></textarea>
       <div class="inline-form" style="margin-top:8px;">
         <button class="btn-small brass" onclick="bulkAddTimetableFromText()">Add pasted entries</button>
@@ -2563,16 +2627,17 @@ function renderTimetable(){
       </div>
     </div>
 
-    <div class="panel"><div class="panel-head"><h3>Step 3 — View &amp; print</h3>${cls ? `<button class="btn-ghost" onclick="printTimetable('${cls.id}')">Print / Download</button>` : ''}</div>
+    <div class="panel"><div class="panel-head"><h3>Step 3 — View &amp; print (${modeLabel})</h3>${cls ? `<button class="btn-ghost" onclick="printTimetable('${cls.id}','${ttSelectedMode}')">Print / Download</button>` : ''}</div>
       <div class="panel-body" style="padding-top:10px;padding-bottom:16px;overflow-x:auto;">
-        ${cls && slots.length ? buildTimetableGridHTML(cls.id) : '<p style="margin:0;font-size:13px;color:var(--slate);">Complete steps 1 and 2 to see the timetable here.</p>'}
+        ${cls && slots.length ? buildTimetableGridHTML(cls.id, ttSelectedMode) : '<p style="margin:0;font-size:13px;color:var(--slate);">Complete steps 1 and 2 to see the timetable here.</p>'}
       </div>
     </div>
   `;
 }
-function buildTimetableGridHTML(classId){
-  const slots = timetableSlotsFor(classOf(classId).level||'JHS');
-  const classTT = DB.timetable[classId] || {};
+function buildTimetableGridHTML(classId, mode){
+  mode = mode || activeTimetableMode();
+  const slots = timetableSlotsFor(classOf(classId).level||'JHS', mode);
+  const classTT = DB.timetable[mode][classId] || {};
   return `
     <table class="reg">
       <thead><tr><th>Time</th>${TIMETABLE_DAYS.map(d=>`<th>${d}</th>`).join('')}</tr></thead>
@@ -2589,20 +2654,22 @@ function buildTimetableGridHTML(classId){
     </table>
   `;
 }
-function buildTimetableHTML(classId){
+function buildTimetableHTML(classId, mode){
+  mode = mode || activeTimetableMode();
   const cls = classOf(classId);
+  const modeLabel = mode==='vacation' ? 'Vacation Classes' : 'Term';
   return `
     <div class="rc-page">
       <div class="rc-head">
         <div class="crest">${DB.school.crest ? `<img src="${DB.school.crest}">` : `<span>${schoolInitials(DB.school.name)}</span>`}</div>
-        <div><h2>${DB.school.name}</h2><p>Class Timetable — ${cls.name}</p></div>
+        <div><h2>${DB.school.name}</h2><p>${modeLabel} Timetable — ${cls.name}</p></div>
       </div>
-      ${buildTimetableGridHTML(classId)}
+      ${buildTimetableGridHTML(classId, mode)}
     </div>
   `;
 }
-function printTimetable(classId){
-  document.getElementById('print-area').innerHTML = buildTimetableHTML(classId);
+function printTimetable(classId, mode){
+  document.getElementById('print-area').innerHTML = buildTimetableHTML(classId, mode);
   window.print();
 }
 async function addTimetableSlot(){
@@ -2611,29 +2678,30 @@ async function addTimetableSlot(){
   const label = document.getElementById('new-slot-label').value.trim();
   const isBreak = document.getElementById('new-slot-break').checked;
   if(!start || !end || !label) return;
-  DB.timetableSlots[ttSelectedLevel].push({ id:'slot'+Date.now(), start, end, label, isBreak });
+  DB.timetableSlots[ttSelectedMode][ttSelectedLevel].push({ id:'slot'+Date.now(), start, end, label, isBreak });
   await saveDB();
   render();
 }
 async function removeTimetableSlot(id){
-  DB.timetableSlots[ttSelectedLevel] = DB.timetableSlots[ttSelectedLevel].filter(s=>s.id!==id);
+  DB.timetableSlots[ttSelectedMode][ttSelectedLevel] = DB.timetableSlots[ttSelectedMode][ttSelectedLevel].filter(s=>s.id!==id);
   const levelClassIds = new Set(DB.classes.filter(c=>c.level===ttSelectedLevel).map(c=>c.id));
-  Object.entries(DB.timetable).forEach(([classId,classTT])=>{
+  Object.entries(DB.timetable[ttSelectedMode]).forEach(([classId,classTT])=>{
     if(!levelClassIds.has(classId)) return;
     Object.values(classTT).forEach(dayObj=>{ delete dayObj[id]; });
   });
   await saveDB();
   render();
 }
-async function setTimetableCell(classId, day, slotId, subject){
-  if(!DB.timetable[classId]) DB.timetable[classId] = {};
-  if(!DB.timetable[classId][day]) DB.timetable[classId][day] = {};
-  if(subject) DB.timetable[classId][day][slotId] = subject;
-  else delete DB.timetable[classId][day][slotId];
+async function setTimetableCell(mode, classId, day, slotId, subject){
+  if(!DB.timetable[mode][classId]) DB.timetable[mode][classId] = {};
+  if(!DB.timetable[mode][classId][day]) DB.timetable[mode][classId][day] = {};
+  if(subject) DB.timetable[mode][classId][day][slotId] = subject;
+  else delete DB.timetable[mode][classId][day][slotId];
   await saveDB();
   render();
 }
 async function processTimetableRows(rows){
+  const mode = ttSelectedMode;
   let added=0; const skipped=[];
   rows.forEach((r,i)=>{
     const className = fieldVal(r,'class','classname','class name','form');
@@ -2645,18 +2713,18 @@ async function processTimetableRows(rows){
     if(!cls){ skipped.push(`Row ${i+1}: class "${className}" not found`); return; }
     const dayMatch = TIMETABLE_DAYS.find(d=>d.toLowerCase()===day.trim().toLowerCase());
     if(!dayMatch){ skipped.push(`Row ${i+1}: "${day}" isn't a valid day (use Monday–Friday)`); return; }
-    const slot = timetableSlotsFor(cls.level||'JHS').find(sl=>sl.label.toLowerCase()===periodLabel.trim().toLowerCase());
-    if(!slot){ skipped.push(`Row ${i+1}: period "${periodLabel}" not found in ${cls.level||'JHS'}'s Step 1 schedule — add it there first`); return; }
+    const slot = timetableSlotsFor(cls.level||'JHS', mode).find(sl=>sl.label.toLowerCase()===periodLabel.trim().toLowerCase());
+    if(!slot){ skipped.push(`Row ${i+1}: period "${periodLabel}" not found in ${cls.level||'JHS'}'s Step 1 schedule for this mode — add it there first`); return; }
     if(slot.isBreak){ skipped.push(`Row ${i+1}: "${periodLabel}" is marked as a break, can't assign a subject to it`); return; }
     if(!cls.subjects.some(sub=>sub.name.toLowerCase()===subject.trim().toLowerCase())){ skipped.push(`Row ${i+1}: "${subject}" isn't a subject in ${cls.name}`); return; }
-    if(!DB.timetable[cls.id]) DB.timetable[cls.id] = {};
-    if(!DB.timetable[cls.id][dayMatch]) DB.timetable[cls.id][dayMatch] = {};
-    DB.timetable[cls.id][dayMatch][slot.id] = subject.trim();
+    if(!DB.timetable[mode][cls.id]) DB.timetable[mode][cls.id] = {};
+    if(!DB.timetable[mode][cls.id][dayMatch]) DB.timetable[mode][cls.id][dayMatch] = {};
+    DB.timetable[mode][cls.id][dayMatch][slot.id] = subject.trim();
     added++;
   });
   await saveDB();
   render();
-  alert(`Added ${added} timetable entr${added===1?'y':'ies'}.` + (skipped.length ? `\n\nNotes:\n`+skipped.join('\n') : ''));
+  alert(`Added ${added} timetable entr${added===1?'y':'ies'} to the ${mode==='vacation'?'vacation classes':'term'} timetable.` + (skipped.length ? `\n\nNotes:\n`+skipped.join('\n') : ''));
 }
 async function bulkAddTimetableFromText(){
   const text = document.getElementById('bulk-tt-text').value;
@@ -3079,7 +3147,8 @@ function renderParentPortal(){
   const att = attendanceRate(s.id, s.classId);
   const attCounts = attendanceCounts(s.id, s.classId);
   const sixSum = sixSubjectSummary(s.classId, s.id);
-  const pos = classPosition(s.id);
+  const positionReady = termHasEnded() && examScoresEnteredFor(s.id);
+  const pos = positionReady ? classPosition(s.id) : null;
   const classTeacherUser = cls.classTeacher ? userByUsername(cls.classTeacher) : null;
   const billTotal = (DB.billItems||[]).reduce((sum,it)=>sum+(Number(it.price)||0), 0);
   const arrears = Number(s.arrears)||0;
@@ -3121,7 +3190,7 @@ function renderParentPortal(){
     <div class="panel"><div class="panel-head"><h3>At a glance</h3></div>
       <div class="ring-row">
         ${ringStat(att??0, 'var(--brass)', (att??'—')+(att!==null?'%':''), 'Attendance')}
-        ${ringStat(posPct, 'var(--sage)', pos?ordinal(pos.rank):'—', pos?'Position of '+pos.of:'Position')}
+        ${pos ? ringStat(posPct, 'var(--sage)', ordinal(pos.rank), 'Position of '+pos.of) : ringStat(0, 'var(--paper-dim)', '&#128274;', 'Position — end of term')}
         ${ringStat(statusPct, status.color, `<span style="font-size:22px;">${status.icon}</span>`, status.label)}
       </div>
     </div>
