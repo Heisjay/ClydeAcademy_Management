@@ -91,6 +91,36 @@
   .ring-small{ font-size:9.5px; color:var(--slate); text-transform:uppercase; letter-spacing:0.05em; margin-top:3px; }
 
   .subj-grade-grid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(140px,1fr)); gap:12px; }
+
+  /* ---------- Teacher subject-overview cards ---------- */
+  .teach-card-grid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:14px; }
+  .teach-card{
+    background:var(--white); border:1px solid var(--line); border-radius:14px; padding:16px;
+    box-shadow:var(--shadow); transition:transform 0.15s ease; position:relative; overflow:hidden;
+  }
+  .teach-card:hover{ transform:translateY(-3px); }
+  .teach-card::before{
+    content:''; position:absolute; top:0; left:0; width:100%; height:4px;
+    background:var(--card-accent, var(--brass));
+  }
+  .teach-card .subj-name{ font-family:'Fraunces',serif; font-weight:700; font-size:16px; color:var(--ink); }
+  .teach-card .cls-name{ font-size:12px; color:var(--slate); margin-bottom:10px; }
+  .teach-card .status-badge{
+    display:inline-block; padding:4px 10px; border-radius:20px; font-size:11px; font-weight:700;
+    margin-top:10px; color:#fff;
+  }
+  .teach-card .go-btn{
+    display:block; width:100%; margin-top:12px; padding:8px; border-radius:8px; border:none;
+    background:var(--ink); color:var(--brass-soft); font-weight:600; font-size:12.5px; cursor:pointer;
+  }
+  .leaderboard-row{
+    display:flex; align-items:center; gap:12px; padding:10px 4px; border-bottom:1px solid var(--line);
+  }
+  .leaderboard-row:last-child{ border-bottom:none; }
+  .leaderboard-medal{ font-size:20px; width:28px; text-align:center; }
+  .leaderboard-bar-wrap{ flex:1; background:var(--paper); border-radius:6px; height:8px; overflow:hidden; }
+  .leaderboard-bar{ height:100%; border-radius:6px; transition:width 1s ease; }
+
   .subj-grade-card{
     background:var(--white); border:1px solid var(--line); border-radius:12px; padding:14px 12px;
     text-align:center; box-shadow:var(--shadow); transition:transform 0.15s ease;
@@ -835,14 +865,23 @@ function mondayOf(dateStr){
   d.setDate(d.getDate()+diff);
   return d.toISOString().slice(0,10);
 }
+/* Which start-date/length is currently governing the calendar — the school term, or, when the
+   admin has switched System status to "Vacation classes in session", the vacation period instead
+   (capped at 4 weeks / about one month). Falls back to the term if no vacation period is set. */
+function activeSession(){
+  if(DB.systemStatus==='vacation' && DB.vacation && DB.vacation.startDate){
+    return { startDate: DB.vacation.startDate, weeks: Math.min(4, DB.vacation.weeks || 4) };
+  }
+  return { startDate: DB.term?.startDate || todayStr(0), weeks: DB.term?.weeks || 12 };
+}
 function termStartMonday(){
-  return mondayOf(DB.term?.startDate || todayStr(0));
+  return mondayOf(activeSession().startDate);
 }
 function weekMonday(weekNum){ return addDays(termStartMonday(), (weekNum-1)*7); }
 function weekFriday(weekNum){ return addDays(termStartMonday(), (weekNum-1)*7 + 4); }
-/* Which week number "today" falls in, clamped to the term's length. */
+/* Which week number "today" falls in, clamped to the active session's length. */
 function currentTermWeek(){
-  const weeks = DB.term?.weeks || 12;
+  const weeks = activeSession().weeks;
   const mon = termStartMonday(), today = todayStr(0);
   let wk = Math.floor((new Date(today) - new Date(mon)) / (7*86400000)) + 1;
   if(wk<1) wk = 1;
@@ -866,9 +905,9 @@ function recordAttendanceMeta(classId, date){
   const u = userByUsername(session.username);
   DB.attendanceMeta[classId][date] = { by: session.username, byName: u?u.name:session.username, at: Date.now() };
 }
-/* Every Mon-Fri school day in the term, up to and including today (never into the future). */
+/* Every Mon-Fri school day in the active session, up to and including today (never into the future). */
 function schoolDaysSoFar(){
-  const weeks = DB.term?.weeks || 12;
+  const weeks = activeSession().weeks;
   const mon = termStartMonday(), today = todayStr(0);
   const out = [];
   for(let w=1; w<=weeks; w++){
@@ -882,7 +921,7 @@ function schoolDaysSoFar(){
 /* The term is split into 4 roughly-equal blocks, one per CAT, so a subject teacher only ever sees
    the CAT that's "in season" this week rather than the whole term's worth of categories at once. */
 function activeCatIndex(){
-  const weeks = DB.term?.weeks || 12;
+  const weeks = activeSession().weeks;
   const wk = currentTermWeek();
   const blockSize = Math.max(1, Math.ceil(weeks/4));
   return Math.min(3, Math.floor((wk-1)/blockSize));
@@ -947,13 +986,13 @@ const TERM_NAMES = ['1st Term','2nd Term','3rd Term'];
 
 function seedDB(){
   const classes = [
-    { id:'c1', name:'Form 1A', classTeacher:'owusu', subjects:[
+    { id:'c1', name:'Form 1A', level:'JHS', classTeacher:'owusu', subjects:[
       {name:'Mathematics', teacher:'owusu', type:'core'},{name:'English', teacher:'owusu', type:'core'},{name:'Integrated Science', teacher:'owusu', type:'core'},{name:'Social Studies', teacher:'owusu', type:'core'},{name:'French', teacher:null, type:'elective'}
     ] },
-    { id:'c2', name:'Form 2B', classTeacher:'mensah', subjects:[
+    { id:'c2', name:'Form 2B', level:'JHS', classTeacher:'mensah', subjects:[
       {name:'Mathematics', teacher:'mensah', type:'core'},{name:'English', teacher:'mensah', type:'core'},{name:'Integrated Science', teacher:null, type:'core'},{name:'Social Studies', teacher:'mensah', type:'core'},{name:'ICT', teacher:null, type:'elective'}
     ] },
-    { id:'c3', name:'Form 3C', classTeacher:'boateng', subjects:[
+    { id:'c3', name:'Form 3C', level:'JHS', classTeacher:'boateng', subjects:[
       {name:'Mathematics', teacher:'boateng', type:'core'},{name:'English', teacher:'boateng', type:'core'},{name:'Integrated Science', teacher:'boateng', type:'core'},{name:'Social Studies', teacher:null, type:'core'},{name:'French', teacher:null, type:'elective'}
     ] },
   ];
@@ -1020,7 +1059,26 @@ function seedDB(){
 
   const term = { startDate: todayStr(0), weeks: 12, termNumber: 1, examDeclared: false };
 
-  return { classes, students, gradebook, attendance, users, term, headTeacherUsername: 'admin', assistantHeadTeacherUsername: null, weeklyMeta: {}, attendanceMeta: {}, billItems: [], school: { name:'Clyde Academy', crest:null }, systemStatus: 'term', presence: {} };
+  const vacation = { startDate: todayStr(0), weeks: 4 };
+
+  const timetableSlots = {
+    JHS: [
+      { id:'slot1', start:'08:00', end:'08:40', label:'Period 1', isBreak:false },
+      { id:'slot2', start:'08:40', end:'09:20', label:'Period 2', isBreak:false },
+      { id:'slot3', start:'09:20', end:'09:40', label:'Break', isBreak:true },
+      { id:'slot4', start:'09:40', end:'10:20', label:'Period 3', isBreak:false },
+      { id:'slot5', start:'10:20', end:'11:00', label:'Period 4', isBreak:false },
+    ],
+    Primary: [
+      { id:'pslot1', start:'08:00', end:'08:35', label:'Period 1', isBreak:false },
+      { id:'pslot2', start:'08:35', end:'09:10', label:'Period 2', isBreak:false },
+      { id:'pslot3', start:'09:10', end:'09:45', label:'Period 3', isBreak:false },
+      { id:'pslot4', start:'09:45', end:'10:05', label:'Break', isBreak:true },
+      { id:'pslot5', start:'10:05', end:'10:40', label:'Period 4', isBreak:false },
+    ],
+  };
+
+  return { classes, students, gradebook, attendance, users, term, vacation, headTeacherUsername: 'admin', assistantHeadTeacherUsername: null, weeklyMeta: {}, attendanceMeta: {}, billItems: [], school: { name:'Clyde Academy', crest:null }, systemStatus: 'term', presence: {}, timetableSlots, timetable: {} };
 }
 
 function migrateDB(){
@@ -1034,6 +1092,42 @@ function migrateDB(){
   if(DB.assistantHeadTeacherUsername === undefined){ DB.assistantHeadTeacherUsername = null; changed = true; }
   if(!DB.billItems){ DB.billItems = []; changed = true; }
   if(!DB.presence){ DB.presence = {}; changed = true; }
+  if(!DB.vacation){ DB.vacation = { startDate: todayStr(0), weeks: 4 }; changed = true; }
+  if(!DB.timetableSlots){
+    DB.timetableSlots = {
+      JHS: [
+        { id:'slot1', start:'08:00', end:'08:40', label:'Period 1', isBreak:false },
+        { id:'slot2', start:'08:40', end:'09:20', label:'Period 2', isBreak:false },
+        { id:'slot3', start:'09:20', end:'09:40', label:'Break', isBreak:true },
+        { id:'slot4', start:'09:40', end:'10:20', label:'Period 3', isBreak:false },
+        { id:'slot5', start:'10:20', end:'11:00', label:'Period 4', isBreak:false },
+      ],
+      Primary: [
+        { id:'pslot1', start:'08:00', end:'08:35', label:'Period 1', isBreak:false },
+        { id:'pslot2', start:'08:35', end:'09:10', label:'Period 2', isBreak:false },
+        { id:'pslot3', start:'09:10', end:'09:45', label:'Period 3', isBreak:false },
+        { id:'pslot4', start:'09:45', end:'10:05', label:'Break', isBreak:true },
+        { id:'pslot5', start:'10:05', end:'10:40', label:'Period 4', isBreak:false },
+      ],
+    };
+    changed = true;
+  } else if(Array.isArray(DB.timetableSlots)){
+    // old shape: one flat array shared school-wide — carry it over as the JHS schedule and
+    // seed a fresh, separately-editable Primary schedule alongside it.
+    DB.timetableSlots = {
+      JHS: DB.timetableSlots,
+      Primary: [
+        { id:'pslot1', start:'08:00', end:'08:35', label:'Period 1', isBreak:false },
+        { id:'pslot2', start:'08:35', end:'09:10', label:'Period 2', isBreak:false },
+        { id:'pslot3', start:'09:10', end:'09:45', label:'Period 3', isBreak:false },
+        { id:'pslot4', start:'09:45', end:'10:05', label:'Break', isBreak:true },
+        { id:'pslot5', start:'10:05', end:'10:40', label:'Period 4', isBreak:false },
+      ],
+    };
+    changed = true;
+  }
+  if(!DB.timetable){ DB.timetable = {}; changed = true; }
+  if(DB.vacation.weeks > 4){ DB.vacation.weeks = 4; changed = true; }
   if(!DB.school){ DB.school = { name:'Clyde Academy', crest:null }; changed = true; }
   if(!DB.systemStatus){ DB.systemStatus = 'term'; changed = true; }
   DB.users.forEach(u=>{
@@ -1092,8 +1186,17 @@ function migrateDB(){
       changed = true;
     }
     if(c.classTeacher===undefined){ c.classTeacher = null; changed = true; }
+    if(c.level===undefined){ c.level = 'JHS'; changed = true; }
+    if(!DB.gradebook[c.id]){ DB.gradebook[c.id] = {}; changed = true; }
     c.subjects.forEach(subj=>{
       if(subj.type===undefined){ subj.type = 'core'; changed = true; }
+      if(!DB.gradebook[c.id][subj.name]){
+        // a subject that somehow has no matching gradebook record — recreate it rather than
+        // leaving a landmine that crashes the dashboard/gradebook the moment it's touched.
+        DB.gradebook[c.id][subj.name] = { assessments: SBA_CATEGORIES.slice(), scores:{}, weeklyEnabled:false, weeklyMax:10, weeklyScores:{}, examScores:{} };
+        studentsOf(c.id).forEach(s=>{ DB.gradebook[c.id][subj.name].scores[s.id] = {}; });
+        changed = true;
+      }
     });
   });
   DB.users.forEach(u=>{
@@ -1122,6 +1225,21 @@ function classTeacherClasses(){
   if(session.role==='Admin') return DB.classes;
   return DB.classes.filter(c=> c.classTeacher===session.username);
 }
+/* Every subject this specific teacher is assigned to teach, across all classes — used to build
+   their dashboard overview (not just the classes they happen to have access to). */
+function mySubjectAssignments(){
+  const out = [];
+  DB.classes.forEach(c=>{
+    c.subjects.forEach(subjObj=>{
+      if(subjObj.teacher===session.username){
+        const sub = DB.gradebook[c.id]?.[subjObj.name];
+        if(!sub) return; // orphaned subject with no matching gradebook entry — skip rather than crash the dashboard
+        out.push({ classId:c.id, className:c.name, subject:subjObj.name, subjectObj:subjObj, sub });
+      }
+    });
+  });
+  return out;
+}
 function teachableSubjects(cls){
   if(session.role==='Admin') return subjectNames(cls);
   return cls.subjects.filter(s=>s.teacher===session.username).map(s=>s.name);
@@ -1137,8 +1255,7 @@ function subjectBreakdown(classId, subj, studentId){
   if(!sub) return null;
   let sbaRaw = null, sbaMax = null;
   if(sub.weeklyEnabled){
-    const weeks = DB.term?.weeks || 12;
-    const wk = sub.weeklyScores[studentId] || {};
+    const weeks = activeSession().weeks;
     let earned = 0, weeksEntered = 0;
     for(let w=1; w<=weeks; w++){
       const v = wk['w'+w];
@@ -1283,9 +1400,10 @@ function overallAverage(studentId){
 function attendanceRate(studentId, classId){
   const days = DB.attendance[classId] || {};
   let keys = Object.keys(days);
-  if(DB.term && DB.term.startDate){
-    const start = DB.term.startDate;
-    const end = todayStr((DB.term.weeks||12) * 7);
+  const sess = activeSession();
+  if(sess.startDate){
+    const start = sess.startDate;
+    const end = addDays(sess.startDate, sess.weeks * 7);
     keys = keys.filter(d=> d>=start && d<=end);
   }
   if(!keys.length) return null;
@@ -1296,13 +1414,14 @@ function attendanceRate(studentId, classId){
   });
   return count ? Math.round((present/count)*100) : null;
 }
-/* Raw "X out of Y" attendance count over the term, for the report card. */
+/* Raw "X out of Y" attendance count over the active session (term or vacation), for the report card. */
 function attendanceCounts(studentId, classId){
   const days = DB.attendance[classId] || {};
   let keys = Object.keys(days);
-  if(DB.term && DB.term.startDate){
-    const start = DB.term.startDate;
-    const end = todayStr((DB.term.weeks||12) * 7);
+  const sess = activeSession();
+  if(sess.startDate){
+    const start = sess.startDate;
+    const end = addDays(sess.startDate, sess.weeks * 7);
     keys = keys.filter(d=> d>=start && d<=end);
   }
   let present=0, count=0;
@@ -1516,9 +1635,10 @@ const NAV_ITEMS = [
   { id:'dashboard', label:'Dashboard', ic:'&#9670;' },
   { id:'students', label:'Students', ic:'&#9737;' },
   { id:'gradebook', label:'Gradebook', ic:'&#9998;' },
-  { id:'attendance', label:'Attendance', ic:'&#10003;' },
+  { id:'attendance', label:'Attendance', ic:'&#10003;', adminOnly:true },
   { id:'activity', label:'Staff Activity', ic:'&#9873;', adminOnly:true },
   { id:'classes', label:'Classes', ic:'&#9776;', adminOnly:true },
+  { id:'timetable', label:'Timetable', ic:'&#128197;', adminOnly:true },
   { id:'staff', label:'Staff Accounts', ic:'&#128273;', adminOnly:true },
   { id:'bill', label:'Bill', ic:'&#128176;', visible: ()=>isBillAccess() },
   { id:'parent', label:'My Ward(s)', ic:'&#128118;' },
@@ -1569,6 +1689,7 @@ function render(){
     case 'attendance': el.innerHTML = renderAttendance(); break;
     case 'activity': el.innerHTML = renderActivity(); break;
     case 'classes': el.innerHTML = renderClasses(); break;
+    case 'timetable': el.innerHTML = renderTimetable(); break;
     case 'staff': el.innerHTML = renderStaff(); break;
     case 'bill': el.innerHTML = renderBill(); break;
     case 'parent': el.innerHTML = renderParentPortal(); break;
@@ -1579,6 +1700,182 @@ function render(){
 /* ============================================================
    Dashboard
 ============================================================ */
+/* Upcoming lessons for a subject teacher, read off the (level-specific) class timetable: the next
+   few periods — today onward — where they're the assigned subject teacher, in chronological order. */
+function myUpcomingLessons(limit=4){
+  const assignments = mySubjectAssignments();
+  if(!assignments.length) return [];
+  const dayIndexToName = {1:'Monday',2:'Tuesday',3:'Wednesday',4:'Thursday',5:'Friday'};
+  const nowHM = new Date().toTimeString().slice(0,5);
+  const out = [];
+  for(let offset=0; offset<7; offset++){
+    const d = new Date(todayStr(0)+'T00:00:00');
+    d.setDate(d.getDate()+offset);
+    const dayName = dayIndexToName[d.getDay()];
+    if(!dayName) continue;
+    assignments.forEach(a=>{
+      const cls = classOf(a.classId);
+      const slots = timetableSlotsFor(cls.level||'JHS');
+      const classTT = (DB.timetable[a.classId]||{})[dayName] || {};
+      slots.forEach(s=>{
+        if(s.isBreak) return;
+        if(classTT[s.id] !== a.subject) return;
+        if(offset===0 && s.end <= nowHM) return;
+        out.push({ dayName, offset, start:s.start, end:s.end, subject:a.subject, className:a.className });
+      });
+    });
+  }
+  out.sort((x,y)=> x.offset-y.offset || x.start.localeCompare(y.start));
+  return out.slice(0,limit);
+}
+function lessonDayLabel(offset, dayName){
+  if(offset===0) return 'Today';
+  if(offset===1) return 'Tomorrow';
+  return dayName;
+}
+/* A livelier dashboard section for teachers: what's due this week per subject, upcoming lessons off
+   the timetable, and a quick look at how their students are doing. Built from accessibleClasses()
+   (homeroom + subjects taught) rather than just subject assignments, so a class teacher with no
+   subject of their own — or a brand-new teacher with nothing assigned yet — never sees a blank page. */
+function renderTeacherSubjectsOverview(){
+  const myClasses = accessibleClasses();
+  if(!myClasses.length){
+    return `
+      <div class="panel"><div class="panel-body" style="padding:34px 20px;text-align:center;">
+        <div style="font-size:40px;margin-bottom:6px;">🌱</div>
+        <h3 style="margin:0 0 6px;">Your classroom is waiting</h3>
+        <p style="margin:0 auto;max-width:380px;color:var(--slate);font-size:13.5px;">You haven't been assigned to a class or subject yet — once the administrator assigns you one from Staff Accounts or Classes, your lessons, students, and weekly test countdown will show up right here.</p>
+      </div></div>`;
+  }
+  const assignments = mySubjectAssignments();
+  const curWeek = currentTermWeek();
+  const friday = weekFriday(curWeek);
+  const daysLeft = Math.ceil((new Date(friday+'T00:00:00') - new Date(todayStr(0)+'T00:00:00')) / 86400000);
+  const weeklySubs = assignments.filter(a=>a.sub.weeklyEnabled);
+  const weeklyDone = weeklySubs.filter(a=>weeklyEntryExists(a.classId, a.subject, curWeek)).length;
+  const weeklyPct = weeklySubs.length ? Math.round(weeklyDone/weeklySubs.length*100) : 100;
+  const heroColor = !weeklySubs.length ? 'var(--sage)' : (weeklyDone===weeklySubs.length ? 'var(--sage)' : (daysLeft<=0 ? 'var(--brick)' : (daysLeft<=2 ? 'var(--brass)' : 'var(--sage)')));
+
+  const upcoming = myUpcomingLessons(4);
+
+  // students' progress across every class this teacher can see (homeroom + subjects taught)
+  let classSummaries = myClasses.map(c=>{
+    const roster = studentsOf(c.id);
+    const vals = roster.map(s=>overallAverage(s.id)).filter(v=>v!==null);
+    const classAvg = vals.length ? Math.round(vals.reduce((x,y)=>x+y,0)/vals.length) : null;
+    const att = classAvgAttendanceToday(c.id);
+    return { className:c.name, count:roster.length, classAvg, att, isHomeroom: c.classTeacher===session.username };
+  });
+
+  // top performers across every student this teacher can see
+  let allScores = [];
+  myClasses.forEach(c=>{
+    studentsOf(c.id).forEach(s=>{
+      const v = overallAverage(s.id);
+      if(v!==null) allScores.push({ name:s.name, className:c.name, val:v });
+    });
+  });
+  allScores.sort((x,y)=>y.val-x.val);
+  const top = allScores.slice(0,5);
+  const medals = ['🥇','🥈','🥉','🏅','🏅'];
+
+  const cards = assignments.map(a=>{
+    const roster = studentsOf(a.classId);
+    const vals = roster.map(s=>subjectAverage(a.classId, a.subject, s.id)).filter(v=>v!==null);
+    const classAvg = vals.length ? Math.round(vals.reduce((x,y)=>x+y,0)/vals.length) : null;
+    const accent = classAvg===null ? 'var(--slate)' : gradeColor(gradePointFor(classAvg));
+
+    let badge;
+    if(a.sub.weeklyEnabled){
+      const done = weeklyEntryExists(a.classId, a.subject, curWeek);
+      if(done) badge = { text:'✓ This week entered', color:'var(--sage)' };
+      else if(daysLeft<0) badge = { text:'⚠ Overdue', color:'var(--brick)' };
+      else if(daysLeft===0) badge = { text:'⏰ Due today (Fri)', color:'var(--brick)' };
+      else if(daysLeft<=2) badge = { text:`⏳ ${daysLeft} day${daysLeft>1?'s':''} left`, color:'var(--brass)' };
+      else badge = { text:`${daysLeft} days left this week`, color:'var(--sage)' };
+    } else {
+      const cat = a.sub.assessments[activeCatIndex()];
+      badge = { text:`📝 Open now: ${cat.name}`, color:'var(--brass)' };
+    }
+
+    return `
+      <div class="teach-card" style="--card-accent:${accent};">
+        <div class="subj-name">${a.subject}</div>
+        <div class="cls-name">${a.className} · ${roster.length} student${roster.length===1?'':'s'}</div>
+        <div style="font-size:26px;font-family:'Fraunces',serif;font-weight:700;color:${accent};">${classAvg??'—'}${classAvg!==null?'%':''}</div>
+        <div style="font-size:11px;color:var(--slate);">Class average</div>
+        <div class="status-badge" style="background:${badge.color};">${badge.text}</div>
+        <button class="go-btn" onclick="openGradebookFor('${a.classId}','${a.subject.replace(/'/g,"\\'")}')">Enter marks</button>
+      </div>`;
+  }).join('');
+
+  return `
+    <div class="parent-hero">
+      ${weeklySubs.length ? `<div class="ring-wrap">${ringSVG(weeklyPct, heroColor, 72, 7)}<div class="ring-center"><div class="ring-big" style="font-size:16px;color:var(--white);">${weeklyDone}/${weeklySubs.length}</div></div></div>` : `<div style="font-size:34px;">👋</div>`}
+      <div>
+        <h2>${weeklySubs.length ? (weeklyDone===weeklySubs.length ? "You're all caught up!" : 'Weekly marks still open') : 'Welcome back!'}</h2>
+        <div class="sub">${weeklySubs.length
+          ? (daysLeft<0 ? 'This week\'s window is closed — catch up as soon as you can.' : (daysLeft===0 ? 'Due today — enter this week\'s marks before Friday closes out.' : `${daysLeft} day${daysLeft===1?'':'s'} left to enter this week's marks.`))
+          : `You're teaching ${myClasses.length} class${myClasses.length===1?'':'es'} this term — here's how things stand.`}</div>
+      </div>
+      <div class="term-chip">Week ${curWeek}<div class="bar"><span style="width:${weeklyPct}%;"></span></div></div>
+    </div>
+
+    ${upcoming.length ? `
+    <div class="panel"><div class="panel-head"><h3>Upcoming lessons</h3></div>
+      <div class="panel-body" style="padding-top:6px;padding-bottom:10px;">
+        ${upcoming.map(u=>`
+          <div class="ledger-row">
+            <span class="pill present" style="min-width:70px;text-align:center;">${lessonDayLabel(u.offset,u.dayName)}</span>
+            <span style="flex:1"><b>${u.subject}</b> · ${u.className}</span>
+            <span class="mono" style="font-size:12px;color:var(--slate);">${u.start}–${u.end}</span>
+          </div>`).join('')}
+      </div>
+    </div>` : ''}
+
+    ${cards ? `
+    <div class="panel"><div class="panel-head"><h3>Your subjects this week</h3></div>
+      <div class="panel-body" style="padding-top:14px;padding-bottom:16px;">
+        <div class="teach-card-grid">${cards}</div>
+      </div>
+    </div>` : ''}
+
+    <div class="panel"><div class="panel-head"><h3>Your students' progress</h3></div>
+      <div class="panel-body" style="padding-top:14px;padding-bottom:16px;">
+        <div class="teach-card-grid">
+          ${classSummaries.map(cs=>`
+            <div class="teach-card" style="--card-accent:${cs.classAvg===null?'var(--slate)':gradeColor(gradePointFor(cs.classAvg))};">
+              <div class="subj-name">${cs.className}</div>
+              <div class="cls-name">${cs.count} student${cs.count===1?'':'s'}${cs.isHomeroom?' · Homeroom':''}</div>
+              <div style="font-size:26px;font-family:'Fraunces',serif;font-weight:700;">${cs.classAvg??'—'}${cs.classAvg!==null?'%':''}</div>
+              <div style="font-size:11px;color:var(--slate);">Class average</div>
+              <div style="font-size:11px;color:var(--slate);margin-top:6px;">Present today: ${cs.att??'—'}${cs.att!==null?'%':''}</div>
+            </div>`).join('')}
+        </div>
+      </div>
+    </div>
+
+    ${top.length ? `
+    <div class="panel"><div class="panel-head"><h3>Top performers among your students</h3></div>
+      <div class="panel-body" style="padding-top:6px;padding-bottom:12px;">
+        ${top.map((t,i)=>`
+          <div class="leaderboard-row">
+            <div class="leaderboard-medal">${medals[i]}</div>
+            <div style="min-width:140px;">
+              <div style="font-weight:600;font-size:13.5px;">${t.name}</div>
+              <div style="font-size:11px;color:var(--slate);">${t.className}</div>
+            </div>
+            <div class="leaderboard-bar-wrap"><div class="leaderboard-bar" style="width:${t.val}%;background:${gradeColor(gradePointFor(t.val))};"></div></div>
+            <div class="mono" style="font-weight:700;width:40px;text-align:right;">${t.val}%</div>
+          </div>`).join('')}
+      </div>
+    </div>` : ''}
+  `;
+}
+function openGradebookFor(classId, subject){
+  view.classId = classId; view.subject = subject;
+  goTo('gradebook');
+}
 function renderDashboard(){
   const myClasses = accessibleClasses();
   const myClassIds = myClasses.map(c=>c.id);
@@ -1614,8 +1911,8 @@ function renderDashboard(){
       <div class="stat-card"><div class="label">Average performance</div><div class="value">${avg}${avg!=='—'?'%':''}</div><div class="sub">Grade ${avg==='—'?'—':(gradePointFor(avg)??'—')}</div></div>
       <div class="stat-card"><div class="label">Classes</div><div class="value">${numClasses}</div><div class="sub">${session.role==='Admin' ? 'Managed school-wide' : (myClasses.length ? 'Your assignments' : 'Awaiting admin assignment')}</div></div>
     </div>
-    ${session.role!=='Admin' && !myClasses.length ? `<div class="panel"><div class="panel-body" style="padding-top:16px;"><p style="margin:0;color:var(--slate);font-size:13.5px;">You haven't been assigned to a class or subject yet. Ask the administrator to assign you from Staff Accounts / Classes.</p></div></div>` : ''}
     ${DB.systemStatus==='vacation' ? `<div class="panel" style="border-color:var(--brass);"><div class="panel-body" style="padding-top:14px;padding-bottom:14px;"><p style="margin:0;font-size:13px;font-weight:600;color:var(--brass);">🏖 Vacation classes are currently in session.</p></div></div>` : ''}
+    ${session.role==='Teacher' ? renderTeacherSubjectsOverview() : ''}
 
     <div class="panel">
       <div class="panel-head"><h3>Today's register activity</h3><span class="mono" style="font-size:11px;color:var(--slate)">${todayStr(0)}</span></div>
@@ -1632,7 +1929,7 @@ function renderDashboard(){
     <div class="panel">
       <div class="panel-head"><h3>Quick actions</h3></div>
       <div class="panel-body" style="display:flex;gap:10px;flex-wrap:wrap;padding-bottom:16px;">
-        <button class="btn-small" onclick="goTo('attendance')">Take attendance</button>
+        ${session.role==='Admin' ? `<button class="btn-small" onclick="goTo('attendance')">Take attendance</button>` : ''}
         <button class="btn-small brass" onclick="goTo('gradebook')">Enter grades</button>
         <button class="btn-ghost" onclick="goTo('students')">View students</button>
       </div>
@@ -1819,7 +2116,8 @@ function renderStudentDetail(id){
 
   const pos = classPosition(id);
   const sixSum = sixSubjectSummary(s.classId, id);
-  const canEditProfile = session.role==='Admin' || cls.classTeacher===session.username;
+  const canEditProfile = session.role==='Admin';
+  const canEditRemark = session.role==='Admin' || cls.classTeacher===session.username;
 
   let body = '';
   if(view.tab==='overview'){
@@ -1850,7 +2148,7 @@ function renderStudentDetail(id){
       </div></div>
       <div class="panel"><div class="panel-head"><h3>Teacher remarks (for report card)</h3></div>
         <div class="panel-body" style="padding-top:14px;padding-bottom:16px;">
-          ${canEditProfile ? `
+          ${canEditRemark ? `
             <textarea id="remark-${id}" rows="3" style="width:100%;padding:10px;border-radius:8px;border:1.5px solid var(--line);font-family:inherit;font-size:13.5px;" placeholder="e.g. A hardworking student who participates well in class discussions.">${s.remark||''}</textarea>
             <button class="btn-small brass" style="margin-top:8px;" onclick="saveRemark('${id}')">Save remark</button>
           ` : `<p style="margin:0;font-size:13.5px;color:var(--slate);">${s.remark || 'No remark added yet.'}</p>`}
@@ -1863,7 +2161,8 @@ function renderStudentDetail(id){
     const activeIdx = activeCatIndex();
     body = cls.subjects.map(subjObj=>{
       const subj = subjObj.name;
-      const sub = DB.gradebook[s.classId][subj];
+      const sub = DB.gradebook[s.classId]?.[subj];
+      if(!sub) return ''; // orphaned subject with no matching gradebook entry — skip rather than crash the page
       const sc = sub.scores[id] || {};
       const canEdit = session.role==='Admin' || subjObj.teacher===session.username;
       const b = subjectBreakdown(s.classId, subj, id);
@@ -1871,7 +2170,7 @@ function renderStudentDetail(id){
       const examOpen = DB.term?.examDeclared || isAdminUser;
       let assessmentRowsHTML;
       if(sub.weeklyEnabled){
-        const weeksToShow = isAdminUser ? Array.from({length:DB.term?.weeks||12},(_,i)=>i+1) : [curWeek];
+        const weeksToShow = isAdminUser ? Array.from({length:activeSession().weeks},(_,i)=>i+1) : [curWeek];
         assessmentRowsHTML = weeksToShow.map(w=>{
           const v = (sub.weeklyScores[id]||{})['w'+w];
           return `<tr><td>Week ${w}${w===curWeek?' (current)':''}</td>
@@ -1965,7 +2264,7 @@ function renderGradebook(){
   const subjObj = subjectOf(cls, view.subject);
   const canEdit = session.role==='Admin' || subjObj.teacher===session.username;
   const roster = studentsOf(cls.id);
-  const weeks = DB.term?.weeks || 12;
+  const weeks = activeSession().weeks;
   const curWeek = currentTermWeek();
   const isAdminUser = session.role==='Admin';
   if(!isAdminUser){ gbWeek = curWeek; }
@@ -2169,6 +2468,211 @@ async function markAttendance(classId, date, studentId, status){
 /* ============================================================
    Classes (admin) — full CRUD: classes, subjects, teacher assignment
 ============================================================ */
+/* ============================================================
+   Timetable — school-wide periods/breaks, per-class subject
+   assignment per day, bulk import, and a printable grid.
+============================================================ */
+const TIMETABLE_DAYS = ['Monday','Tuesday','Wednesday','Thursday','Friday'];
+let ttSelectedClass = null;
+let ttSelectedLevel = 'JHS';
+/* Primary and JHS run on separate daily schedules, so every timetable lookup goes through this
+   instead of touching DB.timetableSlots directly. */
+function timetableSlotsFor(level){
+  return ((DB.timetableSlots && DB.timetableSlots[level==='Primary'?'Primary':'JHS']) || []).slice().sort((a,b)=> a.start.localeCompare(b.start));
+}
+
+function renderTimetable(){
+  if(!DB.classes.find(c=>c.id===ttSelectedClass && c.level===ttSelectedLevel)){
+    ttSelectedClass = DB.classes.find(c=>c.level===ttSelectedLevel)?.id || null;
+  }
+  const slots = timetableSlotsFor(ttSelectedLevel);
+  const cls = ttSelectedClass ? classOf(ttSelectedClass) : null;
+  const classTT = cls ? (DB.timetable[cls.id] || {}) : {};
+  const levelClasses = DB.classes.filter(c=>c.level===ttSelectedLevel);
+
+  return `
+    <div class="topbar"><div><div class="eyebrow">Administration</div><h1>Timetable</h1></div></div>
+
+    <div class="ward-switch">
+      <button class="${ttSelectedLevel==='JHS'?'active':''}" style="padding:6px 16px;" onclick="ttSelectedLevel='JHS'; ttSelectedClass=null; render()">JHS</button>
+      <button class="${ttSelectedLevel==='Primary'?'active':''}" style="padding:6px 16px;" onclick="ttSelectedLevel='Primary'; ttSelectedClass=null; render()">Primary</button>
+    </div>
+
+    <div class="panel"><div class="panel-head"><h3>Step 1 — Daily periods &amp; break times (${ttSelectedLevel})</h3></div>
+      <div class="panel-body" style="padding-top:10px;padding-bottom:16px;">
+        <p style="margin:0 0 10px;font-size:13px;color:var(--slate);">These apply to every ${ttSelectedLevel} class. Primary and JHS keep their own separate schedules — add every period and break in order, from the first period of the day to the last.</p>
+        ${!slots.length ? '<p style="margin:0 0 10px;font-size:13px;color:var(--slate);">No periods added yet — add the first one below.</p>' : `
+        <table class="reg">
+          <thead><tr><th>Start</th><th>End</th><th>Label</th><th>Type</th><th></th></tr></thead>
+          <tbody>
+            ${slots.map(s=>`<tr>
+              <td class="mono">${s.start}</td><td class="mono">${s.end}</td><td>${s.label}</td>
+              <td>${s.isBreak ? '<span class="badge-unassigned" style="background:var(--brass-soft);color:var(--brass);">Break</span>' : 'Lesson'}</td>
+              <td><button class="btn-danger" onclick="removeTimetableSlot('${s.id}')">Remove</button></td>
+            </tr>`).join('')}
+          </tbody>
+        </table>`}
+        <div class="inline-form" style="margin-top:12px;">
+          <input type="time" id="new-slot-start" style="width:120px;">
+          <input type="time" id="new-slot-end" style="width:120px;">
+          <input type="text" id="new-slot-label" placeholder="e.g. Period 5 or Lunch" style="flex:1;min-width:140px;">
+          <label style="display:flex;align-items:center;gap:6px;font-size:12.5px;"><input type="checkbox" id="new-slot-break"> This is a break</label>
+          <button class="btn-small brass" onclick="addTimetableSlot()">Add</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel"><div class="panel-head"><h3>Step 2 — Subjects per day</h3></div>
+      <div class="panel-body" style="padding-top:10px;padding-bottom:16px;">
+        <div class="toolbar" style="margin-bottom:14px;">
+          ${levelClasses.length ? `<select onchange="ttSelectedClass=this.value; render()">
+            ${levelClasses.map(c=>`<option value="${c.id}" ${c.id===ttSelectedClass?'selected':''}>${c.name}</option>`).join('')}
+          </select>` : ''}
+        </div>
+        ${!cls ? `<p style="color:var(--slate);font-size:13px;">Add a ${ttSelectedLevel} class first, from the Classes page.</p>` : (!slots.length ? '<p style="color:var(--slate);font-size:13px;">Add your periods and breaks in Step 1 first.</p>' : `
+        <div style="overflow-x:auto;">
+        <table class="reg">
+          <thead><tr><th>Time</th>${TIMETABLE_DAYS.map(d=>`<th>${d}</th>`).join('')}</tr></thead>
+          <tbody>
+            ${slots.map(s=>`<tr>
+              <td class="mono" style="white-space:nowrap;">${s.label}<br><span style="font-size:10px;color:var(--slate);">${s.start}–${s.end}</span></td>
+              ${TIMETABLE_DAYS.map(d=>{
+                if(s.isBreak) return `<td style="background:var(--paper);text-align:center;font-size:11px;color:var(--slate);">${s.label}</td>`;
+                const current = (classTT[d]||{})[s.id] || '';
+                return `<td><select onchange="setTimetableCell('${cls.id}','${d}','${s.id}',this.value)">
+                  <option value="">—</option>
+                  ${cls.subjects.map(sub=>`<option value="${sub.name}" ${current===sub.name?'selected':''}>${sub.name}</option>`).join('')}
+                </select></td>`;
+              }).join('')}
+            </tr>`).join('')}
+          </tbody>
+        </table>
+        </div>`)}
+      </div>
+    </div>
+
+    <div class="crud-box">
+      <h4>Bulk feed subjects into the timetable</h4>
+      <p style="margin:0 0 10px;font-size:12.5px;color:var(--slate);">Paste one entry per line as <span class="mono">Class, Day, Period label, Subject</span> (period label must match one you added in Step 1, e.g. "Period 1"; day must be Monday–Friday) — or upload an Excel/CSV file with columns <span class="mono">Class, Day, Period, Subject</span>. Works across multiple classes and days at once.</p>
+      <textarea id="bulk-tt-text" rows="4" placeholder="Form 1A, Monday, Period 1, Mathematics&#10;Form 1A, Monday, Period 2, English&#10;Form 1A, Tuesday, Period 1, Integrated Science" style="width:100%;padding:9px 10px;border-radius:8px;border:1.5px solid var(--line);font-family:'IBM Plex Mono',monospace;font-size:12.5px;"></textarea>
+      <div class="inline-form" style="margin-top:8px;">
+        <button class="btn-small brass" onclick="bulkAddTimetableFromText()">Add pasted entries</button>
+        <span style="color:var(--slate);font-size:12.5px;">or</span>
+        <input type="file" id="bulk-tt-file" accept=".xlsx,.xls,.csv" style="max-width:220px;">
+        <button class="btn-small" onclick="bulkAddTimetableFromFile()">Import from file</button>
+      </div>
+    </div>
+
+    <div class="panel"><div class="panel-head"><h3>Step 3 — View &amp; print</h3>${cls ? `<button class="btn-ghost" onclick="printTimetable('${cls.id}')">Print / Download</button>` : ''}</div>
+      <div class="panel-body" style="padding-top:10px;padding-bottom:16px;overflow-x:auto;">
+        ${cls && slots.length ? buildTimetableGridHTML(cls.id) : '<p style="margin:0;font-size:13px;color:var(--slate);">Complete steps 1 and 2 to see the timetable here.</p>'}
+      </div>
+    </div>
+  `;
+}
+function buildTimetableGridHTML(classId){
+  const slots = timetableSlotsFor(classOf(classId).level||'JHS');
+  const classTT = DB.timetable[classId] || {};
+  return `
+    <table class="reg">
+      <thead><tr><th>Time</th>${TIMETABLE_DAYS.map(d=>`<th>${d}</th>`).join('')}</tr></thead>
+      <tbody>
+        ${slots.map(s=>`<tr>
+          <td class="mono" style="white-space:nowrap;">${s.label}<br><span style="font-size:10px;color:var(--slate);">${s.start}–${s.end}</span></td>
+          ${TIMETABLE_DAYS.map(d=>{
+            if(s.isBreak) return `<td style="background:var(--paper);text-align:center;font-weight:600;">${s.label}</td>`;
+            const val = (classTT[d]||{})[s.id] || '—';
+            return `<td style="text-align:center;">${val}</td>`;
+          }).join('')}
+        </tr>`).join('')}
+      </tbody>
+    </table>
+  `;
+}
+function buildTimetableHTML(classId){
+  const cls = classOf(classId);
+  return `
+    <div class="rc-page">
+      <div class="rc-head">
+        <div class="crest">${DB.school.crest ? `<img src="${DB.school.crest}">` : `<span>${schoolInitials(DB.school.name)}</span>`}</div>
+        <div><h2>${DB.school.name}</h2><p>Class Timetable — ${cls.name}</p></div>
+      </div>
+      ${buildTimetableGridHTML(classId)}
+    </div>
+  `;
+}
+function printTimetable(classId){
+  document.getElementById('print-area').innerHTML = buildTimetableHTML(classId);
+  window.print();
+}
+async function addTimetableSlot(){
+  const start = document.getElementById('new-slot-start').value;
+  const end = document.getElementById('new-slot-end').value;
+  const label = document.getElementById('new-slot-label').value.trim();
+  const isBreak = document.getElementById('new-slot-break').checked;
+  if(!start || !end || !label) return;
+  DB.timetableSlots[ttSelectedLevel].push({ id:'slot'+Date.now(), start, end, label, isBreak });
+  await saveDB();
+  render();
+}
+async function removeTimetableSlot(id){
+  DB.timetableSlots[ttSelectedLevel] = DB.timetableSlots[ttSelectedLevel].filter(s=>s.id!==id);
+  const levelClassIds = new Set(DB.classes.filter(c=>c.level===ttSelectedLevel).map(c=>c.id));
+  Object.entries(DB.timetable).forEach(([classId,classTT])=>{
+    if(!levelClassIds.has(classId)) return;
+    Object.values(classTT).forEach(dayObj=>{ delete dayObj[id]; });
+  });
+  await saveDB();
+  render();
+}
+async function setTimetableCell(classId, day, slotId, subject){
+  if(!DB.timetable[classId]) DB.timetable[classId] = {};
+  if(!DB.timetable[classId][day]) DB.timetable[classId][day] = {};
+  if(subject) DB.timetable[classId][day][slotId] = subject;
+  else delete DB.timetable[classId][day][slotId];
+  await saveDB();
+  render();
+}
+async function processTimetableRows(rows){
+  let added=0; const skipped=[];
+  rows.forEach((r,i)=>{
+    const className = fieldVal(r,'class','classname','class name','form');
+    const day = fieldVal(r,'day');
+    const periodLabel = fieldVal(r,'period','period label','slot','time');
+    const subject = fieldVal(r,'subject','subject name');
+    if(!className || !day || !periodLabel || !subject){ skipped.push(`Row ${i+1}: missing a required field`); return; }
+    const cls = findClassByName(className);
+    if(!cls){ skipped.push(`Row ${i+1}: class "${className}" not found`); return; }
+    const dayMatch = TIMETABLE_DAYS.find(d=>d.toLowerCase()===day.trim().toLowerCase());
+    if(!dayMatch){ skipped.push(`Row ${i+1}: "${day}" isn't a valid day (use Monday–Friday)`); return; }
+    const slot = timetableSlotsFor(cls.level||'JHS').find(sl=>sl.label.toLowerCase()===periodLabel.trim().toLowerCase());
+    if(!slot){ skipped.push(`Row ${i+1}: period "${periodLabel}" not found in ${cls.level||'JHS'}'s Step 1 schedule — add it there first`); return; }
+    if(slot.isBreak){ skipped.push(`Row ${i+1}: "${periodLabel}" is marked as a break, can't assign a subject to it`); return; }
+    if(!cls.subjects.some(sub=>sub.name.toLowerCase()===subject.trim().toLowerCase())){ skipped.push(`Row ${i+1}: "${subject}" isn't a subject in ${cls.name}`); return; }
+    if(!DB.timetable[cls.id]) DB.timetable[cls.id] = {};
+    if(!DB.timetable[cls.id][dayMatch]) DB.timetable[cls.id][dayMatch] = {};
+    DB.timetable[cls.id][dayMatch][slot.id] = subject.trim();
+    added++;
+  });
+  await saveDB();
+  render();
+  alert(`Added ${added} timetable entr${added===1?'y':'ies'}.` + (skipped.length ? `\n\nNotes:\n`+skipped.join('\n') : ''));
+}
+async function bulkAddTimetableFromText(){
+  const text = document.getElementById('bulk-tt-text').value;
+  if(!text.trim()) return;
+  const rows = parsePastedRows(text, ['class','day','period','subject']);
+  await processTimetableRows(rows);
+}
+async function bulkAddTimetableFromFile(){
+  const file = document.getElementById('bulk-tt-file').files[0];
+  if(!file){ alert('Choose a file first.'); return; }
+  try{
+    const rows = await readSpreadsheetRows(file);
+    await processTimetableRows(rows);
+  }catch(e){ alert('Could not read that file — please check it\'s a valid Excel or CSV file.'); }
+}
+
 function renderClasses(){
   const teachers = DB.users.filter(u=>u.role==='Teacher');
   return `
@@ -2177,7 +2681,11 @@ function renderClasses(){
     <div class="crud-box">
       <h4>Add a new class</h4>
       <div class="inline-form">
-        <input type="text" id="new-class-name" placeholder="e.g. Form 4A" style="flex:1;min-width:160px;">
+        <input type="text" id="new-class-name" placeholder="e.g. Form 4A or Primary 5" style="flex:1;min-width:160px;">
+        <select id="new-class-level">
+          <option value="JHS">JHS</option>
+          <option value="Primary">Primary</option>
+        </select>
         <button class="btn-small brass" onclick="addClass()">Add class</button>
       </div>
     </div>
@@ -2201,9 +2709,14 @@ function renderClasses(){
         <div class="class-card-head">
           <div>
             <div class="name">${c.name}</div>
-            <div style="font-size:12px;color:var(--slate);">${roster.length} student${roster.length===1?'':'s'} · ${c.subjects.length} subject${c.subjects.length===1?'':'s'}</div>
+            <div style="font-size:12px;color:var(--slate);">${roster.length} student${roster.length===1?'':'s'} · ${c.subjects.length} subject${c.subjects.length===1?'':'s'} · ${c.level||'JHS'}</div>
           </div>
           <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+            <label style="font-size:12px;color:var(--slate);font-weight:600;">Level</label>
+            <select onchange="setClassLevel('${c.id}', this.value)">
+              <option value="JHS" ${(c.level||'JHS')==='JHS'?'selected':''}>JHS</option>
+              <option value="Primary" ${c.level==='Primary'?'selected':''}>Primary</option>
+            </select>
             <label style="font-size:12px;color:var(--slate);font-weight:600;">Class teacher</label>
             <select onchange="assignClassTeacher('${c.id}', this.value)">
               <option value="">— Unassigned —</option>
@@ -2244,11 +2757,17 @@ function renderClasses(){
 async function addClass(){
   const nameEl = document.getElementById('new-class-name');
   const name = nameEl.value.trim();
+  const level = document.getElementById('new-class-level').value || 'JHS';
   if(!name) return;
   const id = 'c'+Date.now();
-  DB.classes.push({ id, name, classTeacher:null, subjects:[] });
+  DB.classes.push({ id, name, level, classTeacher:null, subjects:[] });
   DB.gradebook[id] = {};
   DB.attendance[id] = {};
+  await saveDB();
+  render();
+}
+async function setClassLevel(classId, level){
+  classOf(classId).level = level;
   await saveDB();
   render();
 }
@@ -2566,7 +3085,7 @@ function renderParentPortal(){
   const arrears = Number(s.arrears)||0;
   const payable = billTotal + arrears;
   const termLabel = TERM_NAMES[(DB.term?.termNumber||1)-1] || '1st Term';
-  const weeks = DB.term?.weeks || 12;
+  const weeks = activeSession().weeks;
   const curWeek = Math.min(weeks, currentTermWeek());
   const termPct = Math.round((curWeek/weeks)*100);
   const posPct = pos ? Math.round(((pos.of - pos.rank + 1)/pos.of)*100) : 0;
@@ -2644,6 +3163,8 @@ function renderParentPortal(){
 
 function renderStaff(){
   const term = DB.term || { startDate: todayStr(0), weeks:12, termNumber:1 };
+  const vacation = DB.vacation || { startDate: todayStr(0), weeks:4 };
+  const vacationEndDate = addDays(vacation.startDate, vacation.weeks*7);
   const termEndDate = todayStr(term.weeks*7);
   const staffAndAdmins = DB.users.filter(u=>u.role!=='Parent');
   return `
@@ -2691,6 +3212,20 @@ function renderStaff(){
           </div>
           <button class="btn-danger" onclick="resetAttendance()">Reset attendance</button>
         </div>
+      </div>
+    </div>
+
+    <div class="panel"><div class="panel-head"><h3>Vacation period</h3></div>
+      <div class="panel-body" style="padding-top:14px;padding-bottom:16px;">
+        <p style="margin:0 0 10px;font-size:13px;color:var(--slate);">Sets the date range for vacation classes — capped at 4 weeks (about one month). This only takes effect once System status above is switched to "Vacation classes in session," and governs attendance and weekly SBA weeks during that period instead of the regular term dates.</p>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;align-items:end;">
+          <div><label style="display:block;font-size:11.5px;color:var(--slate);font-weight:600;margin-bottom:5px;">Vacation start date</label>
+            <input type="date" id="vacation-start" value="${vacation.startDate}"></div>
+          <div><label style="display:block;font-size:11.5px;color:var(--slate);font-weight:600;margin-bottom:5px;">Number of weeks (max 4)</label>
+            <input type="number" id="vacation-weeks" min="1" max="4" value="${vacation.weeks}"></div>
+          <button class="btn-small brass" onclick="saveVacationSetup()">Save vacation period</button>
+        </div>
+        <p style="margin:10px 0 0;font-size:12px;color:var(--slate);">Ends around <span class="mono">${fmtDate(vacationEndDate)}</span>.</p>
       </div>
     </div>
 
@@ -2819,6 +3354,14 @@ async function saveTermSetup(){
 }
 async function setExamDeclared(on){
   DB.term.examDeclared = !!on;
+  await saveDB();
+  render();
+}
+async function saveVacationSetup(){
+  const startDate = document.getElementById('vacation-start').value;
+  const weeks = Math.min(4, Math.max(1, Number(document.getElementById('vacation-weeks').value)||4));
+  if(!startDate) return;
+  DB.vacation = { startDate, weeks };
   await saveDB();
   render();
 }
