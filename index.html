@@ -862,6 +862,37 @@ function fmtDateTime(iso){
   const timePart = d.toLocaleTimeString('en-GB', { hour:'2-digit', minute:'2-digit' });
   return datePart + ', ' + timePart;
 }
+/* Bills are split by level: Lower Primary, Upper Primary, and JHS each keep their own set of
+   bill items, since fees typically differ across these groups. */
+function billCategoryForClass(cls){
+  if(!cls) return 'JHS';
+  if(cls.level==='Primary') return cls.primaryTier==='Upper' ? 'UpperPrimary' : 'LowerPrimary';
+  return 'JHS';
+}
+function billItemsForClass(cls){
+  const cat = billCategoryForClass(cls);
+  return (DB.billItems && DB.billItems[cat]) || [];
+}
+function billTotalForClass(cls){
+  return billItemsForClass(cls).reduce((sum,it)=>sum+(Number(it.price)||0), 0);
+}
+/* Which "bill notice" window we're currently in for the active term — used to automatically
+   surface the bill to parents at the beginning and again at the end of each term. */
+function currentBillNoticePhase(){
+  const t = DB.term;
+  if(!t || !t.startDate || !t.weeks) return null;
+  const today = todayStr(0);
+  const start = t.startDate;
+  const firstWeekEnd = addDays(start, 6);
+  if(today >= start && today <= firstWeekEnd) return 'start';
+  if(termHasEnded()) return 'end';
+  return null;
+}
+function currentBillNoticeKey(){
+  const phase = currentBillNoticePhase();
+  if(!phase) return null;
+  return 't'+(DB.term?.termNumber||1)+'-'+phase;
+}
 
 /* ============================================================
    Term week tracking — used to lock weekly SBA entry to "this
@@ -998,6 +1029,8 @@ const SBA_CATEGORIES = [
   {id:'cat4', name:'CAT 4 (Primary Test)', max:10},
 ];
 const TERM_NAMES = ['1st Term','2nd Term','3rd Term'];
+const BILL_CATEGORIES = ['LowerPrimary','UpperPrimary','JHS'];
+const BILL_CATEGORY_LABELS = { LowerPrimary:'Lower Primary', UpperPrimary:'Upper Primary', JHS:'JHS' };
 
 function seedDB(){
   const classes = [
@@ -1096,7 +1129,7 @@ function seedDB(){
     vacation: { JHS: [], Primary: [] },
   };
 
-  return { classes, students, gradebook, attendance, users, term, vacation, headTeacherUsername: 'admin', assistantHeadTeacherUsername: null, weeklyMeta: {}, attendanceMeta: {}, billItems: [], school: { name:'Clyde Academy', crest:null }, systemStatus: 'term', presence: {}, timetableSlots, timetable: { term: {}, vacation: {} } };
+  return { classes, students, gradebook, attendance, users, term, vacation, headTeacherUsername: 'admin', assistantHeadTeacherUsername: null, weeklyMeta: {}, attendanceMeta: {}, billItems: { LowerPrimary:[], UpperPrimary:[], JHS:[] }, school: { name:'Clyde Academy', crest:null }, systemStatus: 'term', presence: {}, timetableSlots, timetable: { term: {}, vacation: {} } };
 }
 
 function migrateDB(){
@@ -1108,7 +1141,12 @@ function migrateDB(){
   if(!DB.attendanceMeta){ DB.attendanceMeta = {}; changed = true; }
   if(DB.headTeacherUsername === undefined){ DB.headTeacherUsername = null; changed = true; }
   if(DB.assistantHeadTeacherUsername === undefined){ DB.assistantHeadTeacherUsername = null; changed = true; }
-  if(!DB.billItems){ DB.billItems = []; changed = true; }
+  if(!DB.billItems || Array.isArray(DB.billItems)){
+    const legacy = Array.isArray(DB.billItems) ? DB.billItems : [];
+    DB.billItems = { LowerPrimary:[], UpperPrimary:[], JHS: legacy.slice() };
+    changed = true;
+  }
+  BILL_CATEGORIES.forEach(cat=>{ if(!DB.billItems[cat]){ DB.billItems[cat] = []; changed = true; } });
   if(!DB.presence){ DB.presence = {}; changed = true; }
   if(!DB.vacation){ DB.vacation = { startDate: todayStr(0), weeks: 4 }; changed = true; }
   if(!DB.timetableSlots){
@@ -1181,6 +1219,7 @@ function migrateDB(){
     if(s.remark===undefined){ s.remark = ''; changed = true; }
     if(s.arrears===undefined){ s.arrears = 0; changed = true; }
     if(s.payments===undefined){ s.payments = []; changed = true; }
+    if(s.billNoticesSeen===undefined){ s.billNoticesSeen = {}; changed = true; }
   });
   // Restructure each subject's gradebook to the SBA model (4 CATs + weekly toggle + exam score)
   Object.values(DB.gradebook).forEach(subjMap=>{
@@ -1230,6 +1269,7 @@ function migrateDB(){
     }
     if(c.classTeacher===undefined){ c.classTeacher = null; changed = true; }
     if(c.level===undefined){ c.level = 'JHS'; changed = true; }
+    if(c.level==='Primary' && (c.primaryTier===undefined || c.primaryTier===null)){ c.primaryTier = 'Lower'; changed = true; }
     if(!DB.gradebook[c.id]){ DB.gradebook[c.id] = {}; changed = true; }
     c.subjects.forEach(subj=>{
       if(subj.type===undefined){ subj.type = 'core'; changed = true; }
@@ -2842,9 +2882,13 @@ function renderClasses(){
       <h4>Add a new class</h4>
       <div class="inline-form">
         <input type="text" id="new-class-name" placeholder="e.g. Form 4A or Primary 5" style="flex:1;min-width:160px;">
-        <select id="new-class-level">
+        <select id="new-class-level" onchange="document.getElementById('new-class-tier').style.display = this.value==='Primary' ? '' : 'none';">
           <option value="JHS">JHS</option>
           <option value="Primary">Primary</option>
+        </select>
+        <select id="new-class-tier" style="display:none;">
+          <option value="Lower">Lower Primary</option>
+          <option value="Upper">Upper Primary</option>
         </select>
         <button class="btn-small brass" onclick="addClass()">Add class</button>
       </div>
@@ -2869,7 +2913,7 @@ function renderClasses(){
         <div class="class-card-head">
           <div>
             <div class="name">${c.name}</div>
-            <div style="font-size:12px;color:var(--slate);">${roster.length} student${roster.length===1?'':'s'} · ${c.subjects.length} subject${c.subjects.length===1?'':'s'} · ${c.level||'JHS'}</div>
+            <div style="font-size:12px;color:var(--slate);">${roster.length} student${roster.length===1?'':'s'} · ${c.subjects.length} subject${c.subjects.length===1?'':'s'} · ${c.level==='Primary' ? (c.primaryTier==='Upper'?'Upper Primary':'Lower Primary') : 'JHS'}</div>
           </div>
           <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
             <label style="font-size:12px;color:var(--slate);font-weight:600;">Level</label>
@@ -2877,6 +2921,12 @@ function renderClasses(){
               <option value="JHS" ${(c.level||'JHS')==='JHS'?'selected':''}>JHS</option>
               <option value="Primary" ${c.level==='Primary'?'selected':''}>Primary</option>
             </select>
+            ${c.level==='Primary' ? `
+            <label style="font-size:12px;color:var(--slate);font-weight:600;">Tier</label>
+            <select onchange="setClassPrimaryTier('${c.id}', this.value)">
+              <option value="Lower" ${c.primaryTier!=='Upper'?'selected':''}>Lower Primary</option>
+              <option value="Upper" ${c.primaryTier==='Upper'?'selected':''}>Upper Primary</option>
+            </select>` : ''}
             <label style="font-size:12px;color:var(--slate);font-weight:600;">Class teacher</label>
             <select onchange="assignClassTeacher('${c.id}', this.value)">
               <option value="">— Unassigned —</option>
@@ -2918,16 +2968,25 @@ async function addClass(){
   const nameEl = document.getElementById('new-class-name');
   const name = nameEl.value.trim();
   const level = document.getElementById('new-class-level').value || 'JHS';
+  const tier = document.getElementById('new-class-tier').value || 'Lower';
   if(!name) return;
   const id = 'c'+Date.now();
-  DB.classes.push({ id, name, level, classTeacher:null, subjects:[] });
+  DB.classes.push({ id, name, level, primaryTier: level==='Primary' ? tier : undefined, classTeacher:null, subjects:[] });
   DB.gradebook[id] = {};
   DB.attendance[id] = {};
   await saveDB();
   render();
 }
 async function setClassLevel(classId, level){
-  classOf(classId).level = level;
+  const c = classOf(classId);
+  c.level = level;
+  if(level==='Primary' && !c.primaryTier) c.primaryTier = 'Lower';
+  await saveDB();
+  render();
+}
+async function setClassPrimaryTier(classId, tier){
+  const c = classOf(classId);
+  c.primaryTier = tier==='Upper' ? 'Upper' : 'Lower';
   await saveDB();
   render();
 }
@@ -3147,7 +3206,10 @@ function renderActivity(){
    Bill — restricted to the head teacher and assistant head
    teacher only. They set line items (name + price) that print
    on every report card, and can record each student's arrears.
+   Bill items are kept separately per level (JHS / Upper Primary
+   / Lower Primary) since fees usually differ across them.
 ============================================================ */
+let billSelectedCategory = 'JHS';
 function renderBill(){
   if(!isBillAccess()){
     return `
@@ -3155,22 +3217,30 @@ function renderBill(){
       <div class="empty">Only the assistant head teacher can access the bill.</div>
     `;
   }
-  const items = DB.billItems || [];
+  if(!BILL_CATEGORIES.includes(billSelectedCategory)) billSelectedCategory = 'JHS';
+  const cat = billSelectedCategory;
+  const items = (DB.billItems && DB.billItems[cat]) || [];
   const total = items.reduce((sum,it)=>sum+(Number(it.price)||0), 0);
-  const allStudents = DB.classes.flatMap(c=> studentsOf(c.id).map(s=>({ ...s, className:c.name })));
+  const categoryStudents = DB.classes
+    .filter(c=> billCategoryForClass(c)===cat)
+    .flatMap(c=> studentsOf(c.id).map(s=>({ ...s, className:c.name, classObj:c })));
   return `
     <div class="topbar"><div><div class="eyebrow">Assistant head teacher only</div><h1>Bill</h1></div></div>
 
-    <div class="panel"><div class="panel-head"><h3>Bill items (this term)</h3></div>
+    <div class="tab-row" style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap;">
+      ${BILL_CATEGORIES.map(c=>`<button class="${c===cat?'active':''}" style="padding:8px 18px;border-radius:24px;border:1.5px solid var(--line);background:${c===cat?'var(--brass-soft)':'var(--white)'};border-color:${c===cat?'var(--brass)':'var(--line)'};font-size:13px;font-weight:600;color:var(--ink);" onclick="billSelectedCategory='${c}'; render()">${BILL_CATEGORY_LABELS[c]}</button>`).join('')}
+    </div>
+
+    <div class="panel"><div class="panel-head"><h3>${BILL_CATEGORY_LABELS[cat]} bill items (this term)</h3></div>
       <div class="panel-body" style="padding-top:10px;">
-        ${!items.length ? '<p style="margin:0 0 12px;font-size:13px;color:var(--slate);">No bill items yet — add the first one below.</p>' : `
+        ${!items.length ? `<p style="margin:0 0 12px;font-size:13px;color:var(--slate);">No ${BILL_CATEGORY_LABELS[cat]} bill items yet — add the first one below.</p>` : `
         <table class="reg">
           <thead><tr><th>Item</th><th>Price (GHS)</th><th></th></tr></thead>
           <tbody>
             ${items.map(it=>`<tr>
               <td>${it.name}</td>
               <td class="mono">${(Number(it.price)||0).toFixed(2)}</td>
-              <td><button class="btn-danger" onclick="removeBillItem('${it.id}')">Remove</button></td>
+              <td><button class="btn-danger" onclick="removeBillItem('${cat}','${it.id}')">Remove</button></td>
             </tr>`).join('')}
             <tr style="font-weight:700;"><td>Total</td><td class="mono">${total.toFixed(2)}</td><td></td></tr>
           </tbody>
@@ -3180,31 +3250,33 @@ function renderBill(){
           <input type="number" id="new-bill-price" placeholder="Price (GHS)" min="0" step="0.01" style="width:140px;">
           <button class="btn-small brass" onclick="addBillItem()">Add item</button>
         </div>
-        <p style="margin:12px 0 0;font-size:12px;color:var(--slate);">These items print on every student's report card under "Fees / Bill", along with their own arrears below.</p>
+        <p style="margin:12px 0 0;font-size:12px;color:var(--slate);">These items print on every ${BILL_CATEGORY_LABELS[cat]} student's report card under "Fees / Bill", along with their own arrears below. Each level keeps its own separate bill.</p>
       </div>
     </div>
 
-    <div class="panel"><div class="panel-head"><h3>Student arrears (amount owed from before this term)</h3></div>
+    <div class="panel"><div class="panel-head"><h3>${BILL_CATEGORY_LABELS[cat]} student arrears (amount owed from before this term)</h3></div>
       <div class="panel-body" style="padding-top:10px;">
+        ${!categoryStudents.length ? `<p style="margin:0;font-size:13px;color:var(--slate);">No students in ${BILL_CATEGORY_LABELS[cat]} yet.</p>` : `
         <table class="reg">
           <thead><tr><th>Student</th><th>Class</th><th>Arrears (GHS)</th></tr></thead>
           <tbody>
-            ${allStudents.map(s=>`<tr>
+            ${categoryStudents.map(s=>`<tr>
               <td>${s.name}</td><td>${s.className}</td>
               <td><input class="score-input" type="number" min="0" step="0.01" value="${s.arrears||0}" onchange="updateStudentArrears('${s.id}',this.value)"></td>
             </tr>`).join('')}
           </tbody>
-        </table>
+        </table>`}
       </div>
     </div>
 
-    <div class="panel"><div class="panel-head"><h3>Fee payments &amp; receipts</h3></div>
+    <div class="panel"><div class="panel-head"><h3>${BILL_CATEGORY_LABELS[cat]} fee payments &amp; receipts</h3></div>
       <div class="panel-body" style="padding-top:10px;">
-        <p style="margin:0 0 12px;font-size:12px;color:var(--slate);">Total payable is the bill items total plus arrears. Enter the amount paid by the student's parent (in GHS) and click Record — the balance updates automatically and the date &amp; time of payment is logged. You can then print a receipt.</p>
+        <p style="margin:0 0 12px;font-size:12px;color:var(--slate);">Total payable is this level's bill items total plus arrears. Enter the amount paid by the student's parent (in GHS) and click Record — the balance updates automatically and the date &amp; time of payment is logged. You can then print a receipt.</p>
+        ${!categoryStudents.length ? '' : `
         <table class="reg">
           <thead><tr><th>Student</th><th>Class</th><th>Total payable</th><th>Paid so far</th><th>Balance</th><th>Record payment (GHS)</th><th>Receipt</th></tr></thead>
           <tbody>
-            ${allStudents.map(s=>{
+            ${categoryStudents.map(s=>{
               const arrears = Number(s.arrears)||0;
               const payable = total + arrears;
               const payments = s.payments || [];
@@ -3231,7 +3303,7 @@ function renderBill(){
               </tr>`;
             }).join('')}
           </tbody>
-        </table>
+        </table>`}
       </div>
     </div>
   `;
@@ -3240,12 +3312,15 @@ async function addBillItem(){
   const name = document.getElementById('new-bill-name').value.trim();
   const price = Number(document.getElementById('new-bill-price').value);
   if(!name || !price || price<0) return;
-  DB.billItems.push({ id:'bill'+Date.now(), name, price });
+  if(!BILL_CATEGORIES.includes(billSelectedCategory)) billSelectedCategory = 'JHS';
+  if(!DB.billItems[billSelectedCategory]) DB.billItems[billSelectedCategory] = [];
+  DB.billItems[billSelectedCategory].push({ id:'bill'+Date.now(), name, price });
   await saveDB();
   render();
 }
-async function removeBillItem(id){
-  DB.billItems = DB.billItems.filter(it=>it.id!==id);
+async function removeBillItem(category, id){
+  if(!DB.billItems[category]) return;
+  DB.billItems[category] = DB.billItems[category].filter(it=>it.id!==id);
   await saveDB();
   render();
 }
@@ -3262,7 +3337,7 @@ async function recordFeePayment(studentId){
   const amount = Number(input.value);
   if(!amount || amount <= 0){ alert('Enter a valid amount in GHS.'); return; }
 
-  const billTotal = (DB.billItems||[]).reduce((sum,it)=>sum+(Number(it.price)||0), 0);
+  const billTotal = billTotalForClass(classOf(s.classId));
   const arrears = Number(s.arrears)||0;
   const payable = billTotal + arrears;
   const alreadyPaid = (s.payments||[]).reduce((sum,p)=>sum+(Number(p.amount)||0), 0);
@@ -3295,7 +3370,7 @@ function buildFeeReceiptHTML(studentId, paymentId){
   const cls = classOf(s.classId);
   const payment = (s.payments||[]).find(p=>p.id===paymentId);
   if(!payment) return '';
-  const billTotal = (DB.billItems||[]).reduce((sum,it)=>sum+(Number(it.price)||0), 0);
+  const billTotal = billTotalForClass(cls);
   const arrears = Number(s.arrears)||0;
   const payable = billTotal + arrears;
   const paidUpToThis = (s.payments||[])
@@ -3351,6 +3426,14 @@ async function acknowledgeFeePayment(studentId, paymentId){
   await saveDB();
   render();
 }
+async function dismissBillNotice(studentId, noticeKey){
+  const s = studentById(studentId);
+  if(!s || !noticeKey) return;
+  if(!s.billNoticesSeen) s.billNoticesSeen = {};
+  s.billNoticesSeen[noticeKey] = true;
+  await saveDB();
+  render();
+}
 
 /* ============================================================
    Parent Portal — read-only. Shows attendance, the teacher's
@@ -3375,12 +3458,15 @@ function renderParentPortal(){
   const positionReady = termHasEnded() && examScoresEnteredFor(s.id);
   const pos = positionReady ? classPosition(s.id) : null;
   const classTeacherUser = cls.classTeacher ? userByUsername(cls.classTeacher) : null;
-  const billTotal = (DB.billItems||[]).reduce((sum,it)=>sum+(Number(it.price)||0), 0);
+  const billTotal = billTotalForClass(cls);
   const arrears = Number(s.arrears)||0;
   const payable = billTotal + arrears;
   const paidSoFar = (s.payments||[]).reduce((sum,p)=>sum+(Number(p.amount)||0), 0);
   const balanceDue = Math.max(0, payable - paidSoFar);
   const pendingAcks = (s.payments||[]).filter(p=>p.receiptPrinted && !p.parentAcknowledged);
+  const billNoticePhase = currentBillNoticePhase();
+  const billNoticeKey = currentBillNoticeKey();
+  const showBillNotice = billNoticeKey && !(s.billNoticesSeen && s.billNoticesSeen[billNoticeKey]);
   const termLabel = TERM_NAMES[(DB.term?.termNumber||1)-1] || '1st Term';
   const weeks = activeSession().weeks;
   const curWeek = Math.min(weeks, currentTermWeek());
@@ -3414,6 +3500,20 @@ function renderParentPortal(){
         <div class="bar"><span style="width:${termPct}%"></span></div>
       </div>
     </div>
+
+    ${showBillNotice ? `
+      <div class="fee-alert" style="background:var(--brick-soft);border-color:var(--brick);">
+        <div class="fee-alert-icon">&#128179;</div>
+        <div class="fee-alert-body">
+          <div class="fee-alert-title">${billNoticePhase==='start' ? termLabel+' bill' : termLabel+' — end of term bill'}</div>
+          <div class="fee-alert-sub">
+            ${billNoticePhase==='start' ? `Here is ${s.name.split(' ')[0]}'s bill for ${termLabel}: ` : `Here is ${s.name.split(' ')[0]}'s outstanding bill as ${termLabel} comes to an end: `}
+            Total payable is GHS ${payable.toFixed(2)}${arrears?' (including GHS '+arrears.toFixed(2)+' arrears)':''}, GHS ${paidSoFar.toFixed(2)} has been paid so far, leaving a balance of GHS ${balanceDue.toFixed(2)}.
+          </div>
+        </div>
+        <button class="btn-small brass" onclick="dismissBillNotice('${s.id}','${billNoticeKey}')">Got it</button>
+      </div>
+    ` : ''}
 
     ${pendingAcks.map(p=>`
       <div class="fee-alert">
@@ -3458,9 +3558,9 @@ function renderParentPortal(){
           <div class="fee-amount">GHS ${balanceDue.toFixed(2)}</div>
           <div class="fee-note">${arrears?'Includes GHS '+arrears.toFixed(2)+' arrears from before this term':'This term' + String.fromCharCode(8217) + 's fees'}${paidSoFar?' · GHS '+paidSoFar.toFixed(2)+' paid so far':''}</div>
         </div>
-        ${(DB.billItems||[]).length || arrears || paidSoFar ? `
+        ${billItemsForClass(cls).length || arrears || paidSoFar ? `
         <div style="margin-top:14px;">
-          ${(DB.billItems||[]).map(it=>`<div class="fee-item-row"><span>${it.name}</span><span class="mono">GHS ${(Number(it.price)||0).toFixed(2)}</span></div>`).join('')}
+          ${billItemsForClass(cls).map(it=>`<div class="fee-item-row"><span>${it.name}</span><span class="mono">GHS ${(Number(it.price)||0).toFixed(2)}</span></div>`).join('')}
           ${arrears ? `<div class="fee-item-row"><span>Arrears b/f</span><span class="mono">GHS ${arrears.toFixed(2)}</span></div>` : ''}
           <div class="fee-item-row" style="font-weight:700;border-top:1.5px solid var(--line);"><span>Total payable</span><span class="mono">GHS ${payable.toFixed(2)}</span></div>
           ${paidSoFar ? `<div class="fee-item-row"><span>Paid so far</span><span class="mono">GHS ${paidSoFar.toFixed(2)}</span></div>` : ''}
@@ -3855,7 +3955,7 @@ function buildReportCardHTML(studentId){
   const photoHTML = s.photo
     ? `<img src="${s.photo}" style="width:64px;height:64px;border-radius:50%;object-fit:cover;border:1px solid var(--line);">`
     : `<div class="avatar" style="width:64px;height:64px;background:var(--ink);color:var(--brass-soft);">${s.name.split(' ').map(w=>w[0]).slice(0,2).join('')}</div>`;
-  const billTotal = (DB.billItems||[]).reduce((sum,it)=>sum+(Number(it.price)||0), 0);
+  const billTotal = billTotalForClass(cls);
   const arrears = Number(s.arrears)||0;
   const payable = billTotal + arrears;
   const paidSoFar = (s.payments||[]).reduce((sum,p)=>sum+(Number(p.amount)||0), 0);
@@ -3904,11 +4004,11 @@ function buildReportCardHTML(studentId){
         <div style="font-size:11px;text-transform:uppercase;letter-spacing:0.05em;color:var(--slate);font-weight:600;margin-bottom:4px;">Teacher's remarks</div>
         <div style="font-size:13px;">${s.remark || '—'}</div>
       </div></div>
-      ${(DB.billItems && DB.billItems.length) || arrears ? `
+      ${billItemsForClass(cls).length || arrears ? `
       <table class="rc-table" style="margin-top:0;">
         <thead><tr><th colspan="2">Fees / Bill</th></tr></thead>
         <tbody>
-          ${(DB.billItems||[]).map(it=>`<tr><td>${it.name}</td><td class="mono">GHS ${(Number(it.price)||0).toFixed(2)}</td></tr>`).join('')}
+          ${billItemsForClass(cls).map(it=>`<tr><td>${it.name}</td><td class="mono">GHS ${(Number(it.price)||0).toFixed(2)}</td></tr>`).join('')}
           ${arrears ? `<tr><td>Arrears b/f</td><td class="mono">GHS ${arrears.toFixed(2)}</td></tr>` : ''}
           <tr style="font-weight:700;"><td>Total payable</td><td class="mono">GHS ${payable.toFixed(2)}</td></tr>
           ${paidSoFar ? `<tr><td>Paid so far</td><td class="mono">GHS ${paidSoFar.toFixed(2)}</td></tr>` : ''}
