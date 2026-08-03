@@ -2886,12 +2886,13 @@ function renderClasses(){
           <option value="JHS">JHS</option>
           <option value="Primary">Primary</option>
         </select>
-        <select id="new-class-tier" style="display:none;">
+        <select id="new-class-tier" style="display:none;" title="Only used when Level is Primary">
           <option value="Lower">Lower Primary</option>
           <option value="Upper">Upper Primary</option>
         </select>
         <button class="btn-small brass" onclick="addClass()">Add class</button>
       </div>
+      <p style="margin:8px 0 0;font-size:12px;color:var(--slate);">Choosing Primary as the level reveals a Lower/Upper Primary tier field — this decides which bill applies to the class.</p>
     </div>
 
     <div class="crud-box">
