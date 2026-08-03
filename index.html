@@ -143,6 +143,15 @@
   .fee-item-row{ display:flex; justify-content:space-between; padding:9px 0; border-bottom:1px dashed var(--line); font-size:13px; }
   .fee-item-row:last-child{ border-bottom:none; }
 
+  .fee-alert{
+    display:flex; align-items:center; gap:14px; background:var(--sage-soft); border:1.5px solid var(--sage);
+    border-radius:14px; padding:14px 16px; margin-bottom:16px; flex-wrap:wrap;
+  }
+  .fee-alert-icon{ font-size:24px; flex-shrink:0; }
+  .fee-alert-body{ flex:1; min-width:180px; }
+  .fee-alert-title{ font-weight:700; font-size:13.5px; color:var(--ink); margin-bottom:2px; }
+  .fee-alert-sub{ font-size:12.5px; color:var(--slate); }
+
   /* ---------- Login book animation ---------- */
   .book-scene{ display:flex; justify-content:center; margin-bottom:6px; position:relative; }
   .book-scene::before{
@@ -847,6 +856,12 @@ function fmtDate(s){
   const d = new Date(s+'T00:00:00');
   return d.toLocaleDateString('en-GB', { weekday:'short', day:'2-digit', month:'short' });
 }
+function fmtDateTime(iso){
+  const d = new Date(iso);
+  const datePart = d.toLocaleDateString('en-GB', { day:'2-digit', month:'short', year:'numeric' });
+  const timePart = d.toLocaleTimeString('en-GB', { hour:'2-digit', minute:'2-digit' });
+  return datePart + ', ' + timePart;
+}
 
 /* ============================================================
    Term week tracking — used to lock weekly SBA entry to "this
@@ -1006,7 +1021,7 @@ function seedDB(){
   const students = names.map((n,i)=>({
     id:'s'+(i+1), name:n[0], classId:n[1],
     guardian: '+233 24 '+ (1000000+ i*137).toString().slice(0,3) + ' ' + (1000+i*97),
-    photo: null, remark: '', arrears: 0,
+    photo: null, remark: '', arrears: 0, payments: [],
   }));
 
   // gradebook[classId][subject] = { assessments:[{id,name,max}], scores:{studentId:{assessId:score}},
@@ -1165,6 +1180,7 @@ function migrateDB(){
     if(s.photo===undefined){ s.photo = null; changed = true; }
     if(s.remark===undefined){ s.remark = ''; changed = true; }
     if(s.arrears===undefined){ s.arrears = 0; changed = true; }
+    if(s.payments===undefined){ s.payments = []; changed = true; }
   });
   // Restructure each subject's gradebook to the SBA model (4 CATs + weekly toggle + exam score)
   Object.values(DB.gradebook).forEach(subjMap=>{
@@ -1683,22 +1699,27 @@ const NAV_ITEMS = [
   { id:'dashboard', label:'Dashboard', ic:'&#9670;' },
   { id:'students', label:'Students', ic:'&#9737;' },
   { id:'gradebook', label:'Gradebook', ic:'&#9998;' },
-  { id:'attendance', label:'Attendance', ic:'&#10003;', adminOnly:true },
-  { id:'activity', label:'Staff Activity', ic:'&#9873;', adminOnly:true },
+  { id:'attendance', label:'Attendance', ic:'&#10003;', visible: ()=> session.role==='Admin' || classTeacherClasses().length>0 },
+  { id:'activity', label:'Staff Activity', ic:'&#9873;', visible: ()=> session.role==='Admin' || isHeadTeacher() },
   { id:'classes', label:'Classes', ic:'&#9776;', adminOnly:true },
-  { id:'timetable', label:'Timetable', ic:'&#128197;', adminOnly:true },
+  { id:'timetable', label:'Timetable', ic:'&#128197;', visible: ()=> session.role==='Admin' || session.role==='Parent' || accessibleClasses().length>0 },
   { id:'staff', label:'Staff Accounts', ic:'&#128273;', adminOnly:true },
   { id:'bill', label:'Bill', ic:'&#128176;', visible: ()=>isBillAccess() },
   { id:'parent', label:'My Ward(s)', ic:'&#128118;' },
 ];
-/* Only the head teacher and assistant head teacher can see/use the Bill tab — this is checked by
-   account, not by role, so even an Admin account is excluded unless it's specifically one of these two. */
+/* Head teacher can view Staff Activity for oversight (no edit controls exist on that page anyway,
+   so this is naturally read-only) — but does NOT get Bill access. */
+function isHeadTeacher(){
+  return !!session && session.username===DB.headTeacherUsername;
+}
+/* Only the assistant head teacher can see/use the Bill tab — checked by account, not by role, so
+   even Admin and the head teacher are excluded unless specifically assigned as assistant head. */
 function isBillAccess(){
-  return !!session && (session.username===DB.headTeacherUsername || session.username===DB.assistantHeadTeacherUsername);
+  return !!session && session.username===DB.assistantHeadTeacherUsername;
 }
 function renderNav(){
   const items = NAV_ITEMS.filter(i=>{
-    if(session.role==='Parent') return i.id==='parent';
+    if(session.role==='Parent') return i.id==='parent' || i.id==='timetable';
     if(i.id==='parent') return false;
     return (!i.adminOnly || session.role==='Admin') && (!i.visible || i.visible());
   });
@@ -2060,7 +2081,7 @@ async function addStudent(){
   const guardian = document.getElementById('new-student-guardian').value.trim();
   if(!name) return;
   const id = 's'+Date.now();
-  DB.students.push({ id, name, classId, guardian: guardian || '—', photo:null, remark:'' });
+  DB.students.push({ id, name, classId, guardian: guardian || '—', photo:null, remark:'', arrears:0, payments:[] });
   // seed an empty score record for every subject already in this class's gradebook
   const gb = DB.gradebook[classId] || {};
   Object.values(gb).forEach(sub=>{ sub.scores[id] = {}; });
@@ -2081,7 +2102,7 @@ async function processStudentRows(rows){
     const cls = findClassByName(className);
     if(!cls){ skipped.push(`Row ${i+1} (${name}): class "${className}" not found`); return; }
     const id = 's'+Date.now()+Math.floor(Math.random()*10000);
-    DB.students.push({ id, name, classId:cls.id, guardian: guardian || '—', photo:null, remark:'' });
+    DB.students.push({ id, name, classId:cls.id, guardian: guardian || '—', photo:null, remark:'', arrears:0, payments:[] });
     const gb = DB.gradebook[cls.id] || {};
     Object.values(gb).forEach(sub=>{ sub.scores[id] = {}; });
     added++;
@@ -2539,6 +2560,77 @@ function activeTimetableMode(){
 }
 
 function renderTimetable(){
+  if(session.role==='Admin') return renderTimetableAdmin();
+  if(session.role==='Parent') return renderTimetableParent();
+  return renderTimetableTeacher();
+}
+/* Read-only view for teachers — their own classes' timetable, with a Print/Download button.
+   No editing of periods, breaks, or subject cells; that stays Admin-only. */
+function renderTimetableTeacher(){
+  const classes = accessibleClasses();
+  if(!classes.length){
+    return `
+      <div class="topbar"><div><div class="eyebrow">Your schedule</div><h1>Timetable</h1></div></div>
+      <div class="empty">You haven't been assigned to a class or subject yet.</div>
+    `;
+  }
+  if(!ttSelectedClass || !classes.find(c=>c.id===ttSelectedClass)) ttSelectedClass = classes[0].id;
+  const cls = classOf(ttSelectedClass);
+  const mode = activeTimetableMode();
+  const modeLabel = mode==='vacation' ? 'Vacation Classes' : 'Term';
+  const slots = timetableSlotsFor(cls.level||'JHS', mode);
+  return `
+    <div class="topbar">
+      <div><div class="eyebrow">Your schedule · ${modeLabel}</div><h1>Timetable</h1></div>
+      <button class="btn-ghost" onclick="printTimetable('${cls.id}','${mode}')">Print / Download</button>
+    </div>
+    ${classes.length>1 ? `<div class="toolbar" style="margin-bottom:14px;">
+      <select onchange="ttSelectedClass=this.value; render()">
+        ${classes.map(c=>`<option value="${c.id}" ${c.id===ttSelectedClass?'selected':''}>${c.name}</option>`).join('')}
+      </select>
+    </div>` : ''}
+    <div class="panel"><div class="panel-head"><h3>${cls.name} — ${modeLabel} timetable</h3></div>
+      <div class="panel-body" style="padding-top:10px;padding-bottom:16px;overflow-x:auto;">
+        ${slots.length ? buildTimetableGridHTML(cls.id, mode) : `<p style="margin:0;font-size:13px;color:var(--slate);">The administrator hasn't set up this timetable yet.</p>`}
+      </div>
+    </div>
+  `;
+}
+/* Read-only view for parents — their ward's class timetable, with a Print/Download button. */
+function renderTimetableParent(){
+  const me = userByUsername(session.username);
+  const wardIds = (me && me.wardIds) || [];
+  if(!wardIds.length){
+    return `
+      <div class="topbar"><div><div class="eyebrow">Your ward's schedule</div><h1>Timetable</h1></div></div>
+      <div class="empty">No children are linked to your account yet. Please contact the school administrator.</div>
+    `;
+  }
+  if(!view.parentWardId || !wardIds.includes(view.parentWardId)) view.parentWardId = wardIds[0];
+  const s = studentById(view.parentWardId);
+  const cls = classOf(s.classId);
+  const mode = activeTimetableMode();
+  const modeLabel = mode==='vacation' ? 'Vacation Classes' : 'Term';
+  const slots = timetableSlotsFor(cls.level||'JHS', mode);
+  return `
+    <div class="topbar">
+      <div><div class="eyebrow">${s.name}'s schedule · ${modeLabel}</div><h1>Timetable</h1></div>
+      <button class="btn-ghost" onclick="printTimetable('${cls.id}','${mode}')">Print / Download</button>
+    </div>
+    ${wardIds.length>1 ? `<div class="ward-switch">
+      ${wardIds.map(id=>{
+        const w = studentById(id); if(!w) return '';
+        return `<button class="${id===view.parentWardId?'active':''}" onclick="view.parentWardId='${id}'; render()">${w.name}</button>`;
+      }).join('')}
+    </div>` : ''}
+    <div class="panel"><div class="panel-head"><h3>${cls.name} — ${modeLabel} timetable</h3></div>
+      <div class="panel-body" style="padding-top:10px;padding-bottom:16px;overflow-x:auto;">
+        ${slots.length ? buildTimetableGridHTML(cls.id, mode) : `<p style="margin:0;font-size:13px;color:var(--slate);">The administrator hasn't set up this timetable yet.</p>`}
+      </div>
+    </div>
+  `;
+}
+function renderTimetableAdmin(){
   if(!DB.classes.find(c=>c.id===ttSelectedClass && c.level===ttSelectedLevel)){
     ttSelectedClass = DB.classes.find(c=>c.level===ttSelectedLevel)?.id || null;
   }
@@ -3060,14 +3152,14 @@ function renderBill(){
   if(!isBillAccess()){
     return `
       <div class="topbar"><div><div class="eyebrow">Restricted</div><h1>Bill</h1></div></div>
-      <div class="empty">Only the head teacher and assistant head teacher can access the bill.</div>
+      <div class="empty">Only the assistant head teacher can access the bill.</div>
     `;
   }
   const items = DB.billItems || [];
   const total = items.reduce((sum,it)=>sum+(Number(it.price)||0), 0);
   const allStudents = DB.classes.flatMap(c=> studentsOf(c.id).map(s=>({ ...s, className:c.name })));
   return `
-    <div class="topbar"><div><div class="eyebrow">Head teacher &amp; assistant head teacher only</div><h1>Bill</h1></div></div>
+    <div class="topbar"><div><div class="eyebrow">Assistant head teacher only</div><h1>Bill</h1></div></div>
 
     <div class="panel"><div class="panel-head"><h3>Bill items (this term)</h3></div>
       <div class="panel-body" style="padding-top:10px;">
@@ -3105,6 +3197,43 @@ function renderBill(){
         </table>
       </div>
     </div>
+
+    <div class="panel"><div class="panel-head"><h3>Fee payments &amp; receipts</h3></div>
+      <div class="panel-body" style="padding-top:10px;">
+        <p style="margin:0 0 12px;font-size:12px;color:var(--slate);">Total payable is the bill items total plus arrears. Enter the amount paid by the student's parent (in GHS) and click Record — the balance updates automatically and the date &amp; time of payment is logged. You can then print a receipt.</p>
+        <table class="reg">
+          <thead><tr><th>Student</th><th>Class</th><th>Total payable</th><th>Paid so far</th><th>Balance</th><th>Record payment (GHS)</th><th>Receipt</th></tr></thead>
+          <tbody>
+            ${allStudents.map(s=>{
+              const arrears = Number(s.arrears)||0;
+              const payable = total + arrears;
+              const payments = s.payments || [];
+              const paid = payments.reduce((sum,p)=>sum+(Number(p.amount)||0), 0);
+              const balance = Math.max(0, payable - paid);
+              const lastPayment = payments[payments.length-1];
+              return `<tr>
+                <td>${s.name}</td>
+                <td>${s.className}</td>
+                <td class="mono">${payable.toFixed(2)}</td>
+                <td class="mono">${paid.toFixed(2)}</td>
+                <td class="mono" style="font-weight:700;color:${balance>0?'var(--brick)':'var(--sage)'};">${balance.toFixed(2)}</td>
+                <td>
+                  <div class="inline-form" style="gap:6px;flex-wrap:nowrap;">
+                    <input type="number" id="pay-amt-${s.id}" placeholder="0.00" min="0.01" step="0.01" style="width:100px;">
+                    <button class="btn-small brass" onclick="recordFeePayment('${s.id}')">Record</button>
+                  </div>
+                </td>
+                <td>
+                  ${lastPayment
+                    ? `<button class="btn-small" onclick="printFeeReceipt('${s.id}','${lastPayment.id}')">Print last receipt</button>`
+                    : '<span style="font-size:11px;color:var(--slate);">No payments yet</span>'}
+                </td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
   `;
 }
 async function addBillItem(){
@@ -3125,6 +3254,102 @@ async function updateStudentArrears(studentId, val){
   if(!s) return;
   s.arrears = Math.max(0, Number(val)||0);
   await saveDB();
+}
+async function recordFeePayment(studentId){
+  const s = studentById(studentId);
+  if(!s) return;
+  const input = document.getElementById('pay-amt-'+studentId);
+  const amount = Number(input.value);
+  if(!amount || amount <= 0){ alert('Enter a valid amount in GHS.'); return; }
+
+  const billTotal = (DB.billItems||[]).reduce((sum,it)=>sum+(Number(it.price)||0), 0);
+  const arrears = Number(s.arrears)||0;
+  const payable = billTotal + arrears;
+  const alreadyPaid = (s.payments||[]).reduce((sum,p)=>sum+(Number(p.amount)||0), 0);
+  const balanceBefore = payable - alreadyPaid;
+  if(balanceBefore > 0 && amount > balanceBefore + 0.009){
+    if(!confirm(`This amount (GHS ${amount.toFixed(2)}) is more than the outstanding balance (GHS ${balanceBefore.toFixed(2)}). Record it anyway?`)) return;
+  }
+
+  if(!s.payments) s.payments = [];
+  const payment = {
+    id: 'pay'+Date.now(),
+    amount,
+    date: new Date().toISOString(),
+    recordedBy: session ? session.name : '',
+    receiptPrinted: false,
+    parentAcknowledged: false,
+    acknowledgedAt: null
+  };
+  s.payments.push(payment);
+  await saveDB();
+  input.value = '';
+  render();
+
+  if(confirm(`Payment of GHS ${amount.toFixed(2)} recorded for ${s.name}. Print a receipt now?`)){
+    printFeeReceipt(studentId, payment.id);
+  }
+}
+function buildFeeReceiptHTML(studentId, paymentId){
+  const s = studentById(studentId);
+  const cls = classOf(s.classId);
+  const payment = (s.payments||[]).find(p=>p.id===paymentId);
+  if(!payment) return '';
+  const billTotal = (DB.billItems||[]).reduce((sum,it)=>sum+(Number(it.price)||0), 0);
+  const arrears = Number(s.arrears)||0;
+  const payable = billTotal + arrears;
+  const paidUpToThis = (s.payments||[])
+    .filter(p=> new Date(p.date) <= new Date(payment.date))
+    .reduce((sum,p)=>sum+(Number(p.amount)||0), 0);
+  const balanceAfter = Math.max(0, payable - paidUpToThis);
+  return `
+    <div class="rc-page">
+      <div class="rc-head">
+        <div class="crest">${DB.school.crest ? `<img src="${DB.school.crest}">` : `<span>${schoolInitials(DB.school.name)}</span>`}</div>
+        <div><h2>${DB.school.name}</h2><p>Official Fee Payment Receipt</p></div>
+      </div>
+      <div class="rc-meta">
+        <div><b>Receipt No.</b>${payment.id}</div>
+        <div><b>Date &amp; time paid</b>${fmtDateTime(payment.date)}</div>
+        <div><b>Student</b>${s.name}</div>
+        <div><b>Class</b>${cls ? cls.name : '—'}</div>
+        <div><b>Received by</b>${payment.recordedBy || '—'}</div>
+      </div>
+      <table class="rc-table">
+        <thead><tr><th>Description</th><th>Amount (GHS)</th></tr></thead>
+        <tbody>
+          <tr><td>Amount paid</td><td class="mono">${payment.amount.toFixed(2)}</td></tr>
+          <tr><td>Total payable (this term + arrears)</td><td class="mono">${payable.toFixed(2)}</td></tr>
+          <tr style="font-weight:700;"><td>Balance remaining</td><td class="mono">${balanceAfter.toFixed(2)}</td></tr>
+        </tbody>
+      </table>
+      <p style="font-size:12px;color:var(--slate);margin-top:16px;">This receipt confirms that the above amount was received towards this student's school fees. Please retain it for your records.</p>
+      <div class="rc-sign" style="justify-content:center;">
+        <div style="width:42%;"><div style="height:44px;"></div>Assistant Head Teacher</div>
+      </div>
+    </div>
+  `;
+}
+async function printFeeReceipt(studentId, paymentId){
+  const s = studentById(studentId);
+  const payment = s && (s.payments||[]).find(p=>p.id===paymentId);
+  if(payment && !payment.receiptPrinted){
+    payment.receiptPrinted = true;
+    await saveDB();
+  }
+  document.getElementById('print-area').innerHTML = buildFeeReceiptHTML(studentId, paymentId);
+  window.print();
+  render();
+}
+async function acknowledgeFeePayment(studentId, paymentId){
+  const s = studentById(studentId);
+  if(!s) return;
+  const payment = (s.payments||[]).find(p=>p.id===paymentId);
+  if(!payment || payment.parentAcknowledged) return;
+  payment.parentAcknowledged = true;
+  payment.acknowledgedAt = new Date().toISOString();
+  await saveDB();
+  render();
 }
 
 /* ============================================================
@@ -3153,6 +3378,9 @@ function renderParentPortal(){
   const billTotal = (DB.billItems||[]).reduce((sum,it)=>sum+(Number(it.price)||0), 0);
   const arrears = Number(s.arrears)||0;
   const payable = billTotal + arrears;
+  const paidSoFar = (s.payments||[]).reduce((sum,p)=>sum+(Number(p.amount)||0), 0);
+  const balanceDue = Math.max(0, payable - paidSoFar);
+  const pendingAcks = (s.payments||[]).filter(p=>p.receiptPrinted && !p.parentAcknowledged);
   const termLabel = TERM_NAMES[(DB.term?.termNumber||1)-1] || '1st Term';
   const weeks = activeSession().weeks;
   const curWeek = Math.min(weeks, currentTermWeek());
@@ -3187,6 +3415,17 @@ function renderParentPortal(){
       </div>
     </div>
 
+    ${pendingAcks.map(p=>`
+      <div class="fee-alert">
+        <div class="fee-alert-icon">&#128276;</div>
+        <div class="fee-alert-body">
+          <div class="fee-alert-title">Fee payment recorded for ${s.name.split(' ')[0]}</div>
+          <div class="fee-alert-sub">GHS ${p.amount.toFixed(2)} was recorded as paid on ${fmtDateTime(p.date)} and the receipt has been printed. Please confirm you're aware of this payment.</div>
+        </div>
+        <button class="btn-small brass" onclick="acknowledgeFeePayment('${s.id}','${p.id}')">I accept — I have paid</button>
+      </div>
+    `).join('')}
+
     <div class="panel"><div class="panel-head"><h3>At a glance</h3></div>
       <div class="ring-row">
         ${ringStat(att??0, 'var(--brass)', (att??'—')+(att!==null?'%':''), 'Attendance')}
@@ -3213,17 +3452,24 @@ function renderParentPortal(){
 
     <div class="panel"><div class="panel-head"><h3>Fees status</h3></div>
       <div class="panel-body" style="padding-top:14px;padding-bottom:18px;">
-        <div class="fee-card ${payable>0?'owing':'clear'}">
-          <div class="fee-icon">${payable>0?'&#9888;':'&#10003;'}</div>
-          <div class="fee-label">${payable>0?'Amount owing':'All fees settled'}</div>
-          <div class="fee-amount">GHS ${payable.toFixed(2)}</div>
-          <div class="fee-note">${arrears?'Includes GHS '+arrears.toFixed(2)+' arrears from before this term':'This term' + String.fromCharCode(8217) + 's fees'}</div>
+        <div class="fee-card ${balanceDue>0?'owing':'clear'}">
+          <div class="fee-icon">${balanceDue>0?'&#9888;':'&#10003;'}</div>
+          <div class="fee-label">${balanceDue>0?'Amount owing':'All fees settled'}</div>
+          <div class="fee-amount">GHS ${balanceDue.toFixed(2)}</div>
+          <div class="fee-note">${arrears?'Includes GHS '+arrears.toFixed(2)+' arrears from before this term':'This term' + String.fromCharCode(8217) + 's fees'}${paidSoFar?' · GHS '+paidSoFar.toFixed(2)+' paid so far':''}</div>
         </div>
-        ${(DB.billItems||[]).length || arrears ? `
+        ${(DB.billItems||[]).length || arrears || paidSoFar ? `
         <div style="margin-top:14px;">
           ${(DB.billItems||[]).map(it=>`<div class="fee-item-row"><span>${it.name}</span><span class="mono">GHS ${(Number(it.price)||0).toFixed(2)}</span></div>`).join('')}
           ${arrears ? `<div class="fee-item-row"><span>Arrears b/f</span><span class="mono">GHS ${arrears.toFixed(2)}</span></div>` : ''}
-          <div class="fee-item-row" style="font-weight:700;border-top:1.5px solid var(--line);"><span>Total</span><span class="mono">GHS ${payable.toFixed(2)}</span></div>
+          <div class="fee-item-row" style="font-weight:700;border-top:1.5px solid var(--line);"><span>Total payable</span><span class="mono">GHS ${payable.toFixed(2)}</span></div>
+          ${paidSoFar ? `<div class="fee-item-row"><span>Paid so far</span><span class="mono">GHS ${paidSoFar.toFixed(2)}</span></div>` : ''}
+          <div class="fee-item-row" style="font-weight:700;"><span>Balance due</span><span class="mono">GHS ${balanceDue.toFixed(2)}</span></div>
+        </div>` : ''}
+        ${(s.payments||[]).length ? `
+        <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line);">
+          <div style="font-size:11px;text-transform:uppercase;letter-spacing:0.05em;color:var(--slate);font-weight:600;margin-bottom:6px;">Payment history</div>
+          ${(s.payments||[]).slice().reverse().map(p=>`<div class="fee-item-row"><span>${fmtDateTime(p.date)}${p.parentAcknowledged?' <span style="color:var(--sage);font-size:11px;">&#10003; accepted</span>':(p.receiptPrinted?' <span style="color:var(--brass);font-size:11px;">awaiting your confirmation</span>':'')}</span><span class="mono">GHS ${(Number(p.amount)||0).toFixed(2)}</span></div>`).join('')}
         </div>` : ''}
       </div>
     </div>
@@ -3320,7 +3566,7 @@ function renderStaff(){
 
     <div class="panel"><div class="panel-head"><h3>Head teacher &amp; assistant head teacher</h3></div>
       <div class="panel-body" style="padding-top:14px;padding-bottom:16px;">
-        <p style="margin:0 0 10px;font-size:13px;color:var(--slate);">Both sign report cards and can upload their own signature from the sidebar. Both — and only these two — can access the Bill tab.</p>
+        <p style="margin:0 0 10px;font-size:13px;color:var(--slate);">Both sign report cards and can upload their own signature from the sidebar. The head teacher can also view Staff Activity for oversight (read-only). Only the assistant head teacher can access and edit the Bill tab.</p>
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px;">
           <div><label style="display:block;font-size:11.5px;color:var(--slate);font-weight:600;margin-bottom:5px;">Head teacher</label>
             <select onchange="setHeadTeacher(this.value)">
@@ -3612,6 +3858,8 @@ function buildReportCardHTML(studentId){
   const billTotal = (DB.billItems||[]).reduce((sum,it)=>sum+(Number(it.price)||0), 0);
   const arrears = Number(s.arrears)||0;
   const payable = billTotal + arrears;
+  const paidSoFar = (s.payments||[]).reduce((sum,p)=>sum+(Number(p.amount)||0), 0);
+  const balanceDue = Math.max(0, payable - paidSoFar);
   return `
     <div class="rc-page">
       <div class="rc-head">
@@ -3663,6 +3911,8 @@ function buildReportCardHTML(studentId){
           ${(DB.billItems||[]).map(it=>`<tr><td>${it.name}</td><td class="mono">GHS ${(Number(it.price)||0).toFixed(2)}</td></tr>`).join('')}
           ${arrears ? `<tr><td>Arrears b/f</td><td class="mono">GHS ${arrears.toFixed(2)}</td></tr>` : ''}
           <tr style="font-weight:700;"><td>Total payable</td><td class="mono">GHS ${payable.toFixed(2)}</td></tr>
+          ${paidSoFar ? `<tr><td>Paid so far</td><td class="mono">GHS ${paidSoFar.toFixed(2)}</td></tr>` : ''}
+          <tr style="font-weight:700;"><td>Balance due</td><td class="mono">GHS ${balanceDue.toFixed(2)}</td></tr>
         </tbody>
       </table>` : ''}
       <div class="rc-sign">
