@@ -576,6 +576,7 @@
 
     <button class="btn-primary" onclick="login()">Enter register</button>
     <p class="login-foot" id="login-footer">Staff access only · Clyde Academy © 2026</p>
+    <p class="login-foot" style="margin-top:8px;"><button class="auth-link" onclick="showForgotPassword()">Forgot your password?</button></p>
     <p class="login-foot" style="margin-top:8px;">First time here as a teacher? <button class="auth-link" onclick="showRegister()">Register an account</button></p>
     <script>
       document.getElementById('login-username').addEventListener('keydown', e=>{ if(e.key==='Enter') login(); });
@@ -656,15 +657,55 @@
       </div>
 
       <div class="field"><label id="reg-name-label">Full name</label><input type="text" id="reg-name" placeholder="e.g. Mr. Owusu"></div>
+      <div class="field"><label>Phone number</label><input type="tel" id="reg-phone" placeholder="e.g. 024 111 2233" autocomplete="tel"></div>
       <div class="field"><label>Choose a username</label><input type="text" id="reg-username" placeholder="e.g. owusu"></div>
       <div class="field"><label>Choose a password</label><input type="password" id="reg-password" placeholder="••••••••"></div>
       <div class="field"><label>Confirm password</label><input type="password" id="reg-password2" placeholder="••••••••"></div>
+      <p class="login-sub" style="margin-top:-8px;">We'll use this number to send a one-time code if you ever forget your password.</p>
       <p id="register-error" style="display:none;color:var(--brick);font-size:12.5px;font-weight:600;margin:-8px 0 14px;"></p>
 
       <button class="btn-primary" onclick="submitRegistration()">Create account</button>
       <p class="login-foot">Already registered? <button class="auth-link" onclick="hideRegister()">Back to sign in</button></p>
     </div>
   </div>
+</div>
+
+<!-- ===================== FORGOT PASSWORD (PHONE VERIFICATION) ===================== -->
+<div id="forgot-screen" style="display:none;">
+  <div style="min-height:100vh; display:flex; align-items:center; justify-content:center; background:linear-gradient(var(--ink), var(--ink)); padding:24px;">
+    <div class="login-card">
+      <div class="login-head">
+        <div class="crest" id="forgot-crest"><span>CA</span></div>
+        <div><h1 class="login-title">Reset password</h1></div>
+      </div>
+
+      <div id="fp-step1">
+        <p class="login-sub">Enter your username and the last 4 digits of the phone number on your account.</p>
+        <div class="field"><label>Username</label><input type="text" id="fp-username" placeholder="e.g. owusu" autocomplete="username"></div>
+        <div class="field"><label>Last 4 digits of phone number</label><input type="text" id="fp-phone-last4" maxlength="4" inputmode="numeric" placeholder="1234"></div>
+        <p id="fp-step1-error" style="display:none;color:var(--brick);font-size:12.5px;font-weight:600;margin:-8px 0 14px;"></p>
+        <button class="btn-primary" onclick="startPasswordReset()">Send code</button>
+      </div>
+
+      <div id="fp-step2" style="display:none;">
+        <p class="login-sub" id="fp-sent-note"></p>
+        <div class="field"><label>One-time code</label><input type="text" id="fp-code" maxlength="6" inputmode="numeric" placeholder="000000"></div>
+        <div class="field"><label>New password</label><input type="password" id="fp-newpass" placeholder="••••••••"></div>
+        <div class="field"><label>Confirm new password</label><input type="password" id="fp-newpass2" placeholder="••••••••"></div>
+        <p id="fp-step2-error" style="display:none;color:var(--brick);font-size:12.5px;font-weight:600;margin:-8px 0 14px;"></p>
+        <button class="btn-primary" onclick="completePasswordReset()">Reset password</button>
+        <p class="login-foot"><button class="auth-link" onclick="startPasswordReset(true)">Resend code</button></p>
+      </div>
+
+      <p class="login-foot">Remembered it after all? <button class="auth-link" onclick="hideForgotPassword()">Back to sign in</button></p>
+      <p class="login-foot" style="margin-top:8px;font-size:11.5px;">No phone on file, or number changed? Ask the head teacher / IT admin to reset it for you.</p>
+    </div>
+  </div>
+  <script>
+    document.getElementById('fp-username').addEventListener('keydown', e=>{ if(e.key==='Enter') startPasswordReset(); });
+    document.getElementById('fp-code').addEventListener('keydown', e=>{ if(e.key==='Enter') completePasswordReset(); });
+    document.getElementById('fp-newpass2').addEventListener('keydown', e=>{ if(e.key==='Enter') completePasswordReset(); });
+  </script>
 </div>
 
 <!-- ===================== PRINTABLE REPORT CARD ===================== -->
@@ -745,6 +786,17 @@ const FIRESTORE_DOC = 'database';
 
 let firestoreDB = null;
 let cloudEnabled = false;
+
+/* ============================================================
+   PASSWORD RESET BY PHONE NUMBER ON FILE
+   ------------------------------------------------------------
+   Everyone (teachers, head teacher, other staff, parents) can
+   self-reset a forgotten password from the login screen. A
+   reset code is generated and shown directly on screen — by
+   design, not as a stand-in for texting it elsewhere — so the
+   whole flow works with no external SMS/WhatsApp provider,
+   accounts, or fees involved.
+============================================================ */
 
 function firebaseIsConfigured(){
   return !!(FIREBASE_CONFIG.apiKey && FIREBASE_CONFIG.projectId && FIREBASE_CONFIG.appId);
@@ -999,6 +1051,18 @@ function readImageResized(file, maxWidth){
 function schoolInitials(name){
   return (name||'CA').trim().split(/\s+/).map(w=>w[0]).slice(0,2).join('').toUpperCase() || 'CA';
 }
+/* Generates a short, human-friendly, always-unique ID like "CA-STU-0007" for a student,
+   teacher, or parent — separate from their internal record id (which is just an
+   opaque timestamp string) and separate from their login username. A running counter
+   per type (kept in DB.idCounters) guarantees no two people ever get the same number,
+   even if someone is later removed. */
+function nextDisplayId(type){
+  if(!DB.idCounters) DB.idCounters = { STU:0, TCH:0, PAR:0 };
+  if(DB.idCounters[type]===undefined) DB.idCounters[type] = 0;
+  DB.idCounters[type] += 1;
+  const initials = schoolInitials(DB.school && DB.school.name);
+  return `${initials}-${type}-${String(DB.idCounters[type]).padStart(4,'0')}`;
+}
 function applyBranding(){
   if(!DB || !DB.school) return;
   const name = DB.school.name || 'Clyde Academy';
@@ -1006,6 +1070,7 @@ function applyBranding(){
   document.title = name;
   const loginCrest = document.getElementById('login-crest'); if(loginCrest) loginCrest.innerHTML = crestHTML;
   const regCrest = document.getElementById('register-crest'); if(regCrest) regCrest.innerHTML = crestHTML;
+  const forgotCrest = document.getElementById('forgot-crest'); if(forgotCrest) forgotCrest.innerHTML = crestHTML;
   const sidebarCrest = document.getElementById('sidebar-crest'); if(sidebarCrest) sidebarCrest.innerHTML = crestHTML;
   const loginName = document.getElementById('login-school-name'); if(loginName) loginName.textContent = name;
   const loginFooter = document.getElementById('login-footer'); if(loginFooter) loginFooter.textContent = `Staff access only · ${name} © ${new Date().getFullYear()}`;
@@ -1129,7 +1194,7 @@ function seedDB(){
     vacation: { JHS: [], Primary: [] },
   };
 
-  return { classes, students, gradebook, attendance, users, term, vacation, headTeacherUsername: 'admin', assistantHeadTeacherUsername: null, weeklyMeta: {}, attendanceMeta: {}, billItems: { LowerPrimary:[], UpperPrimary:[], JHS:[] }, school: { name:'Clyde Academy', crest:null }, systemStatus: 'term', presence: {}, timetableSlots, timetable: { term: {}, vacation: {} } };
+  return { classes, students, gradebook, attendance, users, term, vacation, headTeacherUsername: 'admin', assistantHeadTeacherUsername: null, weeklyMeta: {}, attendanceMeta: {}, billItems: { LowerPrimary:[], UpperPrimary:[], JHS:[] }, school: { name:'Clyde Academy', crest:null }, systemStatus: 'term', presence: {}, timetableSlots, timetable: { term: {}, vacation: {} }, idCounters: { STU:0, TCH:0, PAR:0 } };
 }
 
 function migrateDB(){
@@ -1148,6 +1213,7 @@ function migrateDB(){
   }
   BILL_CATEGORIES.forEach(cat=>{ if(!DB.billItems[cat]){ DB.billItems[cat] = []; changed = true; } });
   if(!DB.presence){ DB.presence = {}; changed = true; }
+  if(!DB.idCounters){ DB.idCounters = { STU:0, TCH:0, PAR:0 }; changed = true; }
   if(!DB.vacation){ DB.vacation = { startDate: todayStr(0), weeks: 4 }; changed = true; }
   if(!DB.timetableSlots){
     DB.timetableSlots = {
@@ -1213,6 +1279,9 @@ function migrateDB(){
   DB.users.forEach(u=>{
     if(u.signature===undefined){ u.signature = null; changed = true; }
     if(u.contact===undefined){ u.contact = ''; changed = true; }
+    if(u.resetOTP===undefined){ u.resetOTP = null; changed = true; }
+    if(!u.staffId && u.role==='Teacher'){ u.staffId = nextDisplayId('TCH'); changed = true; }
+    if(!u.parentId && u.role==='Parent'){ u.parentId = nextDisplayId('PAR'); changed = true; }
   });
   DB.students.forEach(s=>{
     if(s.photo===undefined){ s.photo = null; changed = true; }
@@ -1220,6 +1289,7 @@ function migrateDB(){
     if(s.arrears===undefined){ s.arrears = 0; changed = true; }
     if(s.payments===undefined){ s.payments = []; changed = true; }
     if(s.billNoticesSeen===undefined){ s.billNoticesSeen = {}; changed = true; }
+    if(!s.studentId){ s.studentId = nextDisplayId('STU'); changed = true; }
   });
   // Restructure each subject's gradebook to the SBA model (4 CATs + weekly toggle + exam score)
   Object.values(DB.gradebook).forEach(subjMap=>{
@@ -1658,6 +1728,85 @@ function setRegRole(role){
   document.getElementById('register-error').style.display = 'none';
   renderSelectedWards();
 }
+
+/* ============================================================
+   Forgot password — self-service reset. The code is generated
+   and shown on screen (see the comment near the top of this
+   file), so the whole flow works end-to-end with nothing to
+   configure.
+============================================================ */
+function showForgotPassword(){
+  document.getElementById('login-screen').style.display = 'none';
+  document.getElementById('forgot-screen').style.display = 'block';
+  document.getElementById('fp-step1').style.display = 'block';
+  document.getElementById('fp-step2').style.display = 'none';
+  document.getElementById('fp-username').value = document.getElementById('login-username').value || '';
+  document.getElementById('fp-phone-last4').value = '';
+  document.getElementById('fp-step1-error').style.display = 'none';
+}
+function hideForgotPassword(){
+  document.getElementById('forgot-screen').style.display = 'none';
+  document.getElementById('login-screen').style.display = 'flex';
+}
+function maskPhone(phone){
+  const digits = (phone||'').replace(/\s+/g,'');
+  if(digits.length<4) return phone;
+  return digits.slice(0,-4).replace(/./g,'•') + digits.slice(-4);
+}
+function generateOTP(){
+  return String(Math.floor(100000 + Math.random()*900000));
+}
+async function startPasswordReset(isResend){
+  const username = document.getElementById('fp-username').value.trim().toLowerCase();
+  const last4 = document.getElementById('fp-phone-last4').value.trim();
+  const errEl = document.getElementById('fp-step1-error');
+  const showErr = msg=>{ errEl.textContent = msg; errEl.style.display='block'; };
+  const genericErr = 'Those details don\'t match an account with a phone number on file. Check the username and last 4 digits and try again, or ask the head teacher / IT admin for help.';
+
+  const u = DB.users.find(x=>x.username.toLowerCase()===username);
+  if(!u || !u.contact){ showErr(genericErr); return; }
+  const contactDigits = String(u.contact).replace(/[^\d]/g,'');
+  if(!/^\d{4}$/.test(last4) || contactDigits.slice(-4) !== last4){ showErr(genericErr); return; }
+  errEl.style.display = 'none';
+
+  const code = generateOTP();
+  u.resetOTP = { code, expiresAt: Date.now() + 10*60*1000 };
+  await saveDB();
+
+  document.getElementById('fp-step1').style.display = 'none';
+  document.getElementById('fp-step2').style.display = 'block';
+  document.getElementById('fp-code').value = '';
+  document.getElementById('fp-newpass').value = '';
+  document.getElementById('fp-newpass2').value = '';
+  document.getElementById('fp-step2-error').style.display = 'none';
+
+  const noteEl = document.getElementById('fp-sent-note');
+  noteEl.innerHTML = `Here is your reset code:<br><span class="mono" style="font-size:20px;font-weight:700;letter-spacing:2px;">${code}</span><br>Enter it below along with your new password.`;
+}
+async function completePasswordReset(){
+  const username = document.getElementById('fp-username').value.trim().toLowerCase();
+  const code = document.getElementById('fp-code').value.trim();
+  const newpass = document.getElementById('fp-newpass').value;
+  const newpass2 = document.getElementById('fp-newpass2').value;
+  const errEl = document.getElementById('fp-step2-error');
+  const showErr = msg=>{ errEl.textContent = msg; errEl.style.display='block'; };
+  const u = DB.users.find(x=>x.username.toLowerCase()===username);
+  if(!u || !u.resetOTP){ showErr('Something went wrong — please request a new code.'); return; }
+  if(Date.now() > u.resetOTP.expiresAt){ showErr('That code has expired — please request a new one.'); return; }
+  if(code !== u.resetOTP.code){ showErr('That code is incorrect.'); return; }
+  if(!newpass || newpass.length<4){ showErr('New password should be at least 4 characters.'); return; }
+  if(newpass !== newpass2){ showErr('Passwords do not match.'); return; }
+  errEl.style.display = 'none';
+
+  u.password = newpass;
+  u.resetOTP = null;
+  await saveDB();
+
+  alert('Your password has been reset — you can now sign in with it.');
+  hideForgotPassword();
+  document.getElementById('login-username').value = u.username;
+  document.getElementById('login-password').value = '';
+}
 function searchWards(query){
   const q = query.trim().toLowerCase();
   const resultsEl = document.getElementById('ward-search-results');
@@ -1691,17 +1840,18 @@ function submitRegistration(){
 }
 async function registerTeacher(){
   const name = document.getElementById('reg-name').value.trim();
+  const phone = document.getElementById('reg-phone').value.trim();
   const username = document.getElementById('reg-username').value.trim().toLowerCase();
   const password = document.getElementById('reg-password').value;
   const password2 = document.getElementById('reg-password2').value;
   const errEl = document.getElementById('register-error');
   const showErr = msg=>{ errEl.textContent = msg; errEl.style.display='block'; };
-  if(!name || !username || !password){ showErr('Please fill in your name, username, and password.'); return; }
+  if(!name || !phone || !username || !password){ showErr('Please fill in your name, phone number, username, and password.'); return; }
   if(password.length<4){ showErr('Password should be at least 4 characters.'); return; }
   if(password!==password2){ showErr('Passwords do not match.'); return; }
   if(DB.users.find(u=>u.username.toLowerCase()===username)){ showErr('That username is already taken — choose another.'); return; }
   errEl.style.display='none';
-  DB.users.push({ name, username, password, role:'Teacher', signature:null, contact:'' });
+  DB.users.push({ name, username, password, role:'Teacher', signature:null, contact:phone, resetOTP:null, staffId: nextDisplayId('TCH') });
   await saveDB();
   alert('Account created! You can now sign in. Your administrator still needs to assign you a class and subjects before you\'ll see any students.');
   hideRegister();
@@ -1709,18 +1859,25 @@ async function registerTeacher(){
 }
 async function registerParent(){
   const name = document.getElementById('reg-name').value.trim();
+  const phone = document.getElementById('reg-phone').value.trim();
   const username = document.getElementById('reg-username').value.trim().toLowerCase();
   const password = document.getElementById('reg-password').value;
   const password2 = document.getElementById('reg-password2').value;
   const errEl = document.getElementById('register-error');
   const showErr = msg=>{ errEl.textContent = msg; errEl.style.display='block'; };
-  if(!name || !username || !password){ showErr('Please fill in your name, username, and password.'); return; }
+  if(!name || !phone || !username || !password){ showErr('Please fill in your name, phone number, username, and password.'); return; }
   if(password.length<4){ showErr('Password should be at least 4 characters.'); return; }
   if(password!==password2){ showErr('Passwords do not match.'); return; }
   if(DB.users.find(u=>u.username.toLowerCase()===username)){ showErr('That username is already taken — choose another.'); return; }
   if(!selectedWards.length){ showErr('Please search for and select at least one child.'); return; }
   errEl.style.display='none';
-  DB.users.push({ name, username, password, role:'Parent', wardIds: selectedWards.slice(), signature:null, contact:'' });
+  DB.users.push({ name, username, password, role:'Parent', wardIds: selectedWards.slice(), signature:null, contact:phone, resetOTP:null, parentId: nextDisplayId('PAR') });
+  // Automatically put this parent's phone number on file as the guardian contact for each ward, so
+  // the school always has a working number for that child without needing separate data entry.
+  selectedWards.forEach(wid=>{
+    const st = studentById(wid);
+    if(st) st.guardian = phone;
+  });
   await saveDB();
   alert('Account created! You can now sign in to view your child\'s progress report and fees.');
   hideRegister();
@@ -2102,7 +2259,7 @@ function renderStudents(){
           <div onclick="openStudent('${s.id}')" style="cursor:pointer;">
           <div class="top">
             ${s.photo ? `<img src="${s.photo}" style="width:38px;height:38px;border-radius:50%;object-fit:cover;flex-shrink:0;">` : `<div class="avatar" style="width:38px;height:38px;">${s.name.split(' ').map(w=>w[0]).slice(0,2).join('')}</div>`}
-            <div><div class="name">${s.name}</div><div class="cls">${classOf(s.classId).name}</div></div>
+            <div><div class="name">${s.name}</div><div class="cls">${classOf(s.classId).name}${s.studentId ? ' · '+s.studentId : ''}</div></div>
           </div>
           <div class="metrics">
             <div class="metric"><div class="n grade-${gradeClass(avg)}">${avg??'—'}${avg!==null?'%':''}</div><div class="l">Average</div></div>
@@ -2121,7 +2278,7 @@ async function addStudent(){
   const guardian = document.getElementById('new-student-guardian').value.trim();
   if(!name) return;
   const id = 's'+Date.now();
-  DB.students.push({ id, name, classId, guardian: guardian || '—', photo:null, remark:'', arrears:0, payments:[] });
+  DB.students.push({ id, name, classId, guardian: guardian || '—', photo:null, remark:'', arrears:0, payments:[], studentId: nextDisplayId('STU') });
   // seed an empty score record for every subject already in this class's gradebook
   const gb = DB.gradebook[classId] || {};
   Object.values(gb).forEach(sub=>{ sub.scores[id] = {}; });
@@ -2142,7 +2299,7 @@ async function processStudentRows(rows){
     const cls = findClassByName(className);
     if(!cls){ skipped.push(`Row ${i+1} (${name}): class "${className}" not found`); return; }
     const id = 's'+Date.now()+Math.floor(Math.random()*10000);
-    DB.students.push({ id, name, classId:cls.id, guardian: guardian || '—', photo:null, remark:'', arrears:0, payments:[] });
+    DB.students.push({ id, name, classId:cls.id, guardian: guardian || '—', photo:null, remark:'', arrears:0, payments:[], studentId: nextDisplayId('STU') });
     const gb = DB.gradebook[cls.id] || {};
     Object.values(gb).forEach(sub=>{ sub.scores[id] = {}; });
     added++;
@@ -2244,6 +2401,7 @@ function renderStudentDetail(id){
             ${s.photo ? `<img src="${s.photo}" style="width:72px;height:72px;border-radius:50%;object-fit:cover;border:1px solid var(--line);">` : `<div class="avatar" style="width:72px;height:72px;font-size:22px;background:var(--ink);color:var(--brass-soft);">${s.name.split(' ').map(w=>w[0]).slice(0,2).join('')}</div>`}
             ${canEditProfile ? `<button class="btn-ghost" style="position:absolute;bottom:-8px;left:50%;transform:translateX(-50%);padding:2px 8px;font-size:10.5px;white-space:nowrap;" onclick="profilePhotoTarget='${id}'; document.getElementById('profile-photo-upload').click()">Change photo</button>` : ''}
           </div>
+          <div><div style="font-size:12px;color:var(--slate);font-weight:600;text-transform:uppercase;letter-spacing:0.05em;">Student ID</div><div class="mono" style="margin-top:3px;">${s.studentId||'—'}</div></div>
           <div><div style="font-size:12px;color:var(--slate);font-weight:600;text-transform:uppercase;letter-spacing:0.05em;">Guardian contact</div><div class="mono" style="margin-top:3px;">${s.guardian}</div></div>
         </div>
       </div>
@@ -3494,7 +3652,7 @@ function renderParentPortal(){
       ${s.photo ? `<img class="photo" src="${s.photo}">` : `<div class="avatar-fallback">${s.name.split(' ').map(w=>w[0]).slice(0,2).join('')}</div>`}
       <div>
         <h2>${s.name}</h2>
-        <div class="sub">${cls.name} · Class Teacher: ${classTeacherUser?classTeacherUser.name:'—'}</div>
+        <div class="sub">${cls.name} · Class Teacher: ${classTeacherUser?classTeacherUser.name:'—'}${s.studentId?' · ID: '+s.studentId:''}</div>
       </div>
       <div class="term-chip">
         ${termLabel} · Week ${curWeek} of ${weeks}
@@ -3699,7 +3857,7 @@ function renderStaff(){
           <input type="text" id="new-staff-name" placeholder="Full name">
           <input type="text" id="new-staff-username" placeholder="Username">
           <input type="password" id="new-staff-password" placeholder="Password">
-          <input type="text" id="new-staff-contact" placeholder="Contact phone (optional)">
+          <input type="text" id="new-staff-contact" placeholder="Phone number (for password reset)">
           <select id="new-staff-role">
             <option value="Teacher">Teacher</option>
             <option value="Admin">Administrator</option>
@@ -3735,12 +3893,13 @@ function renderStaff(){
           ].filter(Boolean).join(' · ') || 'No class or subject assigned yet' : '';
           const wardNames = u.role==='Parent' ? (u.wardIds||[]).map(id=>{ const st=studentById(id); return st?st.name:null; }).filter(Boolean) : [];
           const wardSummary = u.role==='Parent' ? (wardNames.length ? 'Ward(s): '+wardNames.join(', ') : 'No child linked') : '';
+          const displayId = u.staffId || u.parentId || null;
           return `
           <div class="ledger-row">
             <span class="idx mono">${String(i+1).padStart(2,'0')}</span>
             <div style="flex:1;">
-              <div style="font-weight:600;">${u.name} ${u.username===session.username ? '<span class="mono" style=\'font-size:10.5px;color:var(--slate);\'>(you)</span>':''}</div>
-              <div style="font-size:12px;color:var(--slate);">@${u.username} · ${u.role}${assignSummary ? ' · '+assignSummary : ''}${wardSummary ? ' · '+wardSummary : ''}</div>
+              <div style="font-weight:600;">${u.name} ${displayId ? `<span class="mono" style='font-size:10.5px;color:var(--brass);'>${displayId}</span>` : ''} ${u.username===session.username ? '<span class="mono" style=\'font-size:10.5px;color:var(--slate);\'>(you)</span>':''}</div>
+              <div style="font-size:12px;color:var(--slate);">@${u.username} · ${u.role}${u.contact ? ' · '+u.contact : ' · <span style=\'color:var(--brick);\'>no phone on file</span>'}${assignSummary ? ' · '+assignSummary : ''}${wardSummary ? ' · '+wardSummary : ''}</div>
             </div>
             <button class="btn-ghost" onclick="editAccount('${u.username}')">Edit</button>
             <button class="btn-ghost" onclick="resetPassword('${u.username}')">Reset password</button>
@@ -3841,15 +4000,24 @@ async function addStaff(){
   const contact = document.getElementById('new-staff-contact').value.trim();
   const role = document.getElementById('new-staff-role').value;
   const errEl = document.getElementById('staff-error');
-  if(!name || !username || !password){ return; }
-  if(DB.users.find(u=>u.username.toLowerCase()===username)){ errEl.style.display='block'; return; }
+  if(!name || !username || !password || !contact){
+    errEl.textContent = 'Please fill in name, username, password, and phone number (needed for password reset).';
+    errEl.style.display='block';
+    return;
+  }
+  if(DB.users.find(u=>u.username.toLowerCase()===username)){
+    errEl.textContent = 'That username is already taken.';
+    errEl.style.display='block';
+    return;
+  }
   errEl.style.display='none';
-  DB.users.push({ name, username, password, role, signature:null, contact });
+  DB.users.push({ name, username, password, role, signature:null, contact, resetOTP:null, staffId: role==='Teacher' ? nextDisplayId('TCH') : undefined });
   await saveDB();
   render();
 }
 async function processStaffRows(rows){
   let added=0; const skipped=[];
+  const usedUsernames = new Set(DB.users.map(u=>u.username.toLowerCase()));
   rows.forEach((r,i)=>{
     const name = fieldVal(r,'name','full name','staff name');
     const username = fieldVal(r,'username','user name','login').toLowerCase();
@@ -3858,8 +4026,9 @@ async function processStaffRows(rows){
     let role = fieldVal(r,'role','position');
     role = /admin/i.test(role) ? 'Admin' : 'Teacher';
     if(!name || !username || !password){ skipped.push(`Row ${i+1}: missing name, username, or password`); return; }
-    if(DB.users.find(u=>u.username.toLowerCase()===username)){ skipped.push(`Row ${i+1} (${name}): username "${username}" already taken`); return; }
-    DB.users.push({ name, username, password, role, signature:null, contact });
+    if(usedUsernames.has(username)){ skipped.push(`Row ${i+1} (${name}): username "${username}" already taken — usernames must be unique`); return; }
+    usedUsernames.add(username);
+    DB.users.push({ name, username, password, role, signature:null, contact, resetOTP:null, staffId: role==='Teacher' ? nextDisplayId('TCH') : undefined });
     added++;
   });
   await saveDB();
@@ -3898,9 +4067,14 @@ async function editAccount(username){
     return;
   }
 
+  const newPhoneRaw = prompt('Phone number (used for password reset):', u.contact || '');
+  if(newPhoneRaw===null) return; // cancelled
+  const newPhone = newPhoneRaw.trim();
+
   const oldUsername = u.username;
   u.name = newName;
   u.username = newUsername;
+  u.contact = newPhone;
 
   if(oldUsername!==newUsername){
     // keep class/subject teacher assignments pointing at the right person
@@ -3970,6 +4144,7 @@ function buildReportCardHTML(studentId){
       </div>
       <div class="rc-meta">
         <div><b>Student</b>${s.name}</div>
+        <div><b>Student ID</b>${s.studentId||'—'}</div>
         <div><b>Class</b>${cls.name}</div>
         <div><b>Class Teacher</b>${classTeacherName}</div>
         <div><b>Class Teacher contact</b>${(classTeacherUser && classTeacherUser.contact) || '—'}</div>
