@@ -972,6 +972,19 @@ function activeSession(){
   }
   return { startDate: DB.term?.startDate || todayStr(0), weeks: DB.term?.weeks || 12 };
 }
+/* Which System status ('term'/'vacation'/'inactive') was in effect on a given date, based on the
+   history of status changes recorded in DB.statusLog. Used so that stretches where the admin had
+   switched the system to Inactive (school closed between terms/vacations) never get flagged as
+   "missed" attendance once things start back up again. */
+function statusOnDate(date){
+  if(!DB.statusLog || !DB.statusLog.length) return DB.systemStatus || 'term';
+  let status = DB.statusLog[0].status;
+  for(const entry of DB.statusLog){
+    if(entry.from <= date) status = entry.status;
+    else break;
+  }
+  return status;
+}
 function termStartMonday(){
   return mondayOf(activeSession().startDate);
 }
@@ -1194,7 +1207,7 @@ function seedDB(){
     vacation: { JHS: [], Primary: [] },
   };
 
-  return { classes, students, gradebook, attendance, users, term, vacation, headTeacherUsername: 'admin', assistantHeadTeacherUsername: null, weeklyMeta: {}, attendanceMeta: {}, billItems: { LowerPrimary:[], UpperPrimary:[], JHS:[] }, school: { name:'Clyde Academy', crest:null }, systemStatus: 'term', presence: {}, timetableSlots, timetable: { term: {}, vacation: {} }, idCounters: { STU:0, TCH:0, PAR:0 } };
+  return { classes, students, gradebook, attendance, users, term, vacation, headTeacherUsername: 'admin', assistantHeadTeacherUsername: null, weeklyMeta: {}, attendanceMeta: {}, billItems: { LowerPrimary:[], UpperPrimary:[], JHS:[] }, school: { name:'Clyde Academy', crest:null }, systemStatus: 'term', statusLog: [{ status:'term', from: todayStr(-3650) }], presence: {}, timetableSlots, timetable: { term: {}, vacation: {} }, idCounters: { STU:0, TCH:0, PAR:0 } };
 }
 
 function migrateDB(){
@@ -1276,6 +1289,7 @@ function migrateDB(){
   if(DB.vacation.weeks > 4){ DB.vacation.weeks = 4; changed = true; }
   if(!DB.school){ DB.school = { name:'Clyde Academy', crest:null }; changed = true; }
   if(!DB.systemStatus){ DB.systemStatus = 'term'; changed = true; }
+  if(!DB.statusLog || !DB.statusLog.length){ DB.statusLog = [{ status: DB.systemStatus, from: todayStr(-3650) }]; changed = true; }
   DB.users.forEach(u=>{
     if(u.signature===undefined){ u.signature = null; changed = true; }
     if(u.contact===undefined){ u.contact = ''; changed = true; }
@@ -2742,6 +2756,7 @@ async function bulkMarkAllMissedAttendancePresent(){
   DB.classes.forEach(c=>{
     schoolDaysSoFar().forEach(({date})=>{
       if(date>=today) return; // never touch today or the future — those aren't "missed" yet
+      if(statusOnDate(date)==='inactive') return; // school was closed then — nothing was missed
       const taken = !!(DB.attendance[c.id] && DB.attendance[c.id][date] && Object.keys(DB.attendance[c.id][date]).length);
       if(!taken) toFill.push({ classId:c.id, date });
     });
@@ -3303,6 +3318,10 @@ function renderActivity(){
   const attRows = [];
   DB.classes.forEach(c=>{
     schoolDaysSoFar().forEach(({date, week})=>{
+      // Days that fell while System status was "Inactive" were never meant to have attendance
+      // taken — school was closed between terms/vacations — so they're left out entirely rather
+      // than showing up as "missed".
+      if(statusOnDate(date)==='inactive') return;
       const taken = !!(DB.attendance[c.id] && DB.attendance[c.id][date] && Object.keys(DB.attendance[c.id][date]).length);
       const meta = DB.attendanceMeta[c.id]?.[date];
       attRows.push({
@@ -3970,6 +3989,14 @@ async function saveVacationSetup(){
 }
 async function setSystemStatus(status){
   DB.systemStatus = status;
+  if(!DB.statusLog) DB.statusLog = [];
+  const today = todayStr(0);
+  // if status already changed earlier today, just update that entry rather than stacking duplicates
+  if(DB.statusLog.length && DB.statusLog[DB.statusLog.length-1].from === today){
+    DB.statusLog[DB.statusLog.length-1].status = status;
+  } else {
+    DB.statusLog.push({ status, from: today });
+  }
   await saveDB();
   render();
 }
