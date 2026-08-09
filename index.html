@@ -2732,6 +2732,34 @@ async function markAttendance(classId, date, studentId, status){
   await saveDB();
   render();
 }
+/* Bulk-clean every flagged "Not taken" day, across every class, by marking the whole roster
+   Present for each missed past school day. Only touches days that genuinely have no register
+   entry yet (isPast && !taken, same rule the Staff Activity flags use) — today and future days,
+   and any day already taken (even partially), are left untouched. */
+async function bulkMarkAllMissedAttendancePresent(){
+  const today = todayStr(0);
+  const toFill = [];
+  DB.classes.forEach(c=>{
+    schoolDaysSoFar().forEach(({date})=>{
+      if(date>=today) return; // never touch today or the future — those aren't "missed" yet
+      const taken = !!(DB.attendance[c.id] && DB.attendance[c.id][date] && Object.keys(DB.attendance[c.id][date]).length);
+      if(!taken) toFill.push({ classId:c.id, date });
+    });
+  });
+  if(!toFill.length){ alert('Nothing to clean — every school day already has attendance recorded.'); return; }
+  if(!confirm(`This will mark the entire roster Present for ${toFill.length} missed day(s) across all classes. This can't be undone — continue?`)) return;
+  toFill.forEach(({classId, date})=>{
+    const roster = studentsOf(classId);
+    if(!DB.attendance[classId]) DB.attendance[classId] = {};
+    const rec = {};
+    roster.forEach(s=>{ rec[s.id] = 'present'; });
+    DB.attendance[classId][date] = rec;
+    recordAttendanceMeta(classId, date);
+  });
+  await saveDB();
+  render();
+  alert(`Marked ${toFill.length} missed day(s) as Present for every student.`);
+}
 
 /* ============================================================
    Classes (admin) — full CRUD: classes, subjects, teacher assignment
@@ -3339,7 +3367,7 @@ function renderActivity(){
       </div>
     </div>
 
-    <div class="panel"><div class="panel-head"><h3>Attendance activity — class teachers</h3></div>
+    <div class="panel"><div class="panel-head"><h3>Attendance activity — class teachers</h3>${attFlags ? `<button class="btn-small brass" onclick="bulkMarkAllMissedAttendancePresent()">Mark all "Not taken" as Present (${attFlags})</button>` : ''}</div>
       <div class="panel-body" style="padding-top:10px;">
         <table class="reg">
           <thead><tr><th>Class</th><th>Class teacher</th><th>Date</th><th>Status</th></tr></thead>
