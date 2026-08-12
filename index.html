@@ -1784,6 +1784,12 @@ function hidePhoneLogin(){
   document.getElementById('phone-login-screen').style.display = 'none';
   document.getElementById('login-screen').style.display = 'flex';
   phoneConfirmationResult = null;
+  if(recaptchaVerifier){
+    try{ recaptchaVerifier.clear(); }catch(clearErr){ /* ignore */ }
+    recaptchaVerifier = null;
+  }
+  const container = document.getElementById('recaptcha-container');
+  if(container) container.innerHTML = '';
 }
 async function startPhoneLogin(resend){
   const errEl = document.getElementById('pl-step1-error');
@@ -1817,8 +1823,15 @@ async function startPhoneLogin(resend){
     console.error('Phone sign-in failed to send code', e);
     errEl.textContent = 'Could not send the code right now. ' + (e && e.message ? e.message : 'Please try again shortly.');
     errEl.style.display = 'block';
-    // a failed attempt can leave the invisible reCAPTCHA in a bad state — rebuild it next try
+    // a failed attempt can leave the invisible reCAPTCHA in a bad state — tear it down
+    // (both the JS object AND the widget markup it injected) so the next attempt can
+    // safely re-render into the same container instead of throwing "already rendered".
+    if(recaptchaVerifier){
+      try{ recaptchaVerifier.clear(); }catch(clearErr){ /* ignore */ }
+    }
     recaptchaVerifier = null;
+    const container = document.getElementById('recaptcha-container');
+    if(container) container.innerHTML = '';
   }
 }
 async function verifyPhoneLogin(){
