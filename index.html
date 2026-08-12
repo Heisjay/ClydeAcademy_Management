@@ -8,6 +8,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Work+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-auth-compat.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
   :root{
@@ -578,6 +579,7 @@
     <p class="login-foot" id="login-footer">Staff access only · Clyde Academy © 2026</p>
     <p class="login-foot" style="margin-top:8px;"><button class="auth-link" onclick="showForgotPassword()">Forgot your password?</button></p>
     <p class="login-foot" style="margin-top:8px;">First time here as a teacher? <button class="auth-link" onclick="showRegister()">Register an account</button></p>
+    <p class="login-foot" style="margin-top:8px;">Parent? <button class="auth-link" onclick="showPhoneLogin()">Sign in with your phone number</button></p>
     <script>
       document.getElementById('login-username').addEventListener('keydown', e=>{ if(e.key==='Enter') login(); });
       document.getElementById('login-password').addEventListener('keydown', e=>{ if(e.key==='Enter') login(); });
@@ -705,6 +707,41 @@
     document.getElementById('fp-username').addEventListener('keydown', e=>{ if(e.key==='Enter') startPasswordReset(); });
     document.getElementById('fp-code').addEventListener('keydown', e=>{ if(e.key==='Enter') completePasswordReset(); });
     document.getElementById('fp-newpass2').addEventListener('keydown', e=>{ if(e.key==='Enter') completePasswordReset(); });
+  </script>
+</div>
+
+<!-- ===================== PARENT PHONE SIGN-IN (REAL SMS OTP) ===================== -->
+<div id="phone-login-screen" style="display:none;">
+  <div style="min-height:100vh; display:flex; align-items:center; justify-content:center; background:linear-gradient(var(--ink), var(--ink)); padding:24px;">
+    <div class="login-card">
+      <div class="login-head">
+        <div class="crest" id="phone-login-crest"><span>CA</span></div>
+        <div><h1 class="login-title">Parent sign-in</h1></div>
+      </div>
+
+      <div id="pl-step1">
+        <p class="login-sub">Enter the phone number on your parent account — we'll text you a one-time code.</p>
+        <div class="field"><label>Phone number</label><input type="tel" id="pl-phone" placeholder="e.g. 024 111 2233" autocomplete="tel"></div>
+        <p id="pl-step1-error" style="display:none;color:var(--brick);font-size:12.5px;font-weight:600;margin:-8px 0 14px;"></p>
+        <button class="btn-primary" onclick="startPhoneLogin()">Send code</button>
+      </div>
+
+      <div id="pl-step2" style="display:none;">
+        <p class="login-sub" id="pl-sent-note"></p>
+        <div class="field"><label>One-time code</label><input type="text" id="pl-code" maxlength="6" inputmode="numeric" placeholder="000000"></div>
+        <p id="pl-step2-error" style="display:none;color:var(--brick);font-size:12.5px;font-weight:600;margin:-8px 0 14px;"></p>
+        <button class="btn-primary" onclick="verifyPhoneLogin()">Verify &amp; sign in</button>
+        <p class="login-foot"><button class="auth-link" onclick="startPhoneLogin(true)">Resend code</button></p>
+      </div>
+
+      <p class="login-foot">Prefer a password? <button class="auth-link" onclick="hidePhoneLogin()">Back to sign in</button></p>
+      <p class="login-foot" style="margin-top:8px;font-size:11.5px;">No account with that number yet? <button class="auth-link" onclick="hidePhoneLogin(); showRegister();">Register as a parent</button> first.</p>
+      <div id="recaptcha-container"></div>
+    </div>
+  </div>
+  <script>
+    document.getElementById('pl-phone').addEventListener('keydown', e=>{ if(e.key==='Enter') startPhoneLogin(); });
+    document.getElementById('pl-code').addEventListener('keydown', e=>{ if(e.key==='Enter') verifyPhoneLogin(); });
   </script>
 </div>
 
@@ -1084,6 +1121,7 @@ function applyBranding(){
   const loginCrest = document.getElementById('login-crest'); if(loginCrest) loginCrest.innerHTML = crestHTML;
   const regCrest = document.getElementById('register-crest'); if(regCrest) regCrest.innerHTML = crestHTML;
   const forgotCrest = document.getElementById('forgot-crest'); if(forgotCrest) forgotCrest.innerHTML = crestHTML;
+  const phoneLoginCrest = document.getElementById('phone-login-crest'); if(phoneLoginCrest) phoneLoginCrest.innerHTML = crestHTML;
   const sidebarCrest = document.getElementById('sidebar-crest'); if(sidebarCrest) sidebarCrest.innerHTML = crestHTML;
   const loginName = document.getElementById('login-school-name'); if(loginName) loginName.textContent = name;
   const loginFooter = document.getElementById('login-footer'); if(loginFooter) loginFooter.textContent = `Staff access only · ${name} © ${new Date().getFullYear()}`;
@@ -1689,8 +1727,12 @@ async function login(){
   const errEl = document.getElementById('login-error');
   if(!user){ errEl.style.display='block'; return; }
   errEl.style.display='none';
-  session = { role:user.role, name:user.name, username:user.username };
   document.getElementById('login-screen').style.display = 'none';
+  completeSignIn(user);
+}
+/* Shared "finish signing in" step, used by both username/password login and phone/OTP login below. */
+function completeSignIn(user){
+  session = { role:user.role, name:user.name, username:user.username };
   document.getElementById('app-screen').style.display = 'block';
   document.getElementById('user-name').textContent = user.name;
   const myClasses = classTeacherClasses();
@@ -1701,6 +1743,106 @@ async function login(){
   renderNav();
   render();
   startPresenceHeartbeat();
+}
+
+/* ============================================================
+   PARENT PHONE / SMS-OTP SIGN-IN (real Firebase Phone Auth)
+   ------------------------------------------------------------
+   This is separate from the on-screen "forgot password" reset
+   code above — that one needs no SMS provider at all. This one
+   sends an actual text message via Firebase Authentication, so
+   it only works once Phone sign-in is enabled on the Blaze plan
+   in the Firebase console for this project. If it isn't set up
+   yet, this fails gracefully with a clear message rather than
+   breaking the page.
+============================================================ */
+let recaptchaVerifier = null;
+let phoneConfirmationResult = null;
+
+/* Ghana-style normalization: "024 111 2233" / "0241112233" / "+233241112233" all compare equal. */
+function normalizePhone(raw){
+  if(!raw) return '';
+  let s = String(raw).trim().replace(/[\s\-()]/g,'');
+  if(s.startsWith('+')) return s;
+  if(s.startsWith('00')) return '+'+s.slice(2);
+  if(s.startsWith('0')) return '+233'+s.slice(1);
+  if(s.startsWith('233')) return '+'+s;
+  return '+233'+s;
+}
+function firebaseAuthReady(){
+  return typeof firebase!=='undefined' && firebase.apps && firebase.apps.length>0 && typeof firebase.auth==='function';
+}
+function showPhoneLogin(){
+  document.getElementById('login-screen').style.display = 'none';
+  document.getElementById('phone-login-screen').style.display = 'flex';
+  document.getElementById('pl-step1').style.display = 'block';
+  document.getElementById('pl-step2').style.display = 'none';
+  document.getElementById('pl-step1-error').style.display = 'none';
+  document.getElementById('pl-step2-error').style.display = 'none';
+}
+function hidePhoneLogin(){
+  document.getElementById('phone-login-screen').style.display = 'none';
+  document.getElementById('login-screen').style.display = 'flex';
+  phoneConfirmationResult = null;
+}
+async function startPhoneLogin(resend){
+  const errEl = document.getElementById('pl-step1-error');
+  errEl.style.display = 'none';
+  if(!firebaseAuthReady()){
+    errEl.textContent = "Phone sign-in isn't switched on for this school yet — ask the IT admin, or sign in with a password instead.";
+    errEl.style.display = 'block';
+    return;
+  }
+  const phone = normalizePhone(document.getElementById('pl-phone').value);
+  if(!phone || phone.replace('+','').length < 10){
+    errEl.textContent = 'Enter a valid phone number.';
+    errEl.style.display = 'block';
+    return;
+  }
+  const match = DB.users.find(u=>u.role==='Parent' && normalizePhone(u.contact)===phone);
+  if(!match){
+    errEl.textContent = "We couldn't find a parent account with that number. Register first, then come back here.";
+    errEl.style.display = 'block';
+    return;
+  }
+  try{
+    if(!recaptchaVerifier){
+      recaptchaVerifier = new firebase.auth.RecaptchaVerifier('recaptcha-container', { size:'invisible' });
+    }
+    phoneConfirmationResult = await firebase.auth().signInWithPhoneNumber(phone, recaptchaVerifier);
+    document.getElementById('pl-step1').style.display = 'none';
+    document.getElementById('pl-step2').style.display = 'block';
+    document.getElementById('pl-sent-note').textContent = (resend?'Sent again — ':'')+'We texted a 6-digit code to '+phone+'.';
+  }catch(e){
+    console.error('Phone sign-in failed to send code', e);
+    errEl.textContent = 'Could not send the code right now. ' + (e && e.message ? e.message : 'Please try again shortly.');
+    errEl.style.display = 'block';
+    // a failed attempt can leave the invisible reCAPTCHA in a bad state — rebuild it next try
+    recaptchaVerifier = null;
+  }
+}
+async function verifyPhoneLogin(){
+  const errEl = document.getElementById('pl-step2-error');
+  errEl.style.display = 'none';
+  const code = document.getElementById('pl-code').value.trim();
+  if(!code){ errEl.textContent = 'Enter the code you received.'; errEl.style.display = 'block'; return; }
+  if(!phoneConfirmationResult){ errEl.textContent = 'That code expired — request a new one.'; errEl.style.display = 'block'; return; }
+  try{
+    const cred = await phoneConfirmationResult.confirm(code);
+    const verifiedPhone = normalizePhone(cred.user.phoneNumber);
+    const match = DB.users.find(u=>u.role==='Parent' && normalizePhone(u.contact)===verifiedPhone);
+    if(!match){
+      errEl.textContent = "Verified, but no parent account matches this number anymore. Please contact the school.";
+      errEl.style.display = 'block';
+      return;
+    }
+    document.getElementById('phone-login-screen').style.display = 'none';
+    completeSignIn(match);
+  }catch(e){
+    console.error('Phone code verification failed', e);
+    errEl.textContent = "That code didn't match. " + (e && e.message ? e.message : 'Please try again.');
+    errEl.style.display = 'block';
+  }
 }
 /* Lightweight "who's online" tracking — pings a shared timestamp every so often while a session is
    open, so the admin can see who's currently active without needing a separate backend. */
