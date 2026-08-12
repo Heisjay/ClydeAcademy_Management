@@ -736,7 +736,7 @@
 
       <p class="login-foot">Prefer a password? <button class="auth-link" onclick="hidePhoneLogin()">Back to sign in</button></p>
       <p class="login-foot" style="margin-top:8px;font-size:11.5px;">No account with that number yet? <button class="auth-link" onclick="hidePhoneLogin(); showRegister();">Register as a parent</button> first.</p>
-      <div id="recaptcha-container"></div>
+      <div id="recaptcha-slot"></div>
     </div>
   </div>
   <script>
@@ -1772,6 +1772,26 @@ function normalizePhone(raw){
 function firebaseAuthReady(){
   return typeof firebase!=='undefined' && firebase.apps && firebase.apps.length>0 && typeof firebase.auth==='function';
 }
+/* grecaptcha remembers, internally, which DOM node it already rendered a widget onto —
+   that memory isn't cleared just by emptying innerHTML, and isn't fully released by
+   RecaptchaVerifier.clear() either in every version. The reliable fix is to never reuse
+   the same node: throw away the old element entirely and mint a brand-new one each time
+   we need to (re)build the verifier. */
+function resetRecaptcha(){
+  if(recaptchaVerifier){
+    try{ recaptchaVerifier.clear(); }catch(clearErr){ /* ignore */ }
+    recaptchaVerifier = null;
+  }
+  const slot = document.getElementById('recaptcha-slot');
+  if(slot){
+    slot.innerHTML = '';
+    const fresh = document.createElement('div');
+    fresh.id = 'recaptcha-container-' + Date.now() + '-' + Math.floor(Math.random()*1e6);
+    slot.appendChild(fresh);
+    return fresh.id;
+  }
+  return null;
+}
 function showPhoneLogin(){
   document.getElementById('login-screen').style.display = 'none';
   document.getElementById('phone-login-screen').style.display = 'flex';
@@ -1779,17 +1799,13 @@ function showPhoneLogin(){
   document.getElementById('pl-step2').style.display = 'none';
   document.getElementById('pl-step1-error').style.display = 'none';
   document.getElementById('pl-step2-error').style.display = 'none';
+  resetRecaptcha();
 }
 function hidePhoneLogin(){
   document.getElementById('phone-login-screen').style.display = 'none';
   document.getElementById('login-screen').style.display = 'flex';
   phoneConfirmationResult = null;
-  if(recaptchaVerifier){
-    try{ recaptchaVerifier.clear(); }catch(clearErr){ /* ignore */ }
-    recaptchaVerifier = null;
-  }
-  const container = document.getElementById('recaptcha-container');
-  if(container) container.innerHTML = '';
+  resetRecaptcha();
 }
 async function startPhoneLogin(resend){
   const errEl = document.getElementById('pl-step1-error');
@@ -1813,7 +1829,8 @@ async function startPhoneLogin(resend){
   }
   try{
     if(!recaptchaVerifier){
-      recaptchaVerifier = new firebase.auth.RecaptchaVerifier('recaptcha-container', { size:'invisible' });
+      const containerId = resetRecaptcha();
+      recaptchaVerifier = new firebase.auth.RecaptchaVerifier(containerId, { size:'invisible' });
     }
     phoneConfirmationResult = await firebase.auth().signInWithPhoneNumber(phone, recaptchaVerifier);
     document.getElementById('pl-step1').style.display = 'none';
@@ -1823,15 +1840,9 @@ async function startPhoneLogin(resend){
     console.error('Phone sign-in failed to send code', e);
     errEl.textContent = 'Could not send the code right now. ' + (e && e.message ? e.message : 'Please try again shortly.');
     errEl.style.display = 'block';
-    // a failed attempt can leave the invisible reCAPTCHA in a bad state — tear it down
-    // (both the JS object AND the widget markup it injected) so the next attempt can
-    // safely re-render into the same container instead of throwing "already rendered".
-    if(recaptchaVerifier){
-      try{ recaptchaVerifier.clear(); }catch(clearErr){ /* ignore */ }
-    }
-    recaptchaVerifier = null;
-    const container = document.getElementById('recaptcha-container');
-    if(container) container.innerHTML = '';
+    // a failed attempt can leave the invisible reCAPTCHA in a bad state — tear it all
+    // the way down to a fresh DOM node so the next attempt renders cleanly.
+    resetRecaptcha();
   }
 }
 async function verifyPhoneLogin(){
