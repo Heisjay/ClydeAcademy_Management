@@ -579,7 +579,7 @@
     <p class="login-foot" id="login-footer">Staff access only · Clyde Academy © 2026</p>
     <p class="login-foot" style="margin-top:8px;"><button class="auth-link" onclick="showForgotPassword()">Forgot your password?</button></p>
     <p class="login-foot" style="margin-top:8px;">First time here as a teacher? <button class="auth-link" onclick="showRegister()">Register an account</button></p>
-    <p class="login-foot" style="margin-top:8px;">Parent? <button class="auth-link" onclick="showPhoneLogin()">Sign in with your phone number</button></p>
+    <p class="login-foot" style="margin-top:8px;">Parent? <button class="auth-link" onclick="showEmailLogin()">Sign in with an email link</button></p>
     <script>
       document.getElementById('login-username').addEventListener('keydown', e=>{ if(e.key==='Enter') login(); });
       document.getElementById('login-password').addEventListener('keydown', e=>{ if(e.key==='Enter') login(); });
@@ -660,10 +660,11 @@
 
       <div class="field"><label id="reg-name-label">Full name</label><input type="text" id="reg-name" placeholder="e.g. Mr. Owusu"></div>
       <div class="field"><label>Phone number</label><input type="tel" id="reg-phone" placeholder="e.g. 024 111 2233" autocomplete="tel"></div>
+      <div class="field"><label id="reg-email-label">Email address</label><input type="email" id="reg-email" placeholder="e.g. name@example.com" autocomplete="email"></div>
       <div class="field"><label>Choose a username</label><input type="text" id="reg-username" placeholder="e.g. owusu"></div>
       <div class="field"><label>Choose a password</label><input type="password" id="reg-password" placeholder="••••••••"></div>
       <div class="field"><label>Confirm password</label><input type="password" id="reg-password2" placeholder="••••••••"></div>
-      <p class="login-sub" style="margin-top:-8px;">We'll use this number to send a one-time code if you ever forget your password.</p>
+      <p class="login-sub" style="margin-top:-8px;">We'll use your phone number to send a one-time code if you ever forget your password<span id="reg-email-note-parent" style="display:none;">, and your email to send a sign-in link if you'd rather skip the password next time</span>.</p>
       <p id="register-error" style="display:none;color:var(--brick);font-size:12.5px;font-weight:600;margin:-8px 0 14px;"></p>
 
       <button class="btn-primary" onclick="submitRegistration()">Create account</button>
@@ -710,40 +711,42 @@
   </script>
 </div>
 
-<!-- ===================== PARENT PHONE SIGN-IN (REAL SMS OTP) ===================== -->
-<div id="phone-login-screen" style="display:none;">
+<!-- ===================== PARENT EMAIL SIGN-IN (MAGIC LINK) ===================== -->
+<div id="email-login-screen" style="display:none;">
   <div style="min-height:100vh; display:flex; align-items:center; justify-content:center; background:linear-gradient(var(--ink), var(--ink)); padding:24px;">
     <div class="login-card">
       <div class="login-head">
-        <div class="crest" id="phone-login-crest"><span>CA</span></div>
+        <div class="crest" id="email-login-crest"><span>CA</span></div>
         <div><h1 class="login-title">Parent sign-in</h1></div>
       </div>
 
-      <div id="pl-step1">
-        <p class="login-sub">Enter the phone number on your parent account — we'll text you a one-time code.</p>
-        <div class="field"><label>Phone number</label><input type="tel" id="pl-phone" placeholder="e.g. 024 111 2233" autocomplete="tel"></div>
-        <p id="pl-step1-error" style="display:none;color:var(--brick);font-size:12.5px;font-weight:600;margin:-8px 0 14px;"></p>
-        <button class="btn-primary" onclick="startPhoneLogin()">Send code</button>
+      <div id="el-step1">
+        <p class="login-sub">Enter the email on your parent account — we'll send you a link. No password needed.</p>
+        <div class="field"><label>Email address</label><input type="email" id="el-email" placeholder="e.g. name@example.com" autocomplete="email"></div>
+        <p id="el-step1-error" style="display:none;color:var(--brick);font-size:12.5px;font-weight:600;margin:-8px 0 14px;"></p>
+        <button class="btn-primary" onclick="startEmailLogin()">Send sign-in link</button>
       </div>
 
-      <div id="pl-step2" style="display:none;">
-        <p class="login-sub" id="pl-sent-note"></p>
-        <div class="field"><label>One-time code</label><input type="text" id="pl-code" maxlength="6" inputmode="numeric" placeholder="000000"></div>
-        <p id="pl-step2-error" style="display:none;color:var(--brick);font-size:12.5px;font-weight:600;margin:-8px 0 14px;"></p>
-        <button class="btn-primary" onclick="verifyPhoneLogin()">Verify &amp; sign in</button>
-        <p class="login-foot"><button class="auth-link" onclick="startPhoneLogin(true)">Resend code</button></p>
+      <div id="el-step2" style="display:none;">
+        <p class="login-sub" id="el-sent-note"></p>
+        <p class="login-sub" style="font-size:12px;">Open it on this device to finish signing in. Didn't get it? Check spam, or resend below.</p>
+        <p class="login-foot"><button class="auth-link" onclick="startEmailLogin(true)">Resend link</button></p>
       </div>
 
-      <p class="login-foot">Prefer a password? <button class="auth-link" onclick="hidePhoneLogin()">Back to sign in</button></p>
-      <p class="login-foot" style="margin-top:8px;font-size:11.5px;">No account with that number yet? <button class="auth-link" onclick="hidePhoneLogin(); showRegister();">Register as a parent</button> first.</p>
-      <div id="recaptcha-slot"></div>
+      <div id="el-step3" style="display:none;">
+        <p class="login-sub" id="el-completing-note">Signing you in…</p>
+        <p id="el-step3-error" style="display:none;color:var(--brick);font-size:12.5px;font-weight:600;margin:-8px 0 14px;"></p>
+      </div>
+
+      <p class="login-foot">Prefer a password? <button class="auth-link" onclick="hideEmailLogin()">Back to sign in</button></p>
+      <p class="login-foot" style="margin-top:8px;font-size:11.5px;">No account with that email yet? <button class="auth-link" onclick="hideEmailLogin(); showRegister();">Register as a parent</button> first.</p>
     </div>
   </div>
   <script>
-    document.getElementById('pl-phone').addEventListener('keydown', e=>{ if(e.key==='Enter') startPhoneLogin(); });
-    document.getElementById('pl-code').addEventListener('keydown', e=>{ if(e.key==='Enter') verifyPhoneLogin(); });
+    document.getElementById('el-email').addEventListener('keydown', e=>{ if(e.key==='Enter') startEmailLogin(); });
   </script>
 </div>
+
 
 <!-- ===================== PRINTABLE REPORT CARD ===================== -->
 <div id="print-area"></div>
@@ -1121,7 +1124,7 @@ function applyBranding(){
   const loginCrest = document.getElementById('login-crest'); if(loginCrest) loginCrest.innerHTML = crestHTML;
   const regCrest = document.getElementById('register-crest'); if(regCrest) regCrest.innerHTML = crestHTML;
   const forgotCrest = document.getElementById('forgot-crest'); if(forgotCrest) forgotCrest.innerHTML = crestHTML;
-  const phoneLoginCrest = document.getElementById('phone-login-crest'); if(phoneLoginCrest) phoneLoginCrest.innerHTML = crestHTML;
+  const emailLoginCrest = document.getElementById('email-login-crest'); if(emailLoginCrest) emailLoginCrest.innerHTML = crestHTML;
   const sidebarCrest = document.getElementById('sidebar-crest'); if(sidebarCrest) sidebarCrest.innerHTML = crestHTML;
   const loginName = document.getElementById('login-school-name'); if(loginName) loginName.textContent = name;
   const loginFooter = document.getElementById('login-footer'); if(loginFooter) loginFooter.textContent = `Staff access only · ${name} © ${new Date().getFullYear()}`;
@@ -1331,6 +1334,7 @@ function migrateDB(){
   DB.users.forEach(u=>{
     if(u.signature===undefined){ u.signature = null; changed = true; }
     if(u.contact===undefined){ u.contact = ''; changed = true; }
+    if(u.email===undefined){ u.email = ''; changed = true; }
     if(u.resetOTP===undefined){ u.resetOTP = null; changed = true; }
     if(!u.staffId && u.role==='Teacher'){ u.staffId = nextDisplayId('TCH'); changed = true; }
     if(!u.parentId && u.role==='Parent'){ u.parentId = nextDisplayId('PAR'); changed = true; }
@@ -1746,128 +1750,110 @@ function completeSignIn(user){
 }
 
 /* ============================================================
-   PARENT PHONE / SMS-OTP SIGN-IN (real Firebase Phone Auth)
+   PARENT EMAIL SIGN-IN (real Firebase Email Link / passwordless auth)
    ------------------------------------------------------------
-   This is separate from the on-screen "forgot password" reset
-   code above — that one needs no SMS provider at all. This one
-   sends an actual text message via Firebase Authentication, so
-   it only works once Phone sign-in is enabled on the Blaze plan
-   in the Firebase console for this project. If it isn't set up
-   yet, this fails gracefully with a clear message rather than
-   breaking the page.
+   Unlike phone/SMS auth, Firebase's email link sign-in is free on
+   the Spark (no-billing) plan — no Blaze upgrade needed. It only
+   works once "Email link (passwordless sign-in)" is turned on for
+   Email/Password sign-in in the Firebase console, and this site's
+   domain is in the Authorized domains list. If it isn't set up yet,
+   this fails gracefully with a clear message rather than breaking
+   the page.
 ============================================================ */
-let recaptchaVerifier = null;
-let phoneConfirmationResult = null;
-
-/* Ghana-style normalization: "024 111 2233" / "0241112233" / "+233241112233" all compare equal. */
-function normalizePhone(raw){
-  if(!raw) return '';
-  let s = String(raw).trim().replace(/[\s\-()]/g,'');
-  if(s.startsWith('+')) return s;
-  if(s.startsWith('00')) return '+'+s.slice(2);
-  if(s.startsWith('0')) return '+233'+s.slice(1);
-  if(s.startsWith('233')) return '+'+s;
-  return '+233'+s;
-}
+const EMAIL_LINK_STORAGE_KEY = 'clydeAcademyEmailForSignIn';
 function firebaseAuthReady(){
   return typeof firebase!=='undefined' && firebase.apps && firebase.apps.length>0 && typeof firebase.auth==='function';
 }
-/* grecaptcha remembers, internally, which DOM node it already rendered a widget onto —
-   that memory isn't cleared just by emptying innerHTML, and isn't fully released by
-   RecaptchaVerifier.clear() either in every version. The reliable fix is to never reuse
-   the same node: throw away the old element entirely and mint a brand-new one each time
-   we need to (re)build the verifier. */
-function resetRecaptcha(){
-  if(recaptchaVerifier){
-    try{ recaptchaVerifier.clear(); }catch(clearErr){ /* ignore */ }
-    recaptchaVerifier = null;
-  }
-  const slot = document.getElementById('recaptcha-slot');
-  if(slot){
-    slot.innerHTML = '';
-    const fresh = document.createElement('div');
-    fresh.id = 'recaptcha-container-' + Date.now() + '-' + Math.floor(Math.random()*1e6);
-    slot.appendChild(fresh);
-    return fresh.id;
-  }
-  return null;
-}
-function showPhoneLogin(){
+function showEmailLogin(){
   document.getElementById('login-screen').style.display = 'none';
-  document.getElementById('phone-login-screen').style.display = 'flex';
-  document.getElementById('pl-step1').style.display = 'block';
-  document.getElementById('pl-step2').style.display = 'none';
-  document.getElementById('pl-step1-error').style.display = 'none';
-  document.getElementById('pl-step2-error').style.display = 'none';
-  resetRecaptcha();
+  document.getElementById('email-login-screen').style.display = 'flex';
+  document.getElementById('el-step1').style.display = 'block';
+  document.getElementById('el-step2').style.display = 'none';
+  document.getElementById('el-step3').style.display = 'none';
+  document.getElementById('el-step1-error').style.display = 'none';
 }
-function hidePhoneLogin(){
-  document.getElementById('phone-login-screen').style.display = 'none';
+function hideEmailLogin(){
+  document.getElementById('email-login-screen').style.display = 'none';
   document.getElementById('login-screen').style.display = 'flex';
-  phoneConfirmationResult = null;
-  resetRecaptcha();
 }
-async function startPhoneLogin(resend){
-  const errEl = document.getElementById('pl-step1-error');
+async function startEmailLogin(resend){
+  const errEl = document.getElementById('el-step1-error');
   errEl.style.display = 'none';
   if(!firebaseAuthReady()){
-    errEl.textContent = "Phone sign-in isn't switched on for this school yet — ask the IT admin, or sign in with a password instead.";
+    errEl.textContent = "Email sign-in isn't switched on for this school yet — ask the IT admin, or sign in with a password instead.";
     errEl.style.display = 'block';
     return;
   }
-  const phone = normalizePhone(document.getElementById('pl-phone').value);
-  if(!phone || phone.replace('+','').length < 10){
-    errEl.textContent = 'Enter a valid phone number.';
+  const email = document.getElementById('el-email').value.trim();
+  if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){
+    errEl.textContent = 'Enter a valid email address.';
     errEl.style.display = 'block';
     return;
   }
-  const match = DB.users.find(u=>u.role==='Parent' && normalizePhone(u.contact)===phone);
+  const match = DB.users.find(u=>u.role==='Parent' && u.email && u.email.toLowerCase()===email.toLowerCase());
   if(!match){
-    errEl.textContent = "We couldn't find a parent account with that number. Register first, then come back here.";
+    errEl.textContent = "We couldn't find a parent account with that email. Register first, then come back here.";
     errEl.style.display = 'block';
     return;
   }
   try{
-    if(!recaptchaVerifier){
-      const containerId = resetRecaptcha();
-      recaptchaVerifier = new firebase.auth.RecaptchaVerifier(containerId, { size:'invisible' });
-    }
-    phoneConfirmationResult = await firebase.auth().signInWithPhoneNumber(phone, recaptchaVerifier);
-    document.getElementById('pl-step1').style.display = 'none';
-    document.getElementById('pl-step2').style.display = 'block';
-    document.getElementById('pl-sent-note').textContent = (resend?'Sent again — ':'')+'We texted a 6-digit code to '+phone+'.';
+    const actionCodeSettings = { url: location.origin + location.pathname, handleCodeInApp: true };
+    await firebase.auth().sendSignInLinkToEmail(email, actionCodeSettings);
+    try{ window.localStorage.setItem(EMAIL_LINK_STORAGE_KEY, email); }catch(e){ /* private browsing — user can still re-enter it below */ }
+    document.getElementById('el-step1').style.display = 'none';
+    document.getElementById('el-step2').style.display = 'block';
+    document.getElementById('el-sent-note').textContent = (resend?'Sent again — ':'')+'We emailed a sign-in link to '+email+'.';
   }catch(e){
-    console.error('Phone sign-in failed to send code', e);
-    errEl.textContent = 'Could not send the code right now. ' + (e && e.message ? e.message : 'Please try again shortly.');
+    console.error('Email sign-in failed to send link', e);
+    errEl.textContent = 'Could not send the link right now. ' + (e && e.message ? e.message : 'Please try again shortly.');
     errEl.style.display = 'block';
-    // a failed attempt can leave the invisible reCAPTCHA in a bad state — tear it all
-    // the way down to a fresh DOM node so the next attempt renders cleanly.
-    resetRecaptcha();
   }
 }
-async function verifyPhoneLogin(){
-  const errEl = document.getElementById('pl-step2-error');
-  errEl.style.display = 'none';
-  const code = document.getElementById('pl-code').value.trim();
-  if(!code){ errEl.textContent = 'Enter the code you received.'; errEl.style.display = 'block'; return; }
-  if(!phoneConfirmationResult){ errEl.textContent = 'That code expired — request a new one.'; errEl.style.display = 'block'; return; }
+/* Runs once at boot, before the normal login screen would otherwise show — completes sign-in if
+   the current URL is the link that was just emailed to a parent. */
+async function completeEmailLinkSignIn(){
+  if(!firebaseAuthReady() || !firebase.auth().isSignInWithEmailLink(location.href)) return;
+  document.getElementById('login-screen').style.display = 'none';
+  document.getElementById('email-login-screen').style.display = 'flex';
+  document.getElementById('el-step1').style.display = 'none';
+  document.getElementById('el-step2').style.display = 'none';
+  document.getElementById('el-step3').style.display = 'block';
+  const step3Err = document.getElementById('el-step3-error');
+  step3Err.style.display = 'none';
+  let email = null;
+  try{ email = window.localStorage.getItem(EMAIL_LINK_STORAGE_KEY); }catch(e){ /* private browsing */ }
+  if(!email){
+    email = (window.prompt('Confirm the email address this sign-in link was sent to:') || '').trim();
+  }
+  // Clean the one-time link out of the address bar either way, so a page refresh doesn't retry it.
+  history.replaceState(null, document.title, location.pathname + location.hash);
+  if(!email){
+    document.getElementById('el-completing-note').style.display = 'none';
+    step3Err.textContent = 'Sign-in cancelled — no email address was confirmed.';
+    step3Err.style.display = 'block';
+    return;
+  }
   try{
-    const cred = await phoneConfirmationResult.confirm(code);
-    const verifiedPhone = normalizePhone(cred.user.phoneNumber);
-    const match = DB.users.find(u=>u.role==='Parent' && normalizePhone(u.contact)===verifiedPhone);
+    const cred = await firebase.auth().signInWithEmailLink(email, location.href);
+    try{ window.localStorage.removeItem(EMAIL_LINK_STORAGE_KEY); }catch(e){ /* ignore */ }
+    const match = DB.users.find(u=>u.role==='Parent' && u.email && u.email.toLowerCase()===email.toLowerCase());
+    firebase.auth().signOut().catch(()=>{}); // the app tracks its own session; no need to keep the Firebase auth user signed in
     if(!match){
-      errEl.textContent = "Verified, but no parent account matches this number anymore. Please contact the school.";
-      errEl.style.display = 'block';
+      document.getElementById('el-completing-note').style.display = 'none';
+      step3Err.textContent = "Verified, but no parent account matches this email anymore. Please contact the school.";
+      step3Err.style.display = 'block';
       return;
     }
-    document.getElementById('phone-login-screen').style.display = 'none';
+    document.getElementById('email-login-screen').style.display = 'none';
     completeSignIn(match);
   }catch(e){
-    console.error('Phone code verification failed', e);
-    errEl.textContent = "That code didn't match. " + (e && e.message ? e.message : 'Please try again.');
-    errEl.style.display = 'block';
+    console.error('Email link sign-in failed', e);
+    document.getElementById('el-completing-note').style.display = 'none';
+    step3Err.textContent = "That link didn't work. " + (e && e.message ? e.message : 'Please request a new one.') ;
+    step3Err.style.display = 'block';
   }
 }
+
 /* Lightweight "who's online" tracking — pings a shared timestamp every so often while a session is
    open, so the admin can see who's currently active without needing a separate backend. */
 function startPresenceHeartbeat(){
@@ -1903,6 +1889,8 @@ function setRegRole(role){
   document.getElementById('reg-parent-note').style.display = role==='parent' ? 'block' : 'none';
   document.getElementById('parent-ward-section').style.display = role==='parent' ? 'block' : 'none';
   document.getElementById('reg-name-label').textContent = role==='parent' ? 'Your name (parent/guardian)' : 'Full name';
+  document.getElementById('reg-email-label').textContent = role==='parent' ? 'Email address (used for email sign-in)' : 'Email address';
+  document.getElementById('reg-email-note-parent').style.display = role==='parent' ? 'inline' : 'none';
   document.getElementById('ward-search-input').value = '';
   document.getElementById('ward-search-results').innerHTML = '';
   document.getElementById('register-error').style.display = 'none';
@@ -2021,6 +2009,7 @@ function submitRegistration(){
 async function registerTeacher(){
   const name = document.getElementById('reg-name').value.trim();
   const phone = document.getElementById('reg-phone').value.trim();
+  const email = document.getElementById('reg-email').value.trim();
   const username = document.getElementById('reg-username').value.trim().toLowerCase();
   const password = document.getElementById('reg-password').value;
   const password2 = document.getElementById('reg-password2').value;
@@ -2031,7 +2020,7 @@ async function registerTeacher(){
   if(password!==password2){ showErr('Passwords do not match.'); return; }
   if(DB.users.find(u=>u.username.toLowerCase()===username)){ showErr('That username is already taken — choose another.'); return; }
   errEl.style.display='none';
-  DB.users.push({ name, username, password, role:'Teacher', signature:null, contact:phone, resetOTP:null, staffId: nextDisplayId('TCH') });
+  DB.users.push({ name, username, password, role:'Teacher', signature:null, contact:phone, email, resetOTP:null, staffId: nextDisplayId('TCH') });
   await saveDB();
   alert('Account created! You can now sign in. Your administrator still needs to assign you a class and subjects before you\'ll see any students.');
   hideRegister();
@@ -2040,18 +2029,21 @@ async function registerTeacher(){
 async function registerParent(){
   const name = document.getElementById('reg-name').value.trim();
   const phone = document.getElementById('reg-phone').value.trim();
+  const email = document.getElementById('reg-email').value.trim();
   const username = document.getElementById('reg-username').value.trim().toLowerCase();
   const password = document.getElementById('reg-password').value;
   const password2 = document.getElementById('reg-password2').value;
   const errEl = document.getElementById('register-error');
   const showErr = msg=>{ errEl.textContent = msg; errEl.style.display='block'; };
-  if(!name || !phone || !username || !password){ showErr('Please fill in your name, phone number, username, and password.'); return; }
+  if(!name || !phone || !email || !username || !password){ showErr('Please fill in your name, phone number, email, username, and password.'); return; }
+  if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){ showErr('Enter a valid email address.'); return; }
   if(password.length<4){ showErr('Password should be at least 4 characters.'); return; }
   if(password!==password2){ showErr('Passwords do not match.'); return; }
   if(DB.users.find(u=>u.username.toLowerCase()===username)){ showErr('That username is already taken — choose another.'); return; }
+  if(DB.users.find(u=>u.role==='Parent' && u.email && u.email.toLowerCase()===email.toLowerCase())){ showErr('An account with that email already exists — sign in instead.'); return; }
   if(!selectedWards.length){ showErr('Please search for and select at least one child.'); return; }
   errEl.style.display='none';
-  DB.users.push({ name, username, password, role:'Parent', wardIds: selectedWards.slice(), signature:null, contact:phone, resetOTP:null, parentId: nextDisplayId('PAR') });
+  DB.users.push({ name, username, password, role:'Parent', wardIds: selectedWards.slice(), signature:null, contact:phone, email, resetOTP:null, parentId: nextDisplayId('PAR') });
   // Automatically put this parent's phone number on file as the guardian contact for each ward, so
   // the school always has a working number for that child without needing separate data entry.
   selectedWards.forEach(wid=>{
@@ -4112,7 +4104,7 @@ function renderStaff(){
             <span class="idx mono">${String(i+1).padStart(2,'0')}</span>
             <div style="flex:1;">
               <div style="font-weight:600;">${u.name} ${displayId ? `<span class="mono" style='font-size:10.5px;color:var(--brass);'>${displayId}</span>` : ''} ${u.username===session.username ? '<span class="mono" style=\'font-size:10.5px;color:var(--slate);\'>(you)</span>':''}</div>
-              <div style="font-size:12px;color:var(--slate);">@${u.username} · ${u.role}${u.contact ? ' · '+u.contact : ' · <span style=\'color:var(--brick);\'>no phone on file</span>'}${assignSummary ? ' · '+assignSummary : ''}${wardSummary ? ' · '+wardSummary : ''}</div>
+              <div style="font-size:12px;color:var(--slate);">@${u.username} · ${u.role}${u.contact ? ' · '+u.contact : ' · <span style=\'color:var(--brick);\'>no phone on file</span>'}${u.email ? ' · '+u.email : ''}${assignSummary ? ' · '+assignSummary : ''}${wardSummary ? ' · '+wardSummary : ''}</div>
             </div>
             <button class="btn-ghost" onclick="editAccount('${u.username}')">Edit</button>
             <button class="btn-ghost" onclick="resetPassword('${u.username}')">Reset password</button>
@@ -4292,10 +4284,15 @@ async function editAccount(username){
   if(newPhoneRaw===null) return; // cancelled
   const newPhone = newPhoneRaw.trim();
 
+  const newEmailRaw = prompt('Email address (used for email sign-in link, parents only):', u.email || '');
+  if(newEmailRaw===null) return; // cancelled
+  const newEmail = newEmailRaw.trim();
+
   const oldUsername = u.username;
   u.name = newName;
   u.username = newUsername;
   u.contact = newPhone;
+  u.email = newEmail;
 
   if(oldUsername!==newUsername){
     // keep class/subject teacher assignments pointing at the right person
@@ -4440,6 +4437,7 @@ function printClassReportCards(studentIds){
 ============================================================ */
 (async function boot(){
   await loadDB();
+  await completeEmailLinkSignIn();
   if(location.hash === '#register'){ showRegister(); }
 })();
 </script>
