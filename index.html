@@ -3072,11 +3072,11 @@ function renderTimetableAdmin(){
         ${!cls ? `<p style="color:var(--slate);font-size:13px;">Add a ${ttSelectedLevel} class first, from the Classes page.</p>` : (!slots.length ? '<p style="color:var(--slate);font-size:13px;">Add your periods and breaks in Step 1 first.</p>' : `
         <div style="overflow-x:auto;">
         <table class="reg">
-          <thead><tr><th>Time</th>${TIMETABLE_DAYS.map(d=>`<th>${d}</th>`).join('')}</tr></thead>
+          <thead><tr><th>Day</th>${slots.map(s=>`<th>${s.label}<br><span style="font-size:10px;font-weight:400;color:var(--slate);">${s.start}–${s.end}</span></th>`).join('')}</tr></thead>
           <tbody>
-            ${slots.map(s=>`<tr>
-              <td class="mono" style="white-space:nowrap;">${s.label}<br><span style="font-size:10px;color:var(--slate);">${s.start}–${s.end}</span></td>
-              ${TIMETABLE_DAYS.map(d=>{
+            ${TIMETABLE_DAYS.map(d=>`<tr>
+              <td class="mono" style="white-space:nowrap;font-weight:600;">${d}</td>
+              ${slots.map(s=>{
                 if(s.isBreak) return `<td style="background:var(--paper);text-align:center;font-size:11px;color:var(--slate);">${s.label}</td>`;
                 const current = (classTT[d]||{})[s.id] || '';
                 return `<td><select onchange="setTimetableCell('${ttSelectedMode}','${cls.id}','${d}','${s.id}',this.value)">
@@ -3116,11 +3116,11 @@ function buildTimetableGridHTML(classId, mode){
   const classTT = DB.timetable[mode][classId] || {};
   return `
     <table class="reg">
-      <thead><tr><th>Time</th>${TIMETABLE_DAYS.map(d=>`<th>${d}</th>`).join('')}</tr></thead>
+      <thead><tr><th>Day</th>${slots.map(s=>`<th>${s.label}<br><span style="font-size:10px;font-weight:400;color:var(--slate);">${s.start}–${s.end}</span></th>`).join('')}</tr></thead>
       <tbody>
-        ${slots.map(s=>`<tr>
-          <td class="mono" style="white-space:nowrap;">${s.label}<br><span style="font-size:10px;color:var(--slate);">${s.start}–${s.end}</span></td>
-          ${TIMETABLE_DAYS.map(d=>{
+        ${TIMETABLE_DAYS.map(d=>`<tr>
+          <td class="mono" style="white-space:nowrap;font-weight:600;">${d}</td>
+          ${slots.map(s=>{
             if(s.isBreak) return `<td style="background:var(--paper);text-align:center;font-weight:600;">${s.label}</td>`;
             const val = (classTT[d]||{})[s.id] || '—';
             return `<td style="text-align:center;">${val}</td>`;
