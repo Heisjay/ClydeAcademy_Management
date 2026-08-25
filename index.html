@@ -2773,6 +2773,7 @@ function renderGradebook(){
     <div class="panel"><div class="panel-head"><h3>End-of-term exam &amp; grand total</h3></div>
     <div class="panel-body" style="padding-top:10px;">
       ${!DB.term?.examDeclared && !isAdminUser ? `<p style="margin:0 0 10px;font-size:12.5px;color:var(--slate);">Exam marks entry isn't open yet — the head teacher will declare exams week when it's time.</p>` : ''}
+      ${sub.weeklyEnabled ? `<p style="margin:0 0 10px;font-size:12.5px;color:var(--slate);">Every week's mark entered so far is added up, then scaled down to a mark out of 60 — that's the "Class Score" workings shown under each student's total below. 50% of that feeds into their final grade, alongside 50% from the exam.</p>` : ''}
       <table class="reg">
         <thead><tr><th>Student</th><th>Class Score<br><span class="mono" style="font-weight:400;">/50</span></th><th>Exam<br><span class="mono" style="font-weight:400;">/100</span></th><th>Exam Score<br><span class="mono" style="font-weight:400;">/50</span></th><th>Total<br><span class="mono" style="font-weight:400;">/100</span></th><th>Grade</th><th>Position</th></tr></thead>
         <tbody>
@@ -2780,9 +2781,10 @@ function renderGradebook(){
             const b = subjectBreakdown(cls.id, view.subject, s.id);
             const spos = subjectPosition(cls.id, view.subject, s.id);
             const examOpen = DB.term?.examDeclared || isAdminUser;
+            const struckTo60 = (b.sbaRaw!==null && b.sbaMax) ? Math.round((b.sbaRaw/b.sbaMax)*60*10)/10 : null;
             return `<tr>
               <td onclick="openStudent('${s.id}')" style="cursor:pointer;font-weight:600;">${s.name}</td>
-              <td class="mono">${b.sba50??'—'}</td>
+              <td class="mono">${b.sba50??'—'}${struckTo60!==null ? `<br><span style="font-size:9px;color:var(--slate);font-weight:400;">${b.sbaRaw}/${b.sbaMax} → ${struckTo60}/60 → ×50%</span>` : ''}</td>
               <td>${(canEdit && examOpen) ? `<input class="score-input" type="number" min="0" max="100" value="${b.examScore??''}" placeholder="—" onchange="updateExamScore('${cls.id}','${view.subject}','${s.id}',this.value)">` : (examOpen ? (b.examScore??'—') : '—')}</td>
               <td class="mono">${b.exam50??'—'}</td>
               <td class="grade-letter grade-${gradeClass(b.grand)}">${b.grand??'—'}${b.grand!==null?'%':''}</td>
