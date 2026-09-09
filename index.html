@@ -824,46 +824,33 @@ let firestoreDB = null;
 let cloudEnabled = false;
 
 /* ============================================================
-   SMS — fee payment notifications via Bulk Messaging Solutions
+   SMS — fee payment notifications via mNotify
    ------------------------------------------------------------
    When a fee payment is recorded, the app texts the guardian
-   number on file for that student.
+   number on file for that student using mNotify's Quick Bulk
+   SMS API.
 
-   IMPORTANT — endpoint not yet confirmed:
-   Your key/sender below are filled in, but this request is still
-   built on the same "quick send" shape used by mNotify (key +
-   sender + recipient + message), since Bulk Messaging Solutions'
-   exact API endpoint/parameter names weren't available to check.
-   Open your Bulk Messaging Solutions dashboard → look for an
-   "API" / "Developer" link (often under "More" in the left
-   sidebar, or under account/profile settings) and confirm:
-     - the send endpoint URL
-     - whether it's GET or POST
-     - the exact field names it expects (key, sender/from,
-       recipient/to, message)
-   If sends fail with a network/CORS error below, that's the
-   signal this needs adjusting to match their real docs — paste
-   me the docs page and I'll fix the fetch call.
-
-   SENDER ID WARNING: "Clyde Academy" is 13 characters. Most
-   Ghanaian SMS gateways cap Sender IDs at 11 characters, so this
-   will likely be rejected or need to be shortened (e.g.
-   "ClydeAcad" or "ClydeAcdmy") and re-registered/approved with
-   the provider before it will actually deliver.
+   SENDER ID: using "ClydeAcdmy" (10 characters, within mNotify's
+   11-char limit). Register it under mNotify's Sender ID settings
+   if you haven't already — new sender IDs usually need mNotify's
+   approval (can take a day or two) before messages using them
+   will actually deliver.
 
    Leave apiKey empty to keep SMS turned off; payments will
    still record normally, just without a text going out.
 
    NOTE: this call is made directly from the browser, since this
    app has no backend server. That means the API key is visible
-   to anyone who views the page source. If sends start failing
-   with a network error, the fix is to move this call behind a
-   small server-side proxy (e.g. a Firebase Cloud Function)
-   instead of calling the SMS provider directly from here.
+   to anyone who views the page source, and mNotify's API may
+   reject direct browser requests (CORS) depending on their
+   current policy. If sends start failing with a network error,
+   the fix is to move this call behind a small server-side proxy
+   (e.g. a Firebase Cloud Function) instead of calling mNotify
+   directly from here.
 ============================================================ */
 const SMS_CONFIG = {
-  apiKey: "XyJzng02dexxw86z3L67vZm6a",   // Bulk Messaging Solutions API key
-  senderId: "Clyde Academy",              // ⚠ over the usual 11-char limit — see warning above
+  apiKey: "XyJzng02dexxw86z3L67vZm6a",   // mNotify API key
+  senderId: "ClydeAcdmy",                 // mNotify Sender ID (10 chars) — must be registered & approved in mNotify's Sender ID settings before it will deliver
   portalUrl: ""       // e.g. "https://clyde-academy.web.app" — shown in the SMS so guardians can check the portal. Leave blank to auto-use the current page's address.
 };
 function smsIsConfigured(){
@@ -888,7 +875,7 @@ async function sendFeePaymentSMS(studentId, paymentId){
 
   if(!smsIsConfigured()){
     payment.smsSent = false;
-    payment.smsError = 'SMS not set up yet — add an API key and Sender ID in SMS_CONFIG.';
+    payment.smsError = 'SMS not set up yet — add an mNotify API key and Sender ID in SMS_CONFIG.';
     await saveDB();
     return { ok:false, error: payment.smsError };
   }
@@ -925,12 +912,12 @@ async function sendFeePaymentSMS(studentId, paymentId){
     const data = await resp.json().catch(()=>null);
     const success = resp.ok && data && (String(data.code)==='2000' || String(data.status).toLowerCase()==='success');
     payment.smsSent = !!success;
-    payment.smsError = success ? null : ('SMS provider: ' + ((data && (data.message||data.status)) || ('HTTP '+resp.status)));
+    payment.smsError = success ? null : ('mNotify: ' + ((data && (data.message||data.status)) || ('HTTP '+resp.status)));
     await saveDB();
     return { ok: !!success, error: payment.smsError };
   }catch(e){
     payment.smsSent = false;
-    payment.smsError = 'Could not reach the SMS provider from the browser (network/CORS error, or the endpoint above needs updating to match Bulk Messaging Solutions\' real API docs).';
+    payment.smsError = 'Could not reach mNotify from the browser (network/CORS error). This may need a server-side proxy — see the note above SMS_CONFIG.';
     await saveDB();
     return { ok:false, error: payment.smsError };
   }
