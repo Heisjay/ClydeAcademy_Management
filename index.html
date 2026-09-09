@@ -789,6 +789,7 @@
 let session = null; // {role, name, classId}
 let DB = null;
 let view = { page:'dashboard', studentId:null, tab:'overview', classId:null, subject:null, date:null };
+let navHistory = []; // stack of previous {page,studentId} states, for the global Back button
 
 const STORAGE_KEY = 'clyde-academy-db-v1';
 const SESSION_KEY = 'clyde-academy-session-v1';
@@ -1070,6 +1071,16 @@ async function saveDB(){
       setSyncBadge('offline');
     }
   }
+}
+/* Explicit "Save" buttons on admin pages call this — every field already auto-saves the moment
+   it's changed, so this just re-runs saveDB() and gives a clear, immediate confirmation that
+   everything currently on screen has gone through (or explains why it hasn't, if offline). */
+async function manualSave(){
+  await saveDB();
+  if(!cloudEnabled) { alert('Saved on this device (browser-only mode — no cloud database configured).'); return; }
+  const badge = document.getElementById('sync-badge');
+  const synced = badge && badge.classList.contains('synced');
+  alert(synced ? 'All changes saved and synced to the cloud.' : "Saved on this device — couldn't reach the cloud right now, it'll sync automatically once you're back online.");
 }
 
 function todayStr(offsetDays){
@@ -2243,6 +2254,7 @@ async function registerParent(){
 }
 function logout(){
   session = null;
+  navHistory = [];
   persistSession();
   document.getElementById('app-screen').style.display = 'none';
   document.getElementById('login-screen').style.display = 'flex';
@@ -2289,7 +2301,14 @@ function renderNav(){
     </button>`).join('');
 }
 function goTo(page){
+  if(view.page !== page || view.studentId){ navHistory.push({ page: view.page, studentId: view.studentId }); }
   view.page = page; view.studentId = null; view.tab='overview';
+  renderNav(); render();
+}
+function goBack(){
+  const prev = navHistory.pop();
+  if(!prev){ view.page = 'dashboard'; view.studentId = null; }
+  else { view.page = prev.page; view.studentId = prev.studentId; }
   renderNav(); render();
 }
 
@@ -2321,6 +2340,22 @@ function render(){
     case 'parent': el.innerHTML = renderParentPortal(); break;
     default: el.innerHTML = session.role==='Parent' ? renderParentPortal() : renderDashboard();
   }
+  injectGlobalBackButton();
+}
+/* A single global Back button, injected in front of whatever the current page just rendered,
+   rather than hand-added to every renderX() function. Only shows once there's somewhere to go
+   back to (navHistory isn't empty) and we're not already on the Dashboard. */
+function injectGlobalBackButton(){
+  if(!navHistory.length || view.page==='dashboard') return;
+  const el = document.getElementById('main-content');
+  if(!el || !el.firstElementChild) return;
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'btn-ghost';
+  btn.style.cssText = 'margin-bottom:14px;';
+  btn.innerHTML = '&larr; Back';
+  btn.onclick = goBack;
+  el.insertBefore(btn, el.firstElementChild);
 }
 
 /* ============================================================
@@ -2729,7 +2764,7 @@ async function promoteClass(classId, newClassId){
   render();
   alert(`Promoted ${roster.length} student${roster.length===1?'':'s'} to ${newCls.name}.`);
 }
-function openStudent(id){ view.studentId = id; view.tab='overview'; render(); }
+function openStudent(id){ navHistory.push({ page: view.page, studentId: null }); view.studentId = id; view.tab='overview'; render(); }
 let profilePhotoTarget = null;
 async function openEditProfile(id){
   const s = studentById(id);
@@ -2882,7 +2917,7 @@ function renderStudentDetail(id){
   }
 
   return `
-    <button class="back-link" onclick="view.studentId=null; render()">&larr; Back to students</button>
+    <button class="back-link" onclick="goBack()">&larr; Back to students</button>
     <div class="topbar">
       <div style="display:flex;align-items:center;gap:14px;">
         <div class="avatar" style="width:48px;height:48px;font-size:16px;background:var(--ink);color:var(--brass-soft);">${s.name.split(' ').map(w=>w[0]).slice(0,2).join('')}</div>
@@ -3274,7 +3309,7 @@ function renderTimetableAdmin(){
   const modeLabel = ttSelectedMode==='vacation' ? 'vacation classes' : 'term';
 
   return `
-    <div class="topbar"><div><div class="eyebrow">Administration</div><h1>Timetable</h1></div></div>
+    <div class="topbar"><div><div class="eyebrow">Administration</div><h1>Timetable</h1></div><button class="btn-ghost" onclick="manualSave()">Save</button></div>
 
     <div class="ward-switch">
       <button class="${ttSelectedMode==='term'?'active':''}" style="padding:6px 16px;" onclick="ttSelectedMode='term'; render()">Term</button>
@@ -3481,7 +3516,7 @@ async function bulkAddTimetableFromFile(){
 function renderClasses(){
   const teachers = DB.users.filter(u=>u.role==='Teacher');
   return `
-    <div class="topbar"><div><div class="eyebrow">Administration</div><h1>Classes, Subjects &amp; Teacher Assignment</h1></div></div>
+    <div class="topbar"><div><div class="eyebrow">Administration</div><h1>Classes, Subjects &amp; Teacher Assignment</h1></div><button class="btn-ghost" onclick="manualSave()">Save</button></div>
 
     <div class="crud-box">
       <h4>Add a new class</h4>
@@ -3850,7 +3885,7 @@ function renderBill(){
     .filter(c=> billCategoryForClass(c)===cat)
     .flatMap(c=> studentsOf(c.id).map(s=>({ ...s, className:c.name, classObj:c })));
   return `
-    <div class="topbar"><div><div class="eyebrow">Assistant head teacher only</div><h1>Bill</h1></div></div>
+    <div class="topbar"><div><div class="eyebrow">Assistant head teacher only</div><h1>Bill</h1></div><button class="btn-ghost" onclick="manualSave()">Save</button></div>
 
     <div class="tab-row" style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap;">
       ${BILL_CATEGORIES.map(c=>`<button class="${c===cat?'active':''}" style="padding:8px 18px;border-radius:24px;border:1.5px solid var(--line);background:${c===cat?'var(--brass-soft)':'var(--white)'};border-color:${c===cat?'var(--brass)':'var(--line)'};font-size:13px;font-weight:600;color:var(--ink);" onclick="billSelectedCategory='${c}'; render()">${BILL_CATEGORY_LABELS[c]}</button>`).join('')}
@@ -4019,6 +4054,7 @@ function buildFeeReceiptHTML(studentId, paymentId){
     .filter(p=> new Date(p.date) <= new Date(payment.date))
     .reduce((sum,p)=>sum+(Number(p.amount)||0), 0);
   const balanceAfter = Math.max(0, payable - paidUpToThis);
+  const asstHeadUser = DB.assistantHeadTeacherUsername ? userByUsername(DB.assistantHeadTeacherUsername) : null;
   return `
     <div class="rc-page">
       <div class="rc-head">
@@ -4042,7 +4078,10 @@ function buildFeeReceiptHTML(studentId, paymentId){
       </table>
       <p style="font-size:12px;color:var(--slate);margin-top:16px;">This receipt confirms that the above amount was received towards this student's school fees. Please retain it for your records.</p>
       <div class="rc-sign" style="justify-content:center;">
-        <div style="width:42%;"><div style="height:44px;"></div>Assistant Head Teacher</div>
+        <div style="width:42%;">
+          ${asstHeadUser && asstHeadUser.signature ? `<img src="${asstHeadUser.signature}" style="height:40px;object-fit:contain;display:block;margin:0 auto 4px;">` : '<div style="height:44px;"></div>'}
+          Assistant Head Teacher
+        </div>
       </div>
     </div>
   `;
@@ -4225,7 +4264,7 @@ function renderStaff(){
   const termEndDate = todayStr(term.weeks*7);
   const staffAndAdmins = DB.users.filter(u=>u.role!=='Parent');
   return `
-    <div class="topbar"><div><div class="eyebrow">Administration</div><h1>Staff Accounts</h1></div></div>
+    <div class="topbar"><div><div class="eyebrow">Administration</div><h1>Staff Accounts</h1></div><button class="btn-ghost" onclick="manualSave()">Save</button></div>
 
     <div class="panel"><div class="panel-head"><h3>Term setup</h3></div>
       <div class="panel-body" style="padding-top:14px;padding-bottom:16px;">
@@ -4396,8 +4435,10 @@ function renderStaff(){
               <div style="font-weight:600;">${u.name} ${displayId ? `<span class="mono" style='font-size:10.5px;color:var(--brass);'>${displayId}</span>` : ''} ${u.username===session.username ? '<span class="mono" style=\'font-size:10.5px;color:var(--slate);\'>(you)</span>':''}</div>
               <div style="font-size:12px;color:var(--slate);">@${u.username} · ${u.role}${u.contact ? ' · '+u.contact : ' · <span style=\'color:var(--brick);\'>no phone on file</span>'}${assignSummary ? ' · '+assignSummary : ''}${wardSummary ? ' · '+wardSummary : ''}</div>
             </div>
+            ${u.signature ? `<img src="${u.signature}" style="height:28px;object-fit:contain;border:1px solid var(--line);border-radius:4px;padding:2px;background:#fff;" title="Uploaded signature">` : ''}
             <button class="btn-ghost" onclick="editAccount('${u.username}')">Edit</button>
             <button class="btn-ghost" onclick="resetPassword('${u.username}')">Reset password</button>
+            ${u.signature ? `<button class="btn-ghost" style="color:var(--brick);border-color:var(--brick-soft);" onclick="removeStaffSignature('${u.username}')">Remove signature</button>` : ''}
             ${u.username!==session.username ? `<button class="btn-ghost" style="color:var(--brick);border-color:var(--brick-soft);" onclick="removeStaff('${u.username}')">Remove</button>` : ''}
           </div>
         `;}).join('')}
@@ -4628,6 +4669,14 @@ async function resetPassword(username){
   if(!newPass) return;
   const u = DB.users.find(x=>x.username===username);
   if(u){ u.password = newPass; await saveDB(); render(); }
+}
+async function removeStaffSignature(username){
+  const u = DB.users.find(x=>x.username===username);
+  if(!u || !u.signature) return;
+  if(!confirm('Remove the uploaded signature for '+u.name+'?')) return;
+  u.signature = null;
+  await saveDB();
+  render();
 }
 async function removeStaff(username){
   if(!confirm('Remove @'+username+'\'s account?')) return;
