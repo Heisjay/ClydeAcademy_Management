@@ -1535,12 +1535,30 @@ function migrateDB(){
   DB.users.forEach(u=>{
     if(u.role==='Teacher' && u.pendingApproval===undefined){ u.pendingApproval = false; }
   });
+  {
+    const before = DB.classes.map(c=>c.id).join(',');
+    sortClasses();
+    if(DB.classes.map(c=>c.id).join(',') !== before) changed = true;
+  }
   if(changed) saveDB();
 }
 
 /* ============================================================
    Derived helpers
 ============================================================ */
+/* Keeps classes ordered by the number in their name (BS1, BS2 ... BS9, or Basic 1, Form 2, etc.)
+   regardless of the order they were added in. Classes with no number in their name sort
+   alphabetically after all numbered ones. */
+function naturalClassCompare(a,b){
+  const numA = parseInt((a.name.match(/\d+/)||[])[0], 10);
+  const numB = parseInt((b.name.match(/\d+/)||[])[0], 10);
+  const hasA = !isNaN(numA), hasB = !isNaN(numB);
+  if(hasA && hasB && numA!==numB) return numA-numB;
+  if(hasA && !hasB) return -1;
+  if(!hasA && hasB) return 1;
+  return a.name.localeCompare(b.name);
+}
+function sortClasses(){ DB.classes.sort(naturalClassCompare); }
 function studentsOf(classId){ return DB.students.filter(s=>s.classId===classId); }
 function classOf(id){ return DB.classes.find(c=>c.id===id); }
 function studentById(id){ return DB.students.find(s=>s.id===id); }
@@ -1689,6 +1707,14 @@ function subjectPosition(classId, subj, studentId){
   }
   return null;
 }
+/* Subject type: 'core' (compulsory, counted on report cards), 'elective' (best-two counted),
+   or 'nonacademic' (free-period activities like Library/Games — scheduled on the timetable
+   but never scored, averaged, or shown on report cards). */
+function subjectTypeLabel(type){
+  if(type==='elective') return 'Elective';
+  if(type==='nonacademic') return 'Free period';
+  return 'Core';
+}
 /* The official grading set: every core subject, plus the best two electives by score.
    raw = sum of the 6 (or however many) subject totals out of 100 each.
    average = mean percentage across them. aggregate = sum of their 1–9 grade points (lower = better). */
@@ -1696,7 +1722,7 @@ function sixSubjectSummary(classId, studentId){
   const cls = classOf(classId);
   if(!cls) return { subjects:[], raw:null, average:null, aggregate:null, count:0 };
   const withScores = list => list.map(s=>({ name:s.name, grand: subjectAverage(classId, s.name, studentId) }));
-  const core = withScores(cls.subjects.filter(s=>s.type!=='elective'));
+  const core = withScores(cls.subjects.filter(s=>s.type!=='elective' && s.type!=='nonacademic'));
   const electives = withScores(cls.subjects.filter(s=>s.type==='elective'))
     .sort((a,b)=>(b.grand??-1)-(a.grand??-1))
     .slice(0,2);
@@ -2694,7 +2720,7 @@ function renderStudentDetail(id){
           const p = subjectAverage(s.classId, subj.name, id);
           const gp = gradePointFor(p);
           return `<div class="ledger-row"><span class="idx mono">${String(i+1).padStart(2,'0')}</span>
-            <span style="flex:1">${subj.name} <span style="font-size:10.5px;color:var(--slate);text-transform:uppercase;">(${subj.type||'core'})</span><br><span style="font-size:11px;color:var(--slate);">${subj.teacher ? teacherName(subj.teacher) : 'Unassigned teacher'}</span></span>
+            <span style="flex:1">${subj.name} <span style="font-size:10.5px;color:var(--slate);text-transform:uppercase;">(${subjectTypeLabel(subj.type)})</span>${subj.type==='nonacademic' ? ' <span style="font-size:10px;color:var(--slate);">— not on report card</span>' : ''}<br><span style="font-size:11px;color:var(--slate);">${subj.teacher ? teacherName(subj.teacher) : 'Unassigned teacher'}</span></span>
             <span class="grade-letter grade-${gradeClass(p)}">${p??'—'}${p!==null?'%':''} &nbsp; ${gp??'—'}</span></div>`;
         }).join('')}
       </div></div>
@@ -3210,6 +3236,7 @@ function renderTimetableAdmin(){
                 const current = (classTT[d]||{})[s.id] || '';
                 return `<td><select onchange="setTimetableCell('${ttSelectedMode}','${cls.id}','${d}','${s.id}',this.value)">
                   <option value="">—</option>
+                  <option value="Free Period" ${current==='Free Period'?'selected':''}>Free Period</option>
                   ${cls.subjects.map(sub=>`<option value="${sub.name}" ${current===sub.name?'selected':''}>${sub.name}</option>`).join('')}
                 </select></td>`;
               }).join('')}
@@ -3222,7 +3249,7 @@ function renderTimetableAdmin(){
 
     <div class="crud-box">
       <h4>Bulk feed subjects into the timetable (${modeLabel})</h4>
-      <p style="margin:0 0 10px;font-size:12.5px;color:var(--slate);">Paste one entry per line as <span class="mono">Class, Day, Period label, Subject</span> (period label must match one you added in Step 1 above for ${modeLabel}, e.g. "Period 1"; day must be Monday–Friday) — or upload an Excel/CSV file with columns <span class="mono">Class, Day, Period, Subject</span>. Works across multiple classes and days at once, and applies to whichever schedule — Term or Vacation classes — is selected above.</p>
+      <p style="margin:0 0 10px;font-size:12.5px;color:var(--slate);">Paste one entry per line as <span class="mono">Class, Day, Period label, Subject</span> (period label must match one you added in Step 1 above for ${modeLabel}, e.g. "Period 1"; day must be Monday–Friday; use "Free Period" as the Subject for a non-lesson slot like Library or Games) — or upload an Excel/CSV file with columns <span class="mono">Class, Day, Period, Subject</span>. Works across multiple classes and days at once, and applies to whichever schedule — Term or Vacation classes — is selected above.</p>
       <textarea id="bulk-tt-text" rows="4" placeholder="Form 1A, Monday, Period 1, Mathematics&#10;Form 1A, Monday, Period 2, English&#10;Form 1A, Tuesday, Period 1, Integrated Science" style="width:100%;padding:9px 10px;border-radius:8px;border:1.5px solid var(--line);font-family:'IBM Plex Mono',monospace;font-size:12.5px;"></textarea>
       <div class="inline-form" style="margin-top:8px;">
         <button class="btn-small brass" onclick="bulkAddTimetableFromText()">Add pasted entries</button>
@@ -3252,7 +3279,7 @@ function buildTimetableGridHTML(classId, mode){
           ${slots.map(s=>{
             if(s.isBreak) return `<td style="background:var(--paper);text-align:center;font-weight:600;">${s.label}</td>`;
             const val = (classTT[d]||{})[s.id] || '—';
-            return `<td style="text-align:center;">${val}</td>`;
+            return `<td style="text-align:center;${val==='Free Period'?'background:var(--sage-soft);color:var(--sage);font-weight:600;':''}">${val}</td>`;
           }).join('')}
         </tr>`).join('')}
       </tbody>
@@ -3321,10 +3348,11 @@ async function processTimetableRows(rows){
     const slot = timetableSlotsFor(cls.level||'JHS', mode).find(sl=>sl.label.toLowerCase()===periodLabel.trim().toLowerCase());
     if(!slot){ skipped.push(`Row ${i+1}: period "${periodLabel}" not found in ${cls.level||'JHS'}'s Step 1 schedule for this mode — add it there first`); return; }
     if(slot.isBreak){ skipped.push(`Row ${i+1}: "${periodLabel}" is marked as a break, can't assign a subject to it`); return; }
-    if(!cls.subjects.some(sub=>sub.name.toLowerCase()===subject.trim().toLowerCase())){ skipped.push(`Row ${i+1}: "${subject}" isn't a subject in ${cls.name}`); return; }
+    const isFreePeriod = /^free\s*period$/i.test(subject.trim());
+    if(!isFreePeriod && !cls.subjects.some(sub=>sub.name.toLowerCase()===subject.trim().toLowerCase())){ skipped.push(`Row ${i+1}: "${subject}" isn't a subject in ${cls.name} (use "Free Period" for a non-lesson slot)`); return; }
     if(!DB.timetable[mode][cls.id]) DB.timetable[mode][cls.id] = {};
     if(!DB.timetable[mode][cls.id][dayMatch]) DB.timetable[mode][cls.id][dayMatch] = {};
-    DB.timetable[mode][cls.id][dayMatch][slot.id] = subject.trim();
+    DB.timetable[mode][cls.id][dayMatch][slot.id] = isFreePeriod ? 'Free Period' : subject.trim();
     added++;
   });
   await saveDB();
@@ -3370,7 +3398,7 @@ function renderClasses(){
 
     <div class="crud-box">
       <h4>Bulk add subjects</h4>
-      <p style="margin:0 0 10px;font-size:12.5px;color:var(--slate);">Paste one subject per line as <span class="mono">Class, Subject, Teacher username, Type</span> (Teacher and Type are optional — Type is "Core" or "Elective", defaults to Core; class name must match an existing class) — or upload an Excel/CSV file with columns <span class="mono">Class, Subject, Teacher, Type</span>. Works across multiple classes at once.</p>
+      <p style="margin:0 0 10px;font-size:12.5px;color:var(--slate);">Paste one subject per line as <span class="mono">Class, Subject, Teacher username, Type</span> (Teacher and Type are optional — Type is "Core", "Elective", or "Free period", defaults to Core; class name must match an existing class) — or upload an Excel/CSV file with columns <span class="mono">Class, Subject, Teacher, Type</span>. Works across multiple classes at once. Free-period subjects (e.g. Library, Games) are scheduled on the timetable like any other subject but are left off report cards.</p>
       <textarea id="bulk-subject-text" rows="4" placeholder="Form 1A, French,, Elective&#10;Form 1A, ICT, owusu, Elective&#10;Form 2B, Ghanaian Language" style="width:100%;padding:9px 10px;border-radius:8px;border:1.5px solid var(--line);font-family:'IBM Plex Mono',monospace;font-size:12.5px;"></textarea>
       <div class="inline-form" style="margin-top:8px;">
         <button class="btn-small brass" onclick="bulkAddSubjectsFromText()">Add pasted subjects</button>
@@ -3414,8 +3442,9 @@ function renderClasses(){
             <div class="subject-row">
               <span class="sname">${s.name}</span>
               <select onchange="setSubjectType('${c.id}','${s.name.replace(/'/g,"\\'")}', this.value)" style="font-size:12px;">
-                <option value="core" ${s.type!=='elective'?'selected':''}>Core</option>
+                <option value="core" ${s.type!=='elective' && s.type!=='nonacademic'?'selected':''}>Core</option>
                 <option value="elective" ${s.type==='elective'?'selected':''}>Elective</option>
+                <option value="nonacademic" ${s.type==='nonacademic'?'selected':''}>Free period (no report card)</option>
               </select>
               ${!s.teacher ? `<span class="badge-unassigned">No teacher</span>` : ''}
               <select onchange="assignSubjectTeacher('${c.id}','${s.name.replace(/'/g,"\\'")}', this.value)">
@@ -3430,6 +3459,7 @@ function renderClasses(){
             <select id="new-subject-type-${c.id}">
               <option value="core">Core</option>
               <option value="elective">Elective</option>
+              <option value="nonacademic">Free period (no report card)</option>
             </select>
             <button class="btn-small" onclick="addSubject('${c.id}')">Add subject</button>
           </div>
@@ -3446,6 +3476,7 @@ async function addClass(){
   if(!name) return;
   const id = 'c'+Date.now();
   DB.classes.push({ id, name, level, primaryTier: level==='Primary' ? tier : undefined, classTeacher:null, subjects:[] });
+  sortClasses();
   DB.gradebook[id] = {};
   DB.attendance[id] = {};
   await saveDB();
@@ -3501,7 +3532,8 @@ async function processSubjectRows(rows){
     const className = fieldVal(r,'class','classname','class name','form');
     const subjectName = fieldVal(r,'subject','subject name');
     const teacherUsername = fieldVal(r,'teacher','teacher username','username').toLowerCase();
-    const type = /elective/i.test(fieldVal(r,'type','subject type')) ? 'elective' : 'core';
+    const typeField = fieldVal(r,'type','subject type');
+    const type = /elective/i.test(typeField) ? 'elective' : (/non.?academic|free/i.test(typeField) ? 'nonacademic' : 'core');
     if(!subjectName){ skipped.push(`Row ${i+1}: no subject name given`); return; }
     const cls = findClassByName(className);
     if(!cls){ skipped.push(`Row ${i+1} (${subjectName}): class "${className}" not found`); return; }
@@ -4537,7 +4569,7 @@ function buildReportCardHTML(studentId){
       <table class="rc-table">
         <thead><tr><th>Subject</th><th>Class Score /50</th><th>Exams Score /50</th><th>Total</th><th>Grade</th><th>Position</th><th>Remarks</th></tr></thead>
         <tbody>
-          ${cls.subjects.map(subj=>{
+          ${cls.subjects.filter(subj=>subj.type!=='nonacademic').map(subj=>{
             const b = subjectBreakdown(s.classId, subj.name, studentId);
             const spos = subjectPosition(s.classId, subj.name, studentId);
             const gp = gradePointFor(b.grand);
