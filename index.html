@@ -397,6 +397,13 @@
   table.reg th{text-align:left; font-size:11px; text-transform:uppercase; letter-spacing:0.05em; color:var(--slate); padding:8px 10px; border-bottom:2px solid var(--ink);}
   table.reg td{padding:10px 10px; border-bottom:1px solid var(--line);}
   table.reg tr:last-child td{border-bottom:none;}
+  /* Timetable grids specifically get full ruled lines (not just row dividers) so each day/period
+     cell reads clearly as its own box — applied on top of .reg, not the default for every table. */
+  table.tt-grid{border:1px solid var(--line);}
+  table.tt-grid th{border-right:1px solid var(--line); border-bottom:2px solid var(--ink); background:var(--paper-dim);}
+  table.tt-grid td{border-right:1px solid var(--line);}
+  table.tt-grid th:last-child, table.tt-grid td:last-child{border-right:none;}
+  table.tt-grid select{width:100%;}
   .score-input{width:56px; padding:5px 6px; border:1px solid var(--line); border-radius:6px; text-align:center; font-family:'IBM Plex Mono',monospace; font-size:13px;}
 
   .grade-letter{font-family:'Fraunces',serif; font-weight:700; font-size:15px;}
@@ -784,6 +791,7 @@ let DB = null;
 let view = { page:'dashboard', studentId:null, tab:'overview', classId:null, subject:null, date:null };
 
 const STORAGE_KEY = 'clyde-academy-db-v1';
+const SESSION_KEY = 'clyde-academy-session-v1';
 
 /* ============================================================
    STORAGE — browser-based, with optional Firebase cloud sync
@@ -1884,8 +1892,10 @@ async function login(){
   document.getElementById('login-screen').style.display = 'none';
   completeSignIn(user);
 }
-/* Shared "finish signing in" step, used by both username/password login and phone/OTP login below. */
-function completeSignIn(user){
+/* Shared "finish signing in" step, used by both username/password login and phone/OTP login below.
+   restoredView, when given (only on a page refresh that's restoring a still-valid session), is used
+   instead of resetting to the default landing page — so a refresh keeps you where you were. */
+function completeSignIn(user, restoredView){
   session = { role:user.role, name:user.name, username:user.username };
   document.getElementById('app-screen').style.display = 'block';
   document.getElementById('user-name').textContent = user.name;
@@ -1894,9 +1904,38 @@ function completeSignIn(user){
   document.getElementById('user-avatar').textContent = user.name.split(' ').map(w=>w[0]).slice(0,2).join('').toUpperCase();
   const defaultClassId = (myClasses[0] || accessibleClasses()[0] || DB.classes[0])?.id || null;
   view = { page: (session.role==='Parent' ? 'parent' : 'dashboard'), studentId:null, tab:'overview', classId: defaultClassId, subject:null, date: todayStr(0), parentWardId: null };
+  if(restoredView && typeof restoredView === 'object'){
+    // merge the saved view back in, but drop anything that no longer points at something real
+    // (a deleted student/class, etc.) so a stale refresh can't crash the page
+    Object.assign(view, restoredView);
+    if(view.studentId && !studentById(view.studentId)) view.studentId = null;
+    if(view.classId && !classOf(view.classId)) view.classId = defaultClassId;
+  }
   renderNav();
   render();
   startPresenceHeartbeat();
+}
+/* Keep a lightweight pointer to who's signed in (and where they were) in localStorage, so
+   refreshing the page restores the session and the current screen instead of bouncing to login. */
+function persistSession(){
+  try{
+    if(session){ localStorage.setItem(SESSION_KEY, JSON.stringify({ username: session.username, view })); }
+    else{ localStorage.removeItem(SESSION_KEY); }
+  }catch(e){ /* private browsing / storage disabled — refresh just falls back to login, no crash */ }
+}
+/* Called once at boot, before the login screen would otherwise show. Returns true if a valid
+   session was restored. Re-looks-up the user fresh from DB rather than trusting cached details,
+   so a since-removed or renamed account can't leave a broken session behind. */
+function restoreSession(){
+  try{
+    const raw = localStorage.getItem(SESSION_KEY);
+    if(!raw) return false;
+    const saved = JSON.parse(raw);
+    const user = saved && saved.username ? DB.users.find(u=>u.username===saved.username) : null;
+    if(!user){ localStorage.removeItem(SESSION_KEY); return false; }
+    completeSignIn(user, saved.view);
+    return true;
+  }catch(e){ return false; }
 }
 
 /* ============================================================
@@ -2195,6 +2234,7 @@ async function registerParent(){
 }
 function logout(){
   session = null;
+  persistSession();
   document.getElementById('app-screen').style.display = 'none';
   document.getElementById('login-screen').style.display = 'flex';
 }
@@ -2248,6 +2288,7 @@ function goTo(page){
    Render root
 ============================================================ */
 function render(){
+  persistSession();
   renderNav();
   const el = document.getElementById('main-content');
   if(session.role!=='Admin' && DB.systemStatus==='inactive'){
@@ -3226,7 +3267,7 @@ function renderTimetableAdmin(){
         </div>
         ${!cls ? `<p style="color:var(--slate);font-size:13px;">Add a ${ttSelectedLevel} class first, from the Classes page.</p>` : (!slots.length ? '<p style="color:var(--slate);font-size:13px;">Add your periods and breaks in Step 1 first.</p>' : `
         <div style="overflow-x:auto;">
-        <table class="reg">
+        <table class="reg tt-grid">
           <thead><tr><th>Day</th>${slots.map(s=>`<th>${s.label}<br><span style="font-size:10px;font-weight:400;color:var(--slate);">${s.start}–${s.end}</span></th>`).join('')}</tr></thead>
           <tbody>
             ${TIMETABLE_DAYS.map(d=>`<tr>
@@ -3271,7 +3312,7 @@ function buildTimetableGridHTML(classId, mode){
   const slots = timetableSlotsFor(classOf(classId).level||'JHS', mode);
   const classTT = DB.timetable[mode][classId] || {};
   return `
-    <table class="reg">
+    <table class="reg tt-grid">
       <thead><tr><th>Day</th>${slots.map(s=>`<th>${s.label}<br><span style="font-size:10px;font-weight:400;color:var(--slate);">${s.start}–${s.end}</span></th>`).join('')}</tr></thead>
       <tbody>
         ${TIMETABLE_DAYS.map(d=>`<tr>
@@ -4634,7 +4675,7 @@ function printClassReportCards(studentIds){
 ============================================================ */
 (async function boot(){
   await loadDB();
-  if(location.hash === '#register'){ showRegister(); }
+  if(!restoreSession() && location.hash === '#register'){ showRegister(); }
 })();
 </script>
 </body>
