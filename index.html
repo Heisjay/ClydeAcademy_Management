@@ -1531,6 +1531,7 @@ function migrateDB(){
     if(!DB.gradebook[c.id]){ DB.gradebook[c.id] = {}; changed = true; }
     c.subjects.forEach(subj=>{
       if(subj.type===undefined){ subj.type = 'core'; changed = true; }
+      if(isFreePeriodSubjectName(subj.name) && subj.type!=='nonacademic'){ subj.type = 'nonacademic'; changed = true; }
       if(!DB.gradebook[c.id][subj.name]){
         // a subject that somehow has no matching gradebook record — recreate it rather than
         // leaving a landmine that crashes the dashboard/gradebook the moment it's touched.
@@ -1722,6 +1723,11 @@ function subjectTypeLabel(type){
   if(type==='elective') return 'Elective';
   if(type==='nonacademic') return 'Free period';
   return 'Core';
+}
+/* Library and Games are always treated as free periods — regardless of what type is picked for
+   them anywhere they're added from — so they never end up counted on a report card by mistake. */
+function isFreePeriodSubjectName(name){
+  return /^(library|games)$/i.test(String(name||'').trim());
 }
 /* The official grading set: every core subject, plus the best two electives by score.
    raw = sum of the 6 (or however many) subject totals out of 100 each.
@@ -3482,7 +3488,7 @@ function renderClasses(){
           ${c.subjects.map(s=>`
             <div class="subject-row">
               <span class="sname">${s.name}</span>
-              <select onchange="setSubjectType('${c.id}','${s.name.replace(/'/g,"\\'")}', this.value)" style="font-size:12px;">
+              <select onchange="setSubjectType('${c.id}','${s.name.replace(/'/g,"\\'")}', this.value)" style="font-size:12px;" ${isFreePeriodSubjectName(s.name)?'disabled title="Library and Games are always free periods — left off report cards"':''}>
                 <option value="core" ${s.type!=='elective' && s.type!=='nonacademic'?'selected':''}>Core</option>
                 <option value="elective" ${s.type==='elective'?'selected':''}>Elective</option>
                 <option value="nonacademic" ${s.type==='nonacademic'?'selected':''}>Free period (no report card)</option>
@@ -3550,10 +3556,11 @@ async function removeClass(classId){
 async function addSubject(classId){
   const input = document.getElementById('new-subject-'+classId);
   const name = input.value.trim();
-  const type = document.getElementById('new-subject-type-'+classId).value;
+  let type = document.getElementById('new-subject-type-'+classId).value;
   if(!name) return;
   const c = classOf(classId);
   if(c.subjects.some(s=>s.name.toLowerCase()===name.toLowerCase())){ alert('That subject already exists in this class.'); return; }
+  if(isFreePeriodSubjectName(name)) type = 'nonacademic';
   c.subjects.push({ name, teacher:null, type });
   DB.gradebook[classId][name] = {
     assessments: SBA_CATEGORIES.slice(), scores:{}, weeklyEnabled:false, weeklyMax:10, weeklyScores:{}, examScores:{}
@@ -3565,7 +3572,11 @@ async function addSubject(classId){
 async function setSubjectType(classId, subjName, type){
   const c = classOf(classId);
   const s = subjectOf(c, subjName);
-  if(s){ s.type = type; await saveDB(); render(); }
+  if(s){
+    s.type = isFreePeriodSubjectName(subjName) ? 'nonacademic' : type;
+    await saveDB();
+    render();
+  }
 }
 async function processSubjectRows(rows){
   let added=0; const skipped=[];
@@ -3574,8 +3585,9 @@ async function processSubjectRows(rows){
     const subjectName = fieldVal(r,'subject','subject name');
     const teacherUsername = fieldVal(r,'teacher','teacher username','username').toLowerCase();
     const typeField = fieldVal(r,'type','subject type');
-    const type = /elective/i.test(typeField) ? 'elective' : (/non.?academic|free/i.test(typeField) ? 'nonacademic' : 'core');
+    let type = /elective/i.test(typeField) ? 'elective' : (/non.?academic|free/i.test(typeField) ? 'nonacademic' : 'core');
     if(!subjectName){ skipped.push(`Row ${i+1}: no subject name given`); return; }
+    if(isFreePeriodSubjectName(subjectName)) type = 'nonacademic';
     const cls = findClassByName(className);
     if(!cls){ skipped.push(`Row ${i+1} (${subjectName}): class "${className}" not found`); return; }
     if(cls.subjects.some(s=>s.name.toLowerCase()===subjectName.toLowerCase())){ skipped.push(`Row ${i+1}: "${subjectName}" already exists in ${cls.name}`); return; }
