@@ -1531,8 +1531,6 @@ function migrateDB(){
     if(!DB.gradebook[c.id]){ DB.gradebook[c.id] = {}; changed = true; }
     c.subjects.forEach(subj=>{
       if(subj.type===undefined){ subj.type = 'core'; changed = true; }
-      if(isFreePeriodSubjectName(subj.name) && subj.type!=='nonacademic'){ subj.type = 'nonacademic'; changed = true; }
-      if(isAlwaysCoreSubjectName(subj.name) && subj.type!=='core'){ subj.type = 'core'; changed = true; }
       if(!DB.gradebook[c.id][subj.name]){
         // a subject that somehow has no matching gradebook record — recreate it rather than
         // leaving a landmine that crashes the dashboard/gradebook the moment it's touched.
@@ -1725,29 +1723,12 @@ function subjectPosition(classId, subj, studentId){
 }
 /* Subject type: 'core' (compulsory, best-four counted on report cards), 'elective' (best-two counted),
    or 'nonacademic' (free-period activities like Library/Games — scheduled on the timetable
-   but never scored, averaged, or shown on report cards). */
+   but never scored, averaged, or shown on report cards). All three types are picked manually
+   per subject — nothing is forced by subject name. */
 function subjectTypeLabel(type){
   if(type==='elective') return 'Elective';
   if(type==='nonacademic') return 'Free period';
   return 'Core';
-}
-/* Library and Games are always treated as free periods — regardless of what type is picked for
-   them anywhere they're added from — so they never end up counted on a report card by mistake. */
-function isFreePeriodSubjectName(name){
-  return /^(library|games)$/i.test(String(name||'').trim());
-}
-/* CT, Ghanaian Language, and Computing are always treated as core/compulsory — they're taught and
-   evaluated like any other subject, so they should never be left off the report card as an
-   elective that didn't make the "best two" cut. */
-function isAlwaysCoreSubjectName(name){
-  return /^(ct|ghanaian language|computing)$/i.test(String(name||'').trim());
-}
-/* Single place that resolves any naming-based override — returns the forced type for a subject
-   name, or null if its type is left up to whatever's picked for it. */
-function forcedSubjectType(name){
-  if(isFreePeriodSubjectName(name)) return 'nonacademic';
-  if(isAlwaysCoreSubjectName(name)) return 'core';
-  return null;
 }
 /* The official grading set: the best 4 core subjects, plus the best two electives by score.
    raw = sum of the 6 subject totals out of 100 each.
@@ -3571,7 +3552,7 @@ function renderClasses(){
           ${c.subjects.map(s=>`
             <div class="subject-row">
               <span class="sname">${s.name}</span>
-              <select onchange="setSubjectType('${c.id}','${s.name.replace(/'/g,"\\'")}', this.value)" style="font-size:12px;" ${forcedSubjectType(s.name)?`disabled title="${isFreePeriodSubjectName(s.name)?'Library and Games are always free periods — left off report cards':'CT, Ghanaian Language, and Computing are always core subjects — always counted on report cards'}"`:''}>
+              <select onchange="setSubjectType('${c.id}','${s.name.replace(/'/g,"\\'")}', this.value)" style="font-size:12px;">
                 <option value="core" ${s.type!=='elective' && s.type!=='nonacademic'?'selected':''}>Core</option>
                 <option value="elective" ${s.type==='elective'?'selected':''}>Elective</option>
                 <option value="nonacademic" ${s.type==='nonacademic'?'selected':''}>Free period (no report card)</option>
@@ -3643,8 +3624,6 @@ async function addSubject(classId){
   if(!name) return;
   const c = classOf(classId);
   if(c.subjects.some(s=>s.name.toLowerCase()===name.toLowerCase())){ alert('That subject already exists in this class.'); return; }
-  const forced = forcedSubjectType(name);
-  if(forced) type = forced;
   c.subjects.push({ name, teacher:null, type });
   DB.gradebook[classId][name] = {
     assessments: SBA_CATEGORIES.slice(), scores:{}, weeklyEnabled:false, weeklyMax:10, weeklyScores:{}, examScores:{}
@@ -3657,7 +3636,7 @@ async function setSubjectType(classId, subjName, type){
   const c = classOf(classId);
   const s = subjectOf(c, subjName);
   if(s){
-    s.type = forcedSubjectType(subjName) || type;
+    s.type = type;
     await saveDB();
     render();
   }
@@ -3671,8 +3650,6 @@ async function processSubjectRows(rows){
     const typeField = fieldVal(r,'type','subject type');
     let type = /elective/i.test(typeField) ? 'elective' : (/non.?academic|free/i.test(typeField) ? 'nonacademic' : 'core');
     if(!subjectName){ skipped.push(`Row ${i+1}: no subject name given`); return; }
-    const forced = forcedSubjectType(subjectName);
-    if(forced) type = forced;
     const cls = findClassByName(className);
     if(!cls){ skipped.push(`Row ${i+1} (${subjectName}): class "${className}" not found`); return; }
     if(cls.subjects.some(s=>s.name.toLowerCase()===subjectName.toLowerCase())){ skipped.push(`Row ${i+1}: "${subjectName}" already exists in ${cls.name}`); return; }
