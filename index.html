@@ -824,6 +824,110 @@ let firestoreDB = null;
 let cloudEnabled = false;
 
 /* ============================================================
+   SMS — fee payment notifications via mNotify
+   ------------------------------------------------------------
+   When a fee payment is recorded, the app texts the guardian
+   number on file for that student using mNotify's Quick Bulk
+   SMS API.
+
+   To turn this on:
+     1. Sign in at https://mnotify.com → Account Settings →
+        API Key, and copy your key into apiKey below.
+     2. Register/choose a Sender ID (max 11 characters, e.g.
+        "ClydeAcad") under Sender ID settings — new sender IDs
+        usually need mNotify's approval (can take a day or two)
+        before messages using them will actually deliver — and
+        put it in senderId below.
+
+   Leave apiKey empty to keep SMS turned off; payments will
+   still record normally, just without a text going out.
+
+   NOTE: this call is made directly from the browser, since this
+   app has no backend server. That means the API key is visible
+   to anyone who views the page source, and mNotify's API may
+   reject direct browser requests (CORS) depending on their
+   current policy. If sends start failing with a network error,
+   the fix is to move this call behind a small server-side proxy
+   (e.g. a Firebase Cloud Function) instead of calling mNotify
+   directly from here.
+============================================================ */
+const SMS_CONFIG = {
+  apiKey: "",       // mNotify API key
+  senderId: ""      // mNotify Sender ID, max 11 characters
+};
+function smsIsConfigured(){
+  return !!(SMS_CONFIG.apiKey && SMS_CONFIG.senderId);
+}
+/* Accepts numbers typed as +233 24 100 1000, 233241001000, 0241001000,
+   241001000, with or without spaces/dashes — returns mNotify's expected
+   local format (0XXXXXXXXX), or null if it doesn't look like a valid
+   Ghana mobile number. */
+function normalizeGhanaPhone(raw){
+  if(!raw) return null;
+  let digits = String(raw).replace(/\D/g,'');
+  if(digits.startsWith('233')) digits = '0'+digits.slice(3);
+  else if(digits.length===9) digits = '0'+digits;
+  if(!/^0\d{9}$/.test(digits)) return null;
+  return digits;
+}
+async function sendFeePaymentSMS(studentId, paymentId){
+  const s = studentById(studentId);
+  const payment = s && (s.payments||[]).find(p=>p.id===paymentId);
+  if(!s || !payment) return { ok:false, error:'Payment not found.' };
+
+  if(!smsIsConfigured()){
+    payment.smsSent = false;
+    payment.smsError = 'SMS not set up yet — add an mNotify API key and Sender ID in SMS_CONFIG.';
+    await saveDB();
+    return { ok:false, error: payment.smsError };
+  }
+  const phone = normalizeGhanaPhone(s.guardian);
+  if(!phone){
+    payment.smsSent = false;
+    payment.smsError = 'No valid guardian phone number on file for this student.';
+    await saveDB();
+    return { ok:false, error: payment.smsError };
+  }
+
+  const cls = classOf(s.classId);
+  const payable = billTotalForClass(cls) + (Number(s.arrears)||0);
+  const paidSoFar = (s.payments||[]).reduce((sum,p)=>sum+(Number(p.amount)||0), 0);
+  const balance = Math.max(0, payable - paidSoFar);
+  const message = `${DB.school.name}: GHS ${payment.amount.toFixed(2)} fee payment received for ${s.name}. Balance now GHS ${balance.toFixed(2)}. Thank you.`;
+
+  try{
+    const resp = await fetch(`https://api.mnotify.com/api/sms/quick?key=${encodeURIComponent(SMS_CONFIG.apiKey)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        recipient: [phone],
+        sender: SMS_CONFIG.senderId,
+        message,
+        is_schedule: false,
+        schedule_date: ''
+      })
+    });
+    const data = await resp.json().catch(()=>null);
+    const success = resp.ok && data && (String(data.code)==='2000' || String(data.status).toLowerCase()==='success');
+    payment.smsSent = !!success;
+    payment.smsError = success ? null : ('mNotify: ' + ((data && (data.message||data.status)) || ('HTTP '+resp.status)));
+    await saveDB();
+    return { ok: !!success, error: payment.smsError };
+  }catch(e){
+    payment.smsSent = false;
+    payment.smsError = 'Could not reach mNotify from the browser (network/CORS error). This may need a server-side proxy — see the note above SMS_CONFIG.';
+    await saveDB();
+    return { ok:false, error: payment.smsError };
+  }
+}
+async function resendFeeSMS(studentId, paymentId){
+  const result = await sendFeePaymentSMS(studentId, paymentId);
+  render();
+  if(result.ok) alert('SMS sent to the guardian.');
+  else alert('Could not send SMS: '+result.error);
+}
+
+/* ============================================================
    PASSWORD RESET BY PHONE NUMBER ON FILE
    ------------------------------------------------------------
    Everyone (teachers, head teacher, other staff, parents) can
@@ -3623,7 +3727,7 @@ function renderBill(){
         <p style="margin:0 0 12px;font-size:12px;color:var(--slate);">Total payable is this level's bill items total plus arrears. Enter the amount paid by the student's parent (in GHS) and click Record — the balance updates automatically and the date &amp; time of payment is logged. You can then print a receipt.</p>
         ${!categoryStudents.length ? '' : `
         <table class="reg">
-          <thead><tr><th>Student</th><th>Class</th><th>Total payable</th><th>Paid so far</th><th>Balance</th><th>Record payment (GHS)</th><th>Receipt</th></tr></thead>
+          <thead><tr><th>Student</th><th>Class</th><th>Total payable</th><th>Paid so far</th><th>Balance</th><th>Record payment (GHS)</th><th>Receipt</th><th>Guardian SMS</th></tr></thead>
           <tbody>
             ${categoryStudents.map(s=>{
               const arrears = Number(s.arrears)||0;
@@ -3632,6 +3736,14 @@ function renderBill(){
               const paid = payments.reduce((sum,p)=>sum+(Number(p.amount)||0), 0);
               const balance = Math.max(0, payable - paid);
               const lastPayment = payments[payments.length-1];
+              let smsCell = '<span style="font-size:11px;color:var(--slate);">—</span>';
+              if(lastPayment){
+                if(lastPayment.smsSent){
+                  smsCell = '<span style="font-size:11px;color:var(--sage);font-weight:600;">&#10003; Sent</span>';
+                } else {
+                  smsCell = `<button class="btn-small" title="${(lastPayment.smsError||'').replace(/"/g,'&quot;')}" onclick="resendFeeSMS('${s.id}','${lastPayment.id}')">Resend SMS</button>`;
+                }
+              }
               return `<tr>
                 <td>${s.name}</td>
                 <td>${s.className}</td>
@@ -3649,6 +3761,7 @@ function renderBill(){
                     ? `<button class="btn-small" onclick="printFeeReceipt('${s.id}','${lastPayment.id}')">Print last receipt</button>`
                     : '<span style="font-size:11px;color:var(--slate);">No payments yet</span>'}
                 </td>
+                <td>${smsCell}</td>
               </tr>`;
             }).join('')}
           </tbody>
@@ -3703,14 +3816,22 @@ async function recordFeePayment(studentId){
     recordedBy: session ? session.name : '',
     receiptPrinted: false,
     parentAcknowledged: false,
-    acknowledgedAt: null
+    acknowledgedAt: null,
+    smsSent: false,
+    smsError: null
   };
   s.payments.push(payment);
   await saveDB();
   input.value = '';
   render();
 
-  if(confirm(`Payment of GHS ${amount.toFixed(2)} recorded for ${s.name}. Print a receipt now?`)){
+  const smsResult = await sendFeePaymentSMS(studentId, payment.id);
+  render();
+  if(!smsResult.ok){
+    alert(`Payment of GHS ${amount.toFixed(2)} recorded for ${s.name}, but the SMS to the guardian could not be sent:\n${smsResult.error}`);
+  }
+
+  if(confirm(`Payment of GHS ${amount.toFixed(2)} recorded for ${s.name}${smsResult.ok ? ' — the guardian has been texted.' : ''}. Print a receipt now?`)){
     printFeeReceipt(studentId, payment.id);
   }
 }
