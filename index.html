@@ -1723,7 +1723,7 @@ function subjectPosition(classId, subj, studentId){
   }
   return null;
 }
-/* Subject type: 'core' (compulsory, counted on report cards), 'elective' (best-two counted),
+/* Subject type: 'core' (compulsory, best-four counted on report cards), 'elective' (best-two counted),
    or 'nonacademic' (free-period activities like Library/Games — scheduled on the timetable
    but never scored, averaged, or shown on report cards). */
 function subjectTypeLabel(type){
@@ -1749,14 +1749,16 @@ function forcedSubjectType(name){
   if(isAlwaysCoreSubjectName(name)) return 'core';
   return null;
 }
-/* The official grading set: every core subject, plus the best two electives by score.
-   raw = sum of the 6 (or however many) subject totals out of 100 each.
+/* The official grading set: the best 4 core subjects, plus the best two electives by score.
+   raw = sum of the 6 subject totals out of 100 each.
    average = mean percentage across them. aggregate = sum of their 1–9 grade points (lower = better). */
 function sixSubjectSummary(classId, studentId){
   const cls = classOf(classId);
   if(!cls) return { subjects:[], raw:null, average:null, aggregate:null, count:0 };
   const withScores = list => list.map(s=>({ name:s.name, grand: subjectAverage(classId, s.name, studentId) }));
-  const core = withScores(cls.subjects.filter(s=>s.type!=='elective' && s.type!=='nonacademic'));
+  const core = withScores(cls.subjects.filter(s=>s.type!=='elective' && s.type!=='nonacademic'))
+    .sort((a,b)=>(b.grand??-1)-(a.grand??-1))
+    .slice(0,4);
   const electives = withScores(cls.subjects.filter(s=>s.type==='elective'))
     .sort((a,b)=>(b.grand??-1)-(a.grand??-1))
     .slice(0,2);
@@ -3312,7 +3314,9 @@ function renderTimetableAdmin(){
           <thead><tr><th>Start</th><th>End</th><th>Label</th><th>Type</th><th></th></tr></thead>
           <tbody>
             ${slots.map(s=>`<tr>
-              <td class="mono">${s.start}</td><td class="mono">${s.end}</td><td>${s.label}</td>
+              <td class="mono"><input type="time" value="${s.start}" style="width:120px;" onchange="updateTimetableSlot('${s.id}','start',this.value)"></td>
+              <td class="mono"><input type="time" value="${s.end}" style="width:120px;" onchange="updateTimetableSlot('${s.id}','end',this.value)"></td>
+              <td><input type="text" value="${s.label}" style="width:100%;min-width:120px;" onchange="updateTimetableSlot('${s.id}','label',this.value)"></td>
               <td>${s.isBreak ? '<span class="badge-unassigned" style="background:var(--brass-soft);color:var(--brass);">Break</span>' : 'Lesson'}</td>
               <td><button class="btn-danger" onclick="removeTimetableSlot('${s.id}')">Remove</button></td>
             </tr>`).join('')}
@@ -3422,6 +3426,14 @@ async function addTimetableSlot(){
   const isBreak = document.getElementById('new-slot-break').checked;
   if(!start || !end || !label) return;
   DB.timetableSlots[ttSelectedMode][ttSelectedLevel].push({ id:'slot'+Date.now(), start, end, label, isBreak });
+  await saveDB();
+  render();
+}
+async function updateTimetableSlot(id, field, value){
+  const slot = DB.timetableSlots[ttSelectedMode][ttSelectedLevel].find(s=>s.id===id);
+  if(!slot) return;
+  if(field==='label' && !value.trim()) return;
+  slot[field] = field==='label' ? value.trim() : value;
   await saveDB();
   render();
 }
