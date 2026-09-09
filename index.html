@@ -1532,6 +1532,7 @@ function migrateDB(){
     c.subjects.forEach(subj=>{
       if(subj.type===undefined){ subj.type = 'core'; changed = true; }
       if(isFreePeriodSubjectName(subj.name) && subj.type!=='nonacademic'){ subj.type = 'nonacademic'; changed = true; }
+      if(isAlwaysCoreSubjectName(subj.name) && subj.type!=='core'){ subj.type = 'core'; changed = true; }
       if(!DB.gradebook[c.id][subj.name]){
         // a subject that somehow has no matching gradebook record — recreate it rather than
         // leaving a landmine that crashes the dashboard/gradebook the moment it's touched.
@@ -1568,6 +1569,12 @@ function naturalClassCompare(a,b){
   return a.name.localeCompare(b.name);
 }
 function sortClasses(){ DB.classes.sort(naturalClassCompare); }
+/* Since DB.classes is always kept in BS1→BS9 order (see sortClasses), the class right after this
+   one in that same array is its natural "next class up" — used to default the promote-class picker. */
+function nextClassOf(classId){
+  const idx = DB.classes.findIndex(c=>c.id===classId);
+  return idx>-1 ? (DB.classes[idx+1] || null) : null;
+}
 function studentsOf(classId){ return DB.students.filter(s=>s.classId===classId); }
 function classOf(id){ return DB.classes.find(c=>c.id===id); }
 function studentById(id){ return DB.students.find(s=>s.id===id); }
@@ -1728,6 +1735,19 @@ function subjectTypeLabel(type){
    them anywhere they're added from — so they never end up counted on a report card by mistake. */
 function isFreePeriodSubjectName(name){
   return /^(library|games)$/i.test(String(name||'').trim());
+}
+/* CT, Ghanaian Language, and Computing are always treated as core/compulsory — they're taught and
+   evaluated like any other subject, so they should never be left off the report card as an
+   elective that didn't make the "best two" cut. */
+function isAlwaysCoreSubjectName(name){
+  return /^(ct|ghanaian language|computing)$/i.test(String(name||'').trim());
+}
+/* Single place that resolves any naming-based override — returns the forced type for a subject
+   name, or null if its type is left up to whatever's picked for it. */
+function forcedSubjectType(name){
+  if(isFreePeriodSubjectName(name)) return 'nonacademic';
+  if(isAlwaysCoreSubjectName(name)) return 'core';
+  return null;
 }
 /* The official grading set: every core subject, plus the best two electives by score.
    raw = sum of the 6 (or however many) subject totals out of 100 each.
@@ -2692,6 +2712,40 @@ async function removeStudent(id){
   await saveDB();
   render();
 }
+/* Moves one student to a different class — e.g. promoting them to the next grade at the start of
+   a new year, or moving them into a different arm/stream. Past marks and attendance stay recorded
+   against their old class (that history doesn't move); the new class's gradebook gets a blank
+   score record ready for the subjects taught there. */
+async function promoteStudent(studentId, newClassId){
+  const s = studentById(studentId);
+  const oldCls = s ? classOf(s.classId) : null;
+  const newCls = classOf(newClassId);
+  if(!s || !newCls || !newClassId || s.classId===newClassId) return;
+  if(!confirm(`Move ${s.name} from ${oldCls ? oldCls.name : 'their current class'} to ${newCls.name}? Marks and attendance already recorded stay under ${oldCls ? oldCls.name : 'the old class'} — ${newCls.name}'s gradebook will start blank for ${s.name}.`)) return;
+  s.classId = newClassId;
+  const gb = DB.gradebook[newClassId] || {};
+  Object.values(gb).forEach(sub=>{ if(!(studentId in sub.scores)) sub.scores[studentId] = {}; });
+  await saveDB();
+  render();
+}
+/* Bulk version — promotes every student currently in one class into another class in one action,
+   for the common end-of-year "move the whole class up" case. */
+async function promoteClass(classId, newClassId){
+  const cls = classOf(classId);
+  const newCls = classOf(newClassId);
+  if(!cls || !newCls || !newClassId || classId===newClassId) return;
+  const roster = studentsOf(classId);
+  if(!roster.length){ alert(`${cls.name} has no students to promote.`); return; }
+  if(!confirm(`Promote all ${roster.length} student${roster.length===1?'':'s'} from ${cls.name} to ${newCls.name}? Marks and attendance already recorded stay under ${cls.name} — ${newCls.name}'s gradebook will start blank for each of them.`)) return;
+  const gb = DB.gradebook[newClassId] || {};
+  roster.forEach(s=>{
+    s.classId = newClassId;
+    Object.values(gb).forEach(sub=>{ if(!(s.id in sub.scores)) sub.scores[s.id] = {}; });
+  });
+  await saveDB();
+  render();
+  alert(`Promoted ${roster.length} student${roster.length===1?'':'s'} to ${newCls.name}.`);
+}
 function openStudent(id){ view.studentId = id; view.tab='overview'; render(); }
 let profilePhotoTarget = null;
 async function openEditProfile(id){
@@ -2752,7 +2806,17 @@ function renderStudentDetail(id){
         <div class="stat-card"><div class="label">Attendance rate</div><div class="value">${att??'—'}${att!==null?'%':''}</div><div class="sub">This term</div></div>
         <div class="stat-card"><div class="label">Class</div><div class="value" style="font-size:20px;">${cls.name}</div><div class="sub">${classTeacherName || 'No class teacher assigned'}</div></div>
       </div>
-      <div class="panel"><div class="panel-head"><h3>Profile</h3>${canEditProfile ? `<button class="btn-ghost" onclick="openEditProfile('${id}')">Edit profile</button>` : ''}</div>
+      <div class="panel"><div class="panel-head"><h3>Profile</h3>${canEditProfile ? `
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+          ${DB.classes.length>1 ? `
+          <select id="promote-class-${id}" style="font-size:12.5px;">
+            ${DB.classes.filter(c=>c.id!==s.classId).map(c=>`<option value="${c.id}" ${nextClassOf(s.classId) && nextClassOf(s.classId).id===c.id?'selected':''}>${c.name}</option>`).join('')}
+          </select>
+          <button class="btn-ghost" onclick="promoteStudent('${id}', document.getElementById('promote-class-${id}').value)">Promote / move class</button>
+          ` : ''}
+          <button class="btn-ghost" onclick="openEditProfile('${id}')">Edit profile</button>
+        </div>
+      ` : ''}</div>
         <div class="panel-body" style="padding-top:14px;padding-bottom:16px;display:flex;gap:18px;align-items:center;flex-wrap:wrap;">
           <div style="position:relative;">
             ${s.photo ? `<img src="${s.photo}" style="width:72px;height:72px;border-radius:50%;object-fit:cover;border:1px solid var(--line);">` : `<div class="avatar" style="width:72px;height:72px;font-size:22px;background:var(--ink);color:var(--brass-soft);">${s.name.split(' ').map(w=>w[0]).slice(0,2).join('')}</div>`}
@@ -3481,6 +3545,13 @@ function renderClasses(){
               <option value="">— Unassigned —</option>
               ${teachers.map(t=>`<option value="${t.username}" ${c.classTeacher===t.username?'selected':''}>${t.name}</option>`).join('')}
             </select>
+            ${DB.classes.length>1 && roster.length ? `
+            <label style="font-size:12px;color:var(--slate);font-weight:600;">Promote to</label>
+            <select id="promote-target-${c.id}">
+              ${DB.classes.filter(x=>x.id!==c.id).map(x=>`<option value="${x.id}" ${nextClassOf(c.id) && nextClassOf(c.id).id===x.id?'selected':''}>${x.name}</option>`).join('')}
+            </select>
+            <button class="btn-small brass" onclick="promoteClass('${c.id}', document.getElementById('promote-target-${c.id}').value)">Promote all ${roster.length}</button>
+            ` : ''}
             <button class="btn-danger" onclick="removeClass('${c.id}')">Delete class</button>
           </div>
         </div>
@@ -3488,7 +3559,7 @@ function renderClasses(){
           ${c.subjects.map(s=>`
             <div class="subject-row">
               <span class="sname">${s.name}</span>
-              <select onchange="setSubjectType('${c.id}','${s.name.replace(/'/g,"\\'")}', this.value)" style="font-size:12px;" ${isFreePeriodSubjectName(s.name)?'disabled title="Library and Games are always free periods — left off report cards"':''}>
+              <select onchange="setSubjectType('${c.id}','${s.name.replace(/'/g,"\\'")}', this.value)" style="font-size:12px;" ${forcedSubjectType(s.name)?`disabled title="${isFreePeriodSubjectName(s.name)?'Library and Games are always free periods — left off report cards':'CT, Ghanaian Language, and Computing are always core subjects — always counted on report cards'}"`:''}>
                 <option value="core" ${s.type!=='elective' && s.type!=='nonacademic'?'selected':''}>Core</option>
                 <option value="elective" ${s.type==='elective'?'selected':''}>Elective</option>
                 <option value="nonacademic" ${s.type==='nonacademic'?'selected':''}>Free period (no report card)</option>
@@ -3560,7 +3631,8 @@ async function addSubject(classId){
   if(!name) return;
   const c = classOf(classId);
   if(c.subjects.some(s=>s.name.toLowerCase()===name.toLowerCase())){ alert('That subject already exists in this class.'); return; }
-  if(isFreePeriodSubjectName(name)) type = 'nonacademic';
+  const forced = forcedSubjectType(name);
+  if(forced) type = forced;
   c.subjects.push({ name, teacher:null, type });
   DB.gradebook[classId][name] = {
     assessments: SBA_CATEGORIES.slice(), scores:{}, weeklyEnabled:false, weeklyMax:10, weeklyScores:{}, examScores:{}
@@ -3573,7 +3645,7 @@ async function setSubjectType(classId, subjName, type){
   const c = classOf(classId);
   const s = subjectOf(c, subjName);
   if(s){
-    s.type = isFreePeriodSubjectName(subjName) ? 'nonacademic' : type;
+    s.type = forcedSubjectType(subjName) || type;
     await saveDB();
     render();
   }
@@ -3587,7 +3659,8 @@ async function processSubjectRows(rows){
     const typeField = fieldVal(r,'type','subject type');
     let type = /elective/i.test(typeField) ? 'elective' : (/non.?academic|free/i.test(typeField) ? 'nonacademic' : 'core');
     if(!subjectName){ skipped.push(`Row ${i+1}: no subject name given`); return; }
-    if(isFreePeriodSubjectName(subjectName)) type = 'nonacademic';
+    const forced = forcedSubjectType(subjectName);
+    if(forced) type = forced;
     const cls = findClassByName(className);
     if(!cls){ skipped.push(`Row ${i+1} (${subjectName}): class "${className}" not found`); return; }
     if(cls.subjects.some(s=>s.name.toLowerCase()===subjectName.toLowerCase())){ skipped.push(`Row ${i+1}: "${subjectName}" already exists in ${cls.name}`); return; }
