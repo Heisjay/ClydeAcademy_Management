@@ -4652,7 +4652,6 @@ function buildReportCardHTML(studentId){
   const attCounts = attendanceCounts(studentId, s.classId);
   const pos = classPosition(studentId);
   const sixSum = sixSubjectSummary(s.classId, studentId);
-  const chosenNames = new Set(sixSum.subjects.map(x=>x.name));
   const classTeacherName = cls.classTeacher ? teacherName(cls.classTeacher) : '—';
   const classTeacherUser = cls.classTeacher ? userByUsername(cls.classTeacher) : null;
   const headUser = DB.headTeacherUsername ? userByUsername(DB.headTeacherUsername) : null;
@@ -4688,8 +4687,7 @@ function buildReportCardHTML(studentId){
             const b = subjectBreakdown(s.classId, subj.name, studentId);
             const spos = subjectPosition(s.classId, subj.name, studentId);
             const gp = gradePointFor(b.grand);
-            const inSix = chosenNames.has(subj.name);
-            return `<tr${inSix?'':' style="opacity:0.55;"'}><td>${subj.name}${inSix?'':' <span style="font-size:9.5px;">(not counted)</span>'}</td><td>${b.sba50??'—'}</td><td>${b.exam50??'—'}</td><td>${b.grand??'—'}${b.grand!==null?'%':''}</td><td>${gp??'—'}</td><td>${spos?ordinal(spos.rank):'—'}</td><td>${remarkFor(gp)}</td></tr>`;
+            return `<tr><td>${subj.name}</td><td>${b.sba50??'—'}</td><td>${b.exam50??'—'}</td><td>${b.grand??'—'}${b.grand!==null?'%':''}</td><td>${gp??'—'}</td><td>${spos?ordinal(spos.rank):'—'}</td><td>${remarkFor(gp)}</td></tr>`;
           }).join('')}
         </tbody>
       </table>
