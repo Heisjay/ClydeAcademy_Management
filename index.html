@@ -909,10 +909,21 @@ async function sendFeePaymentSMS(studentId, paymentId){
         schedule_date: ''
       })
     });
-    const data = await resp.json().catch(()=>null);
+    const rawText = await resp.text().catch(()=>'');
+    let data = null;
+    try{ data = rawText ? JSON.parse(rawText) : null; }catch(e){ data = null; }
     const success = resp.ok && data && (String(data.code)==='2000' || String(data.status).toLowerCase()==='success');
     payment.smsSent = !!success;
-    payment.smsError = success ? null : ('mNotify: ' + ((data && (data.message||data.status)) || ('HTTP '+resp.status)));
+    if(!success){
+      if(resp.status === 401){
+        payment.smsError = 'mNotify: HTTP 401 Unauthorized — the API key was rejected. Double check: (1) you copied the "SMS API Key" from mNotify\'s Account Settings, not the "API v2" key; (2) no extra spaces/quotes got included when pasting it into SMS_CONFIG; (3) the key is active on your mNotify account.'
+          + (data && (data.message||data.status) ? (' mNotify said: ' + (data.message||data.status)) : (rawText ? (' Raw response: ' + rawText.slice(0,200)) : ''));
+      } else {
+        payment.smsError = 'mNotify: ' + ((data && (data.message||data.status)) || (rawText ? rawText.slice(0,200) : ('HTTP '+resp.status)));
+      }
+    } else {
+      payment.smsError = null;
+    }
     await saveDB();
     return { ok: !!success, error: payment.smsError };
   }catch(e){
