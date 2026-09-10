@@ -3390,9 +3390,21 @@ function renderTimetableAdmin(){
       </div>
     </div>
 
-    <div class="panel"><div class="panel-head"><h3>Step 3 — View &amp; print (${modeLabel})</h3>${cls ? `<button class="btn-ghost" onclick="printTimetable('${cls.id}','${ttSelectedMode}')">Print / Download</button>` : ''}</div>
+    <div class="panel"><div class="panel-head"><h3>Step 3 — View &amp; print (${modeLabel})</h3>${cls ? `<button class="btn-ghost" onclick="printTimetable('${cls.id}','${ttSelectedMode}')">Print this class</button>` : ''}</div>
       <div class="panel-body" style="padding-top:10px;padding-bottom:16px;overflow-x:auto;">
         ${cls && slots.length ? buildTimetableGridHTML(cls.id, ttSelectedMode) : '<p style="margin:0;font-size:13px;color:var(--slate);">Complete steps 1 and 2 to see the timetable here.</p>'}
+      </div>
+    </div>
+
+    <div class="panel"><div class="panel-head"><h3>Print whole-school timetables (${modeLabel})</h3></div>
+      <div class="panel-body" style="padding-top:10px;padding-bottom:16px;">
+        <p style="margin:0 0 12px;font-size:12.5px;color:var(--slate);">Lower Primary and Upper Primary each print as one combined sheet with every class in the group stacked under each day; JHS prints as its own combined sheet, separately. Use the single button below to print all three at once, or pick just one group.</p>
+        <div class="inline-form" style="flex-wrap:wrap;gap:8px;">
+          <button class="btn-small brass" onclick="printAllTimetables('${ttSelectedMode}')">Print all timetables</button>
+          <button class="btn-small" onclick="printCombinedTimetable('LowerPrimary','${ttSelectedMode}')">Print Lower Primary</button>
+          <button class="btn-small" onclick="printCombinedTimetable('UpperPrimary','${ttSelectedMode}')">Print Upper Primary</button>
+          <button class="btn-small" onclick="printCombinedTimetable('JHS','${ttSelectedMode}')">Print JHS</button>
+        </div>
       </div>
     </div>
   `;
@@ -3433,6 +3445,63 @@ function buildTimetableHTML(classId, mode){
 }
 function printTimetable(classId, mode){
   document.getElementById('print-area').innerHTML = buildTimetableHTML(classId, mode);
+  window.print();
+}
+/* Combined grids — one table per level-group (Lower Primary / Upper Primary / JHS) with every
+   class in that group stacked as sub-rows under each day, instead of a separate page per class.
+   Lower and Upper Primary share the same periods/breaks (both run on the "Primary" schedule),
+   so grouping them this way keeps each printed sheet on one consistent set of columns. */
+function billCategoryLabel(cat){ return BILL_CATEGORY_LABELS[cat] || cat; }
+function classesInCategory(category){
+  return DB.classes.filter(c=>billCategoryForClass(c)===category);
+}
+function buildCombinedTimetableGridHTML(category, mode){
+  mode = mode || activeTimetableMode();
+  const level = category==='JHS' ? 'JHS' : 'Primary';
+  const slots = timetableSlotsFor(level, mode);
+  const classes = classesInCategory(category);
+  if(!classes.length) return `<p style="margin:0;font-size:13px;color:var(--slate);">No ${billCategoryLabel(category)} classes yet.</p>`;
+  if(!slots.length) return `<p style="margin:0;font-size:13px;color:var(--slate);">No periods set up for ${level} yet.</p>`;
+  return `
+    <table class="reg tt-grid">
+      <thead><tr><th>Day</th><th>Class</th>${slots.map(s=>`<th>${s.label}<br><span style="font-size:10px;font-weight:400;color:var(--slate);">${s.start}–${s.end}</span></th>`).join('')}</tr></thead>
+      <tbody>
+        ${TIMETABLE_DAYS.map(d=>classes.map((c,ci)=>`<tr>
+          ${ci===0 ? `<td class="mono" rowspan="${classes.length}" style="white-space:nowrap;font-weight:600;vertical-align:middle;">${d}</td>` : ''}
+          <td style="white-space:nowrap;font-weight:600;">${c.name}</td>
+          ${slots.map(s=>{
+            if(s.isBreak) return `<td style="background:var(--paper);text-align:center;font-weight:600;">${s.label}</td>`;
+            const classTT = DB.timetable[mode][c.id] || {};
+            const val = (classTT[d]||{})[s.id] || '—';
+            return `<td style="text-align:center;${val==='Free Period'?'background:var(--sage-soft);color:var(--sage);font-weight:600;':''}">${val}</td>`;
+          }).join('')}
+        </tr>`).join('')).join('')}
+      </tbody>
+    </table>
+  `;
+}
+function buildCombinedTimetableHTML(category, mode){
+  mode = mode || activeTimetableMode();
+  const modeLabel = mode==='vacation' ? 'Vacation Classes' : 'Term';
+  return `
+    <div class="rc-page">
+      <div class="rc-head">
+        <div class="crest">${DB.school.crest ? `<img src="${DB.school.crest}">` : `<span>${schoolInitials(DB.school.name)}</span>`}</div>
+        <div><h2>${DB.school.name}</h2><p>${modeLabel} Timetable — ${billCategoryLabel(category)}</p></div>
+      </div>
+      ${buildCombinedTimetableGridHTML(category, mode)}
+    </div>
+  `;
+}
+function printCombinedTimetable(category, mode){
+  document.getElementById('print-area').innerHTML = buildCombinedTimetableHTML(category, mode);
+  window.print();
+}
+/* One button, every timetable: Lower Primary combined, Upper Primary combined, and JHS combined,
+   each on its own page (rc-page already carries page-break-after in print CSS). */
+function printAllTimetables(mode){
+  mode = mode || ttSelectedMode || activeTimetableMode();
+  document.getElementById('print-area').innerHTML = BILL_CATEGORIES.map(cat=>buildCombinedTimetableHTML(cat, mode)).join('');
   window.print();
 }
 async function addTimetableSlot(){
