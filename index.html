@@ -1120,7 +1120,15 @@ function fmtDateTime(iso){
    bill items, since fees typically differ across these groups. */
 function billCategoryForClass(cls){
   if(!cls) return 'JHS';
+  if(cls.level==='Graduated') return null;
   if(cls.level==='Primary') return cls.primaryTier==='Upper' ? 'UpperPrimary' : 'LowerPrimary';
+  return 'JHS';
+}
+/* Short label for a class's Level, used anywhere the level is shown as text rather than a
+   dropdown — keeps the Graduated / Primary-tier / JHS wording in one place. */
+function classLevelLabel(cls){
+  if(cls.level==='Graduated') return 'Graduated';
+  if(cls.level==='Primary') return cls.primaryTier==='Upper' ? 'Upper Primary' : 'Lower Primary';
   return 'JHS';
 }
 function billItemsForClass(cls){
@@ -2653,7 +2661,7 @@ function renderStudents(){
       <div class="inline-form">
         <input type="text" id="new-student-name" placeholder="Full name" style="flex:2;min-width:160px;">
         <select id="new-student-class">
-          ${DB.classes.map(c=>`<option value="${c.id}">${c.name}</option>`).join('')}
+          ${DB.classes.filter(c=>c.level!=='Graduated').map(c=>`<option value="${c.id}">${c.name}</option>`).join('')}
         </select>
         <input type="text" id="new-student-guardian" placeholder="Guardian phone (optional)" style="flex:1;min-width:150px;">
         <button class="btn-small brass" onclick="addStudent()">Add student</button>
@@ -2892,7 +2900,7 @@ function renderStudentDetail(id){
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
           ${!s.graduated && DB.classes.length>1 ? `
           <select id="promote-class-${id}" style="font-size:12.5px;">
-            ${DB.classes.filter(c=>c.id!==s.classId).map(c=>`<option value="${c.id}" ${nextClassOf(s.classId) && nextClassOf(s.classId).id===c.id?'selected':''}>${c.name}</option>`).join('')}
+            ${DB.classes.filter(c=>c.id!==s.classId && c.level!=='Graduated').map(c=>`<option value="${c.id}" ${nextClassOf(s.classId) && nextClassOf(s.classId).id===c.id?'selected':''}>${c.name}</option>`).join('')}
           </select>
           <button class="btn-ghost" onclick="promoteStudent('${id}', document.getElementById('promote-class-${id}').value)">Promote / move class</button>
           ` : ''}
@@ -3661,6 +3669,7 @@ function renderClasses(){
         <select id="new-class-level" onchange="document.getElementById('new-class-tier').style.display = this.value==='Primary' ? '' : 'none';">
           <option value="JHS">JHS</option>
           <option value="Primary">Primary</option>
+          <option value="Graduated">Graduated</option>
         </select>
         <select id="new-class-tier" style="display:none;" title="Only used when Level is Primary">
           <option value="Lower">Lower Primary</option>
@@ -3668,7 +3677,7 @@ function renderClasses(){
         </select>
         <button class="btn-small brass" onclick="addClass()">Add class</button>
       </div>
-      <p style="margin:8px 0 0;font-size:12px;color:var(--slate);">Choosing Primary as the level reveals a Lower/Upper Primary tier field — this decides which bill applies to the class.</p>
+      <p style="margin:8px 0 0;font-size:12px;color:var(--slate);">Choosing Primary as the level reveals a Lower/Upper Primary tier field — this decides which bill applies to the class. Graduated classes are left out of bills and timetables — they're for keeping an alumni set's roster and records around after they've left.</p>
     </div>
 
     <div class="crud-box">
@@ -3690,13 +3699,14 @@ function renderClasses(){
         <div class="class-card-head">
           <div>
             <div class="name">${c.name}</div>
-            <div style="font-size:12px;color:var(--slate);">${roster.length} student${roster.length===1?'':'s'} · ${c.subjects.length} subject${c.subjects.length===1?'':'s'} · ${c.level==='Primary' ? (c.primaryTier==='Upper'?'Upper Primary':'Lower Primary') : 'JHS'}</div>
+            <div style="font-size:12px;color:var(--slate);">${roster.length} student${roster.length===1?'':'s'} · ${c.subjects.length} subject${c.subjects.length===1?'':'s'} · ${classLevelLabel(c)}</div>
           </div>
           <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
             <label style="font-size:12px;color:var(--slate);font-weight:600;">Level</label>
             <select onchange="setClassLevel('${c.id}', this.value)">
               <option value="JHS" ${(c.level||'JHS')==='JHS'?'selected':''}>JHS</option>
               <option value="Primary" ${c.level==='Primary'?'selected':''}>Primary</option>
+              <option value="Graduated" ${c.level==='Graduated'?'selected':''}>Graduated</option>
             </select>
             ${c.level==='Primary' ? `
             <label style="font-size:12px;color:var(--slate);font-weight:600;">Tier</label>
