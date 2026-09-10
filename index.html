@@ -493,10 +493,28 @@
   .rc-summary .l{font-size:10.5px; color:var(--slate); text-transform:uppercase;}
   .rc-sign{display:flex; justify-content:space-between; margin-top:50px;}
   .rc-sign div{width:42%; text-align:center; border-top:1px solid var(--ink); padding-top:6px; font-size:11.5px; color:var(--slate);}
+
+  /* ---------- Print timetable ----------
+     Own wrapper (not .rc-page) so a timetable's print styling — compact type, tight padding,
+     landscape orientation for the extra width periods need — never bleeds into report cards. */
+  .tt-page{padding:14px 8px; page-break-after:always; page:tt-landscape;}
+  .tt-page:last-child{page-break-after:auto;}
+  .tt-page .rc-head{margin-bottom:10px; padding-bottom:8px;}
+  .tt-page table.tt-grid{width:100%; table-layout:fixed; font-size:11px;}
+  .tt-page table.tt-grid th, .tt-page table.tt-grid td{padding:4px 5px; overflow-wrap:break-word;}
+
   @media print{
     body *{visibility:hidden;}
     #print-area, #print-area *{visibility:visible;}
     #print-area{display:block; position:absolute; left:0; top:0; width:100%;}
+    /* Named page so only timetables (via page:tt-landscape above) print landscape — report
+       cards keep the default portrait page. Landscape's extra width plus the smaller type
+       below is what keeps a whole timetable — even a combined multi-class one — on one sheet. */
+    @page tt-landscape{ size: landscape; margin:10mm; }
+    .tt-page table.tt-grid{ font-size:9px; }
+    .tt-page table.tt-grid th, .tt-page table.tt-grid td{ padding:3px 4px; line-height:1.15; }
+    .tt-page .rc-head .crest{ width:40px; height:40px; }
+    .tt-page .rc-head h2{ font-size:17px; }
   }
 </style>
 </head>
@@ -2766,10 +2784,21 @@ async function promoteStudent(studentId, newClassId){
    for the common end-of-year "move the whole class up" case. */
 async function promoteClass(classId, newClassId){
   const cls = classOf(classId);
-  const newCls = classOf(newClassId);
-  if(!cls || !newCls || !newClassId || classId===newClassId) return;
+  if(!cls || !newClassId || classId===newClassId) return;
   const roster = studentsOf(classId);
   if(!roster.length){ alert(`${cls.name} has no students to promote.`); return; }
+  /* "Graduated" is the bulk version of the per-student "Mark as graduated" action — same rule
+     applies: it's a status, not a move, so classId is left as-is and only graduated:true changes. */
+  if(newClassId==='graduated'){
+    if(!confirm(`Mark all ${roster.length} student${roster.length===1?'':'s'} in ${cls.name} as graduated? They'll come off ${cls.name}'s active roster (gradebook, attendance, fees) but every record stays intact, and this can be undone one at a time from each student's profile.`)) return;
+    roster.forEach(s=>{ s.graduated = true; });
+    await saveDB();
+    render();
+    alert(`Marked ${roster.length} student${roster.length===1?'':'s'} as graduated.`);
+    return;
+  }
+  const newCls = classOf(newClassId);
+  if(!newCls) return;
   if(!confirm(`Promote all ${roster.length} student${roster.length===1?'':'s'} from ${cls.name} to ${newCls.name}? Marks and attendance already recorded stay under ${cls.name} — ${newCls.name}'s gradebook will start blank for each of them.`)) return;
   const gb = DB.gradebook[newClassId] || {};
   roster.forEach(s=>{
@@ -3472,7 +3501,7 @@ function buildTimetableHTML(classId, mode){
   const cls = classOf(classId);
   const modeLabel = mode==='vacation' ? 'Vacation Classes' : 'Term';
   return `
-    <div class="rc-page">
+    <div class="tt-page">
       <div class="rc-head">
         <div class="crest">${DB.school.crest ? `<img src="${DB.school.crest}">` : `<span>${schoolInitials(DB.school.name)}</span>`}</div>
         <div><h2>${DB.school.name}</h2><p>${modeLabel} Timetable — ${cls.name}</p></div>
@@ -3522,7 +3551,7 @@ function buildCombinedTimetableHTML(category, mode){
   mode = mode || activeTimetableMode();
   const modeLabel = mode==='vacation' ? 'Vacation Classes' : 'Term';
   return `
-    <div class="rc-page">
+    <div class="tt-page">
       <div class="rc-head">
         <div class="crest">${DB.school.crest ? `<img src="${DB.school.crest}">` : `<span>${schoolInitials(DB.school.name)}</span>`}</div>
         <div><h2>${DB.school.name}</h2><p>${modeLabel} Timetable — ${billCategoryLabel(category)}</p></div>
@@ -3680,10 +3709,11 @@ function renderClasses(){
               <option value="">— Unassigned —</option>
               ${teachers.map(t=>`<option value="${t.username}" ${c.classTeacher===t.username?'selected':''}>${t.name}</option>`).join('')}
             </select>
-            ${DB.classes.length>1 && roster.length ? `
+            ${roster.length ? `
             <label style="font-size:12px;color:var(--slate);font-weight:600;">Promote to</label>
             <select id="promote-target-${c.id}">
               ${DB.classes.filter(x=>x.id!==c.id).map(x=>`<option value="${x.id}" ${nextClassOf(c.id) && nextClassOf(c.id).id===x.id?'selected':''}>${x.name}</option>`).join('')}
+              <option value="graduated">Graduated</option>
             </select>
             <button class="btn-small brass" onclick="promoteClass('${c.id}', document.getElementById('promote-target-${c.id}').value)">Promote all ${roster.length}</button>
             ` : ''}
