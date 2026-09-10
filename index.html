@@ -1489,6 +1489,10 @@ function migrateDB(){
     if(s.payments===undefined){ s.payments = []; changed = true; }
     if(s.billNoticesSeen===undefined){ s.billNoticesSeen = {}; changed = true; }
     if(!s.studentId){ s.studentId = nextDisplayId('STU'); changed = true; }
+    // "Graduated" is a status on the student, not a class — a student keeps the classId of the
+    // class they finished in (so their old marks/attendance/report cards still resolve correctly),
+    // but graduated=true drops them out of that class's active roster everywhere (studentsOf).
+    if(s.graduated===undefined){ s.graduated = false; changed = true; }
   });
   // Restructure each subject's gradebook to the SBA model (4 CATs + weekly toggle + exam score)
   Object.values(DB.gradebook).forEach(subjMap=>{
@@ -1584,7 +1588,13 @@ function nextClassOf(classId){
   const idx = DB.classes.findIndex(c=>c.id===classId);
   return idx>-1 ? (DB.classes[idx+1] || null) : null;
 }
-function studentsOf(classId){ return DB.students.filter(s=>s.classId===classId); }
+/* Active roster only — graduated students keep their classId for record-keeping (old marks,
+   attendance, report cards) but are no longer part of the class day-to-day, so every roster-driven
+   view (gradebook, attendance, promote, bills, class position/rankings) reads through this and
+   naturally stops including them. Use allStudentsOf() where a graduated student's history still
+   needs to be found by their last class. */
+function studentsOf(classId){ return DB.students.filter(s=>s.classId===classId && !s.graduated); }
+function allStudentsOf(classId){ return DB.students.filter(s=>s.classId===classId); }
 function classOf(id){ return DB.classes.find(c=>c.id===id); }
 function studentById(id){ return DB.students.find(s=>s.id===id); }
 function userByUsername(u){ return DB.users.find(x=>x.username===u); }
@@ -2607,7 +2617,12 @@ function renderStudents(){
   const scope = accessibleClasses();
   const scopeIds = scope.map(c=>c.id);
   let list = session.role==='Admin' ? DB.students : DB.students.filter(s=>scopeIds.includes(s.classId));
-  if(studentFilter.classId!=='all') list = list.filter(s=>s.classId===studentFilter.classId);
+  // "Graduated" is a status, not a class, so it isn't in the class dropdown as an option to move
+  // students into — it's its own filter value here, and the default "All classes" view is the
+  // active roster only (graduated alumni are tucked away until you specifically ask to see them).
+  if(studentFilter.classId==='graduated') list = list.filter(s=>s.graduated);
+  else if(studentFilter.classId==='all') list = list.filter(s=>!s.graduated);
+  else list = list.filter(s=>s.classId===studentFilter.classId && !s.graduated);
   if(studentFilter.q) list = list.filter(s=>s.name.toLowerCase().includes(studentFilter.q.toLowerCase()));
 
   return `
@@ -2640,8 +2655,9 @@ function renderStudents(){
     <div class="toolbar">
       <input type="text" placeholder="Search by name…" value="${studentFilter.q}" oninput="studentFilter.q=this.value; render()">
       ${scope.length>1 ? `<select onchange="studentFilter.classId=this.value; render()">
-        <option value="all">All classes</option>
+        <option value="all" ${studentFilter.classId==='all'?'selected':''}>All classes</option>
         ${scope.map(c=>`<option value="${c.id}" ${studentFilter.classId===c.id?'selected':''}>${c.name}</option>`).join('')}
+        ${session.role==='Admin' ? `<option value="graduated" ${studentFilter.classId==='graduated'?'selected':''}>Graduated</option>` : ''}
       </select>` : ''}
       ${list.length ? `<button class="btn-ghost" onclick='printClassReportCards(${JSON.stringify(list.map(s=>s.id))})'>Print report cards</button>` : ''}
     </div>
@@ -2654,7 +2670,7 @@ function renderStudents(){
           <div onclick="openStudent('${s.id}')" style="cursor:pointer;">
           <div class="top">
             ${s.photo ? `<img src="${s.photo}" style="width:38px;height:38px;border-radius:50%;object-fit:cover;flex-shrink:0;">` : `<div class="avatar" style="width:38px;height:38px;">${s.name.split(' ').map(w=>w[0]).slice(0,2).join('')}</div>`}
-            <div><div class="name">${s.name}</div><div class="cls">${classOf(s.classId).name}${s.studentId ? ' · '+s.studentId : ''}</div></div>
+            <div><div class="name">${s.name}</div><div class="cls">${s.graduated ? 'Graduated · ' : ''}${classOf(s.classId).name}${s.studentId ? ' · '+s.studentId : ''}</div></div>
           </div>
           <div class="metrics">
             <div class="metric"><div class="n grade-${gradeClass(avg)}">${avg??'—'}${avg!==null?'%':''}</div><div class="l">Average</div></div>
@@ -2673,7 +2689,7 @@ async function addStudent(){
   const guardian = document.getElementById('new-student-guardian').value.trim();
   if(!name) return;
   const id = 's'+Date.now();
-  DB.students.push({ id, name, classId, guardian: guardian || '—', photo:null, remark:'', arrears:0, payments:[], studentId: nextDisplayId('STU') });
+  DB.students.push({ id, name, classId, guardian: guardian || '—', photo:null, remark:'', arrears:0, payments:[], studentId: nextDisplayId('STU'), graduated:false });
   // seed an empty score record for every subject already in this class's gradebook
   const gb = DB.gradebook[classId] || {};
   Object.values(gb).forEach(sub=>{ sub.scores[id] = {}; });
@@ -2694,7 +2710,7 @@ async function processStudentRows(rows){
     const cls = findClassByName(className);
     if(!cls){ skipped.push(`Row ${i+1} (${name}): class "${className}" not found`); return; }
     const id = 's'+Date.now()+Math.floor(Math.random()*10000);
-    DB.students.push({ id, name, classId:cls.id, guardian: guardian || '—', photo:null, remark:'', arrears:0, payments:[], studentId: nextDisplayId('STU') });
+    DB.students.push({ id, name, classId:cls.id, guardian: guardian || '—', photo:null, remark:'', arrears:0, payments:[], studentId: nextDisplayId('STU'), graduated:false });
     const gb = DB.gradebook[cls.id] || {};
     Object.values(gb).forEach(sub=>{ sub.scores[id] = {}; });
     added++;
@@ -2764,6 +2780,25 @@ async function promoteClass(classId, newClassId){
   render();
   alert(`Promoted ${roster.length} student${roster.length===1?'':'s'} to ${newCls.name}.`);
 }
+/* Graduating is a status on the student, not a move to some "Graduated" class — classId is left
+   exactly as-is (so their finishing class, and all the marks/attendance recorded under it, still
+   resolve normally), and graduated:true is what pulls them off that class's active roster. */
+async function graduateStudent(id){
+  const s = studentById(id);
+  if(!s) return;
+  const cls = classOf(s.classId);
+  if(!confirm(`Mark ${s.name} as graduated? They'll come off ${cls ? cls.name : 'their class'}'s active roster (gradebook, attendance, fees) but every record stays intact, and this can be undone from their profile.`)) return;
+  s.graduated = true;
+  await saveDB();
+  render();
+}
+async function reinstateStudent(id){
+  const s = studentById(id);
+  if(!s) return;
+  s.graduated = false;
+  await saveDB();
+  render();
+}
 function openStudent(id){ navHistory.push({ page: view.page, studentId: null }); view.studentId = id; view.tab='overview'; render(); }
 let profilePhotoTarget = null;
 async function openEditProfile(id){
@@ -2822,16 +2857,19 @@ function renderStudentDetail(id){
         <div class="stat-card"><div class="label">Overall average</div><div class="value grade-${gradeClass(avg)}">${avg??'—'}${avg!==null?'%':''}</div><div class="sub">Aggregate ${sixSum.aggregate??'—'}</div></div>
         <div class="stat-card"><div class="label">Class position</div><div class="value">${pos?ordinal(pos.rank):'—'}</div><div class="sub">${pos?'out of '+pos.of:'Not enough data yet'}</div></div>
         <div class="stat-card"><div class="label">Attendance rate</div><div class="value">${att??'—'}${att!==null?'%':''}</div><div class="sub">This term</div></div>
-        <div class="stat-card"><div class="label">Class</div><div class="value" style="font-size:20px;">${cls.name}</div><div class="sub">${classTeacherName || 'No class teacher assigned'}</div></div>
+        <div class="stat-card"><div class="label">Class</div><div class="value" style="font-size:20px;">${cls.name}</div><div class="sub">${s.graduated ? 'Graduated — no longer active here' : (classTeacherName || 'No class teacher assigned')}</div></div>
       </div>
-      <div class="panel"><div class="panel-head"><h3>Profile</h3>${canEditProfile ? `
+      <div class="panel"><div class="panel-head"><h3>Profile${s.graduated ? ' <span class="badge-unassigned" style="background:var(--sage-soft);color:var(--sage);">Graduated</span>' : ''}</h3>${canEditProfile ? `
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-          ${DB.classes.length>1 ? `
+          ${!s.graduated && DB.classes.length>1 ? `
           <select id="promote-class-${id}" style="font-size:12.5px;">
             ${DB.classes.filter(c=>c.id!==s.classId).map(c=>`<option value="${c.id}" ${nextClassOf(s.classId) && nextClassOf(s.classId).id===c.id?'selected':''}>${c.name}</option>`).join('')}
           </select>
           <button class="btn-ghost" onclick="promoteStudent('${id}', document.getElementById('promote-class-${id}').value)">Promote / move class</button>
           ` : ''}
+          ${s.graduated
+            ? `<button class="btn-ghost" onclick="reinstateStudent('${id}')">Reinstate (undo graduation)</button>`
+            : `<button class="btn-ghost" onclick="graduateStudent('${id}')">Mark as graduated</button>`}
           <button class="btn-ghost" onclick="openEditProfile('${id}')">Edit profile</button>
         </div>
       ` : ''}</div>
