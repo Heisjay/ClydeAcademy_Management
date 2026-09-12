@@ -849,6 +849,8 @@ const FIRESTORE_DOC = 'database';
 
 let firestoreDB = null;
 let cloudEnabled = false;
+let lastSyncedAt = 0; // timestamp of the DB payload currently in memory, used to tell a genuinely
+                       // newer cloud/local copy from a stale or echoed one (see loadDB/saveDB below)
 
 /* ============================================================
    SMS — fee payment notifications via mNotify
@@ -1003,15 +1005,31 @@ function setSyncBadge(mode){
   else { el.textContent = '💻 Browser-only mode'; el.classList.add('local'); }
 }
 
+/* THE BUG: this used to store/read the DB object directly, with no timestamp attached. loadDB()
+   below then always trusted whatever was in Firestore over what was on the device — so if a cloud
+   save ever failed silently (offline moment, a dropped connection, temporarily-denied write) the
+   next page load would pull the older cloud copy and overwrite the newer local edits with it. That
+   is the "my changes don't save, it keeps reverting to old data" bug. The fix is to always know
+   which copy — local or cloud — is actually newer, which needs a timestamp on both sides. */
 function readLocalCache(){
   try{
     const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? JSON.parse(raw) : null;
+    if(!raw) return null;
+    const parsed = JSON.parse(raw);
+    // Back-compat: a cache written before this fix has no wrapper, just the raw DB object.
+    // Treat it as timestamp 0 (oldest) — a real cloud copy will still be preferred if newer,
+    // but it will never lose to a *stale* cloud copy the way the old code did.
+    if(parsed && typeof parsed === 'object' && 'payload' in parsed && 'updatedAt' in parsed){
+      return parsed;
+    }
+    return { payload: parsed, updatedAt: 0 };
   }catch(e){ return null; }
 }
-function writeLocalCache(){
-  try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(DB)); }
-  catch(e){ console.error('local cache save failed', e); }
+function writeLocalCache(stamp){
+  try{
+    const updatedAt = stamp !== undefined ? stamp : (lastSyncedAt || Date.now());
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ payload: DB, updatedAt }));
+  }catch(e){ console.error('local cache save failed', e); }
 }
 
 async function initCloudSync(){
@@ -1033,32 +1051,50 @@ async function initCloudSync(){
 
 async function loadDB(){
   const gotCloud = await initCloudSync();
+  const localEntry = readLocalCache(); // {payload, updatedAt} or null
   if(gotCloud){
     try{
       const ref = firestoreDB.collection(FIRESTORE_COLLECTION).doc(FIRESTORE_DOC);
       const snap = await ref.get();
-      if(snap.exists && snap.data().payload){
+      const cloudExists = snap.exists && snap.data().payload;
+      const cloudUpdatedAt = cloudExists ? (snap.data().updatedAt || 0) : -1;
+      const localUpdatedAt = localEntry ? (localEntry.updatedAt || 0) : -1;
+
+      if(cloudExists && cloudUpdatedAt >= localUpdatedAt){
+        // Cloud copy is the same age or newer than what's on this device — trust it, as before.
         DB = JSON.parse(snap.data().payload);
+        lastSyncedAt = cloudUpdatedAt;
+      } else if(localEntry){
+        // This device has edits the cloud never received (the save silently failed at some
+        // point) — keep them, and push them back up so the cloud catches up to this device
+        // instead of this device reverting to the cloud's older copy.
+        DB = localEntry.payload;
+        lastSyncedAt = Date.now();
+        await ref.set({ payload: JSON.stringify(DB), updatedAt: lastSyncedAt });
       } else {
-        DB = readLocalCache() || seedDB();
-        await ref.set({ payload: JSON.stringify(DB), updatedAt: Date.now() });
+        DB = seedDB();
+        lastSyncedAt = Date.now();
+        await ref.set({ payload: JSON.stringify(DB), updatedAt: lastSyncedAt });
       }
       migrateDB();
-      writeLocalCache();
+      writeLocalCache(lastSyncedAt);
       applyBranding();
       setSyncBadge(snap.metadata && snap.metadata.fromCache ? 'offline' : 'synced');
 
       // live updates from other devices/browsers
       ref.onSnapshot(doc=>{
         if(!doc.exists || !doc.data().payload) return;
-        const incoming = JSON.parse(doc.data().payload);
-        if(JSON.stringify(incoming) !== JSON.stringify(DB)){
-          DB = incoming;
-          migrateDB();
-          writeLocalCache();
-          applyBranding();
-          if(session) render();
-        }
+        const incomingUpdatedAt = doc.data().updatedAt || 0;
+        // Ignore anything not actually newer than what we already have — this is what stops a
+        // delayed echo of our own write (or a late from-cache event) from clobbering edits made
+        // in the moment right after that write.
+        if(incomingUpdatedAt <= lastSyncedAt) { setSyncBadge(doc.metadata.fromCache ? 'offline' : 'synced'); return; }
+        DB = JSON.parse(doc.data().payload);
+        lastSyncedAt = incomingUpdatedAt;
+        migrateDB();
+        writeLocalCache(lastSyncedAt);
+        applyBranding();
+        if(session) render();
         setSyncBadge(doc.metadata.fromCache ? 'offline' : 'synced');
       }, err=>{ console.error('Sync listener error', err); setSyncBadge('offline'); });
 
@@ -1071,23 +1107,28 @@ async function loadDB(){
     }
   }
   // browser-only mode (no Firebase configured, or it failed to connect)
-  DB = readLocalCache() || seedDB();
+  DB = (localEntry && localEntry.payload) || seedDB();
+  lastSyncedAt = (localEntry && localEntry.updatedAt) || Date.now();
   migrateDB();
-  writeLocalCache();
+  writeLocalCache(lastSyncedAt);
   applyBranding();
   setSyncBadge('local');
 }
 
 async function saveDB(){
-  writeLocalCache(); // always keep an on-device copy first, so nothing is lost if offline
+  const stamp = Date.now();
+  writeLocalCache(stamp); // always keep an on-device copy first, so nothing is lost if offline
   if(cloudEnabled && firestoreDB){
     try{
-      await firestoreDB.collection(FIRESTORE_COLLECTION).doc(FIRESTORE_DOC).set({ payload: JSON.stringify(DB), updatedAt: Date.now() });
+      await firestoreDB.collection(FIRESTORE_COLLECTION).doc(FIRESTORE_DOC).set({ payload: JSON.stringify(DB), updatedAt: stamp });
+      lastSyncedAt = stamp;
       setSyncBadge('synced');
     }catch(e){
       console.error('Cloud save failed — change is saved on this device and will sync later', e);
       setSyncBadge('offline');
     }
+  } else {
+    lastSyncedAt = stamp;
   }
 }
 /* Explicit "Save" buttons on admin pages call this — every field already auto-saves the moment
@@ -4660,9 +4701,11 @@ async function factoryResetSystem(){
   try{
     DB = seedDB();
     migrateDB();
-    writeLocalCache();
+    const stamp = Date.now();
+    writeLocalCache(stamp);
+    lastSyncedAt = stamp;
     if(cloudEnabled && firestoreDB){
-      await firestoreDB.collection(FIRESTORE_COLLECTION).doc(FIRESTORE_DOC).set({ payload: JSON.stringify(DB), updatedAt: Date.now() });
+      await firestoreDB.collection(FIRESTORE_COLLECTION).doc(FIRESTORE_DOC).set({ payload: JSON.stringify(DB), updatedAt: stamp });
     }
   }catch(e){
     console.error('Factory reset failed', e);
