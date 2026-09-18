@@ -1469,7 +1469,7 @@ function seedDB(){
     vacation: { JHS: [], Primary: [] },
   };
 
-  return { classes, students, gradebook, attendance, users, term, vacation, headTeacherUsername: 'admin', assistantHeadTeacherUsername: null, weeklyMeta: {}, attendanceMeta: {}, billItems: { LowerPrimary:[], UpperPrimary:[], JHS:[] }, school: { name:'Clyde Academy', crest:null }, systemStatus: 'term', statusLog: [{ status:'term', from: todayStr(-3650) }], presence: {}, timetableSlots, timetable: { term: {}, vacation: {} }, idCounters: { STU:0, TCH:0, PAR:0 } };
+  return { classes, students, gradebook, attendance, users, term, vacation, headTeacherUsername: 'admin', assistantHeadTeacherUsername: null, weeklyMeta: {}, attendanceMeta: {}, billItems: { LowerPrimary:[], UpperPrimary:[], JHS:[] }, school: { name:'Clyde Academy', crest:null }, systemStatus: 'term', statusLog: [{ status:'term', from: todayStr(-3650) }], presence: {}, timetableSlots, timetable: { term: {}, vacation: {} }, idCounters: { STU:0, TCH:0, PAR:0 }, announcements: [] };
 }
 
 function migrateDB(){
@@ -1481,6 +1481,7 @@ function migrateDB(){
   if(!DB.attendanceMeta){ DB.attendanceMeta = {}; changed = true; }
   if(DB.headTeacherUsername === undefined){ DB.headTeacherUsername = null; changed = true; }
   if(DB.assistantHeadTeacherUsername === undefined){ DB.assistantHeadTeacherUsername = null; changed = true; }
+  if(!DB.announcements){ DB.announcements = []; changed = true; }
   if(!DB.billItems || Array.isArray(DB.billItems)){
     const legacy = Array.isArray(DB.billItems) ? DB.billItems : [];
     DB.billItems = { LowerPrimary:[], UpperPrimary:[], JHS: legacy.slice() };
@@ -2360,6 +2361,7 @@ const NAV_ITEMS = [
   { id:'timetable', label:'Timetable', ic:'&#128197;', visible: ()=> session.role==='Admin' || session.role==='Parent' || accessibleClasses().length>0 },
   { id:'staff', label:'Staff Accounts', ic:'&#128273;', adminOnly:true },
   { id:'bill', label:'Bill', ic:'&#128176;', visible: ()=>isBillAccess() },
+  { id:'announcements', label:'Announcements', ic:'&#128227;', visible: ()=>isBillAccess() },
   { id:'parent', label:'My Ward(s)', ic:'&#128118;' },
 ];
 /* Head teacher can view Staff Activity for oversight (no edit controls exist on that page anyway,
@@ -2367,8 +2369,9 @@ const NAV_ITEMS = [
 function isHeadTeacher(){
   return !!session && session.username===DB.headTeacherUsername;
 }
-/* Only the assistant head teacher can see/use the Bill tab — checked by account, not by role, so
-   even Admin and the head teacher are excluded unless specifically assigned as assistant head. */
+/* Only the assistant head teacher (academics) can see/use the Bill and Announcements tabs —
+   checked by account, not by role, so even Admin and the head teacher are excluded unless
+   specifically assigned as assistant head via Staff Accounts. */
 function isBillAccess(){
   return !!session && session.username===DB.assistantHeadTeacherUsername;
 }
@@ -2424,6 +2427,7 @@ function render(){
     case 'timetable': el.innerHTML = renderTimetable(); break;
     case 'staff': el.innerHTML = renderStaff(); break;
     case 'bill': el.innerHTML = renderBill(); break;
+    case 'announcements': el.innerHTML = renderAnnouncements(); break;
     case 'parent': el.innerHTML = renderParentPortal(); break;
     default: el.innerHTML = session.role==='Parent' ? renderParentPortal() : renderDashboard();
   }
@@ -4130,9 +4134,10 @@ function renderBill(){
     <div class="panel"><div class="panel-head"><h3>${BILL_CATEGORY_LABELS[cat]} fee payments &amp; receipts</h3></div>
       <div class="panel-body" style="padding-top:10px;">
         <p style="margin:0 0 12px;font-size:12px;color:var(--slate);">Total payable is this level's bill items total plus arrears. Enter the amount paid by the student's parent (in GHS) and click Record — the balance updates automatically and the date &amp; time of payment is logged. You can then print a receipt.</p>
+        <p style="margin:0 0 12px;font-size:12px;color:var(--slate);">Recording payments for several students at once? Tick each one, enter their amounts, then use <b>"Record &amp; text selected"</b> below the table to log all the payments and send all the guardian SMS messages together.</p>
         ${!categoryStudents.length ? '' : `
         <table class="reg">
-          <thead><tr><th>Student</th><th>Class</th><th>Total payable</th><th>Paid so far</th><th>Balance</th><th>Record payment (GHS)</th><th>Receipt</th><th>Guardian SMS</th></tr></thead>
+          <thead><tr><th><input type="checkbox" title="Select all" onchange="toggleAllBulkSelect(this.checked)"></th><th>Student</th><th>Class</th><th>Total payable</th><th>Paid so far</th><th>Balance</th><th>Record payment (GHS)</th><th>Receipt</th><th>Guardian SMS</th></tr></thead>
           <tbody>
             ${categoryStudents.map(s=>{
               const arrears = Number(s.arrears)||0;
@@ -4150,6 +4155,7 @@ function renderBill(){
                 }
               }
               return `<tr>
+                <td><input type="checkbox" class="bulk-sel-cb" id="bulk-sel-${s.id}"></td>
                 <td>${s.name}</td>
                 <td>${s.className}</td>
                 <td class="mono">${payable.toFixed(2)}</td>
@@ -4170,10 +4176,75 @@ function renderBill(){
               </tr>`;
             }).join('')}
           </tbody>
-        </table>`}
+        </table>
+        <button class="btn-small brass" style="margin-top:14px;" onclick="recordBulkFeePayments()">Record &amp; text selected</button>`}
       </div>
     </div>
   `;
+}
+function toggleAllBulkSelect(checked){
+  document.querySelectorAll('.bulk-sel-cb').forEach(cb=>{ cb.checked = checked; });
+}
+/* Records a payment for every ticked student that also has an amount typed in, in one go,
+   then sends the guardian fee-payment SMS for each of them and reports back how many of
+   each succeeded — so the assistant head teacher doesn't have to click Record/SMS one by one. */
+async function recordBulkFeePayments(){
+  if(!isBillAccess()) return;
+  const cat = billSelectedCategory;
+  const categoryStudents = DB.classes
+    .filter(c=> billCategoryForClass(c)===cat)
+    .flatMap(c=> studentsOf(c.id));
+
+  const selected = categoryStudents.filter(s=>{
+    const cb = document.getElementById('bulk-sel-'+s.id);
+    return cb && cb.checked;
+  });
+  if(!selected.length){ alert('Tick the checkbox next to each student you want to record a payment for.'); return; }
+
+  const toRecord = [];
+  const skipped = [];
+  selected.forEach(s=>{
+    const input = document.getElementById('pay-amt-'+s.id);
+    const amount = Number(input && input.value);
+    if(amount > 0) toRecord.push({ student: s, amount });
+    else skipped.push(s.name);
+  });
+  if(!toRecord.length){ alert('Enter a payment amount (GHS) for each ticked student first.'); return; }
+  if(skipped.length && !confirm(`${toRecord.length} student(s) have an amount entered and will be recorded. ${skipped.length} ticked student(s) have no amount and will be skipped:\n- ${skipped.join('\n- ')}\n\nContinue?`)) return;
+  if(!skipped.length && !confirm(`Record ${toRecord.length} payment(s) and text ${toRecord.length} guardian(s) now?`)) return;
+
+  const sentBatch = [];
+  toRecord.forEach(({ student:s, amount })=>{
+    if(!s.payments) s.payments = [];
+    const payment = {
+      id: 'pay'+Date.now()+Math.random().toString(36).slice(2,7),
+      amount,
+      date: new Date().toISOString(),
+      recordedBy: session ? session.name : '',
+      receiptPrinted: false,
+      parentAcknowledged: false,
+      acknowledgedAt: null,
+      smsSent: false,
+      smsError: null
+    };
+    s.payments.push(payment);
+    sentBatch.push({ studentId: s.id, paymentId: payment.id, name: s.name });
+  });
+  await saveDB();
+  render();
+
+  let smsOk = 0;
+  const smsFailed = [];
+  for(const p of sentBatch){
+    const result = await sendFeePaymentSMS(p.studentId, p.paymentId);
+    if(result.ok) smsOk++;
+    else smsFailed.push(`${p.name}: ${result.error}`);
+  }
+  render();
+
+  let summary = `Recorded ${sentBatch.length} payment(s). Guardian SMS sent: ${smsOk}/${sentBatch.length}.`;
+  if(smsFailed.length) summary += `\n\nCould not text these guardians (use "Resend SMS" in the table for each):\n- ` + smsFailed.join('\n- ');
+  alert(summary);
 }
 async function addBillItem(){
   const name = document.getElementById('new-bill-name').value.trim();
@@ -4315,6 +4386,93 @@ async function dismissBillNotice(studentId, noticeKey){
 }
 
 /* ============================================================
+   Announcements — restricted to the assistant head teacher
+   (academics), same account as the Bill tab (isBillAccess()).
+   They can post a notice to every parent, or to just one class,
+   and it shows up in a feed at the top of the Parent Portal.
+============================================================ */
+let announceAudience = 'all';
+function renderAnnouncements(){
+  if(!isBillAccess()){
+    return `
+      <div class="topbar"><div><div class="eyebrow">Restricted</div><h1>Announcements</h1></div></div>
+      <div class="empty">Only the assistant head teacher (academics) can send announcements.</div>
+    `;
+  }
+  const list = (DB.announcements||[]).slice().sort((a,b)=> new Date(b.date) - new Date(a.date));
+  return `
+    <div class="topbar"><div><div class="eyebrow">Assistant head teacher (academics) only</div><h1>Announcements</h1></div></div>
+
+    <div class="panel"><div class="panel-head"><h3>Send a new announcement</h3></div>
+      <div class="panel-body" style="padding-top:10px;">
+        <p style="margin:0 0 12px;font-size:12px;color:var(--slate);">This will appear at the top of the portal for every parent it's addressed to, right away.</p>
+        <div style="display:flex;flex-direction:column;gap:10px;max-width:560px;">
+          <input type="text" id="ann-title" placeholder="Title (e.g. Mid-term break notice)" style="padding:10px 12px;border:1px solid var(--line);border-radius:8px;">
+          <textarea id="ann-message" rows="4" placeholder="Write the announcement..." style="padding:10px 12px;border:1px solid var(--line);border-radius:8px;font-family:inherit;resize:vertical;"></textarea>
+          <div>
+            <label style="font-size:12px;font-weight:600;color:var(--slate);display:block;margin-bottom:6px;">Send to</label>
+            <select id="ann-audience" style="padding:8px 10px;border:1px solid var(--line);border-radius:8px;min-width:220px;" onchange="announceAudience=this.value">
+              <option value="all" ${announceAudience==='all'?'selected':''}>All parents (whole school)</option>
+              ${DB.classes.map(c=>`<option value="${c.id}" ${announceAudience===c.id?'selected':''}>${c.name} only</option>`).join('')}
+            </select>
+          </div>
+          <button class="btn-small brass" style="align-self:flex-start;" onclick="addAnnouncement()">Send announcement</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel"><div class="panel-head"><h3>Sent announcements</h3></div>
+      <div class="panel-body" style="padding-top:10px;">
+        ${!list.length ? `<p style="margin:0;font-size:13px;color:var(--slate);">No announcements sent yet.</p>` : list.map(a=>{
+          const cls = a.audience!=='all' ? classOf(a.audience) : null;
+          return `
+          <div class="fee-alert" style="align-items:flex-start;">
+            <div class="fee-alert-icon">&#128227;</div>
+            <div class="fee-alert-body">
+              <div class="fee-alert-title">${a.title}</div>
+              <div class="fee-alert-sub" style="white-space:pre-wrap;">${a.message}</div>
+              <div class="fee-alert-sub" style="margin-top:6px;font-size:11px;color:var(--brass);font-weight:600;">
+                To: ${cls ? cls.name : 'All parents'} · ${fmtDateTime(a.date)} · by ${a.author||'—'}
+              </div>
+            </div>
+            <button class="btn-danger" onclick="removeAnnouncement('${a.id}')">Delete</button>
+          </div>`;
+        }).join('')}
+      </div>
+    </div>
+  `;
+}
+async function addAnnouncement(){
+  if(!isBillAccess()) return;
+  const titleEl = document.getElementById('ann-title');
+  const msgEl = document.getElementById('ann-message');
+  const title = titleEl.value.trim();
+  const message = msgEl.value.trim();
+  if(!title || !message){ alert('Enter both a title and a message.'); return; }
+  if(!DB.announcements) DB.announcements = [];
+  DB.announcements.push({
+    id: 'ann'+Date.now(),
+    title,
+    message,
+    audience: announceAudience,
+    date: new Date().toISOString(),
+    author: session ? session.name : ''
+  });
+  await saveDB();
+  titleEl.value = '';
+  msgEl.value = '';
+  announceAudience = 'all';
+  render();
+}
+async function removeAnnouncement(id){
+  if(!isBillAccess()) return;
+  if(!confirm('Delete this announcement? Parents will no longer see it.')) return;
+  DB.announcements = (DB.announcements||[]).filter(a=>a.id!==id);
+  await saveDB();
+  render();
+}
+
+/* ============================================================
    Parent Portal — read-only. Shows attendance, the teacher's
    written progress remark, and fees owing for the chosen ward.
    Deliberately does NOT show subject marks, grades, or position.
@@ -4404,6 +4562,29 @@ function renderParentPortal(){
         <button class="btn-small brass" onclick="acknowledgeFeePayment('${s.id}','${p.id}')">I accept — I have paid</button>
       </div>
     `).join('')}
+
+    ${(()=>{
+      const feed = (DB.announcements||[])
+        .filter(a=> a.audience==='all' || a.audience===cls.id)
+        .sort((a,b)=> new Date(b.date) - new Date(a.date))
+        .slice(0,5);
+      if(!feed.length) return '';
+      return `
+      <div class="panel"><div class="panel-head"><h3>School announcements</h3></div>
+        <div class="panel-body" style="padding-top:10px;">
+          ${feed.map(a=>`
+            <div class="fee-alert" style="align-items:flex-start;">
+              <div class="fee-alert-icon">&#128227;</div>
+              <div class="fee-alert-body">
+                <div class="fee-alert-title">${a.title}</div>
+                <div class="fee-alert-sub" style="white-space:pre-wrap;">${a.message}</div>
+                <div class="fee-alert-sub" style="margin-top:6px;font-size:11px;color:var(--brass);font-weight:600;">${fmtDateTime(a.date)}${a.author?' · '+a.author:''}</div>
+              </div>
+            </div>
+          `).join('')}
+        </div>
+      </div>`;
+    })()}
 
     <div class="panel"><div class="panel-head"><h3>At a glance</h3></div>
       <div class="ring-row">
@@ -4557,7 +4738,7 @@ function renderStaff(){
 
     <div class="panel"><div class="panel-head"><h3>Head teacher &amp; assistant head teacher</h3></div>
       <div class="panel-body" style="padding-top:14px;padding-bottom:16px;">
-        <p style="margin:0 0 10px;font-size:13px;color:var(--slate);">Both sign report cards and can upload their own signature from the sidebar. The head teacher can also view Staff Activity for oversight (read-only). Only the assistant head teacher can access and edit the Bill tab.</p>
+        <p style="margin:0 0 10px;font-size:13px;color:var(--slate);">Both sign report cards and can upload their own signature from the sidebar. The head teacher can also view Staff Activity for oversight (read-only). Only the assistant head teacher (academics) can access and edit the Bill tab, and can send Announcements to parents.</p>
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px;">
           <div><label style="display:block;font-size:11.5px;color:var(--slate);font-weight:600;margin-bottom:5px;">Head teacher</label>
             <select onchange="setHeadTeacher(this.value)">
