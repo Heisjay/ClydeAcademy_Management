@@ -3394,6 +3394,14 @@ const TT_COLOR_CHOICES = [
   { name:'Rose',      hex:'#C25A80' },
   { name:'Slate',     hex:'#4C5A73' }
 ];
+/* ---------- Printed-timetable day colours ----------
+   Purely visual, print-only: one accent per weekday so a printed sheet is easy to scan at a
+   glance. Reuses five of the swatches above so it stays consistent with the teacher highlight
+   colours rather than introducing a whole new palette. Nothing here reads or writes DB — it's
+   applied only inside the print-page builders below, so every on-screen timetable (Admin's
+   Step 3 preview, the teacher's and parent's live views) renders exactly as it did before. */
+const TT_DAY_COLORS = { Monday:'#B8862E', Tuesday:'#2F5EA8', Wednesday:'#5F7A5E', Thursday:'#7A4E8C', Friday:'#B4462F' };
+function ttDayColor(day){ return TT_DAY_COLORS[day] || 'var(--slate)'; }
 /* Read this teacher's saved colour. '' / null means "no highlight". Wrapped in try/catch so a
    browser with localStorage blocked just falls back to no highlight instead of erroring out. */
 function ttValidColor(v){
@@ -3678,9 +3686,11 @@ function renderTimetableAdmin(){
     </div>
   `;
 }
-/* hl is optional: { username, color }. When absent (admin view, parent view, every whole-school
-   print) this renders exactly as it always did — the highlight is additive only. */
-function buildTimetableGridHTML(classId, mode, hl){
+/* hl is optional: { username, color } for the teacher's own "mine" highlight. colorDays is
+   optional and print-only: when true, each day's row gets a light per-weekday tint (from
+   TT_DAY_COLORS) so a printed sheet is easy to scan — it never touches the break or Free Period
+   styling, and a "mine" cell always wins over the day tint since that's the more specific signal. */
+function buildTimetableGridHTML(classId, mode, hl, colorDays){
   mode = mode || activeTimetableMode();
   const slots = timetableSlotsFor(classOf(classId).level||'JHS', mode);
   const classTT = DB.timetable[mode][classId] || {};
@@ -3689,8 +3699,11 @@ function buildTimetableGridHTML(classId, mode, hl){
     <table class="reg tt-grid">
       <thead><tr><th>Day</th>${slots.map(s=>`<th>${s.label}<br><span style="font-size:10px;font-weight:400;color:var(--slate);">${s.start}–${s.end}</span></th>`).join('')}</tr></thead>
       <tbody>
-        ${TIMETABLE_DAYS.map(d=>`<tr>
-          <td class="mono" style="white-space:nowrap;font-weight:600;">${d}</td>
+        ${TIMETABLE_DAYS.map(d=>{
+          const dc = colorDays ? ttDayColor(d) : '';
+          const dayTint = dc ? ttRgba(dc, 0.10) : '';
+          return `<tr>
+          <td class="mono" style="white-space:nowrap;font-weight:600;${dc ? `background:${ttRgba(dc,0.16)};box-shadow:inset 3px 0 0 ${dc};-webkit-print-color-adjust:exact;print-color-adjust:exact;` : ''}">${d}</td>
           ${slots.map(s=>{
             if(s.isBreak) return `<td style="background:var(--paper);text-align:center;font-weight:600;">${s.label}</td>`;
             const val = (classTT[d]||{})[s.id] || '—';
@@ -3699,9 +3712,11 @@ function buildTimetableGridHTML(classId, mode, hl){
               // -webkit-print-color-adjust keeps the tint when the teacher prints the sheet.
               return `<td class="tt-mine" style="text-align:center;background:${tint};box-shadow:inset 3px 0 0 ${hl.color};-webkit-print-color-adjust:exact;print-color-adjust:exact;">${val}</td>`;
             }
-            return `<td style="text-align:center;${val==='Free Period'?'background:var(--sage-soft);color:var(--sage);font-weight:600;':''}">${val}</td>`;
+            if(val==='Free Period') return `<td style="text-align:center;background:var(--sage-soft);color:var(--sage);font-weight:600;">${val}</td>`;
+            return `<td style="text-align:center;${dayTint ? `background:${dayTint};-webkit-print-color-adjust:exact;print-color-adjust:exact;` : ''}">${val}</td>`;
           }).join('')}
-        </tr>`).join('')}
+        </tr>`;
+        }).join('')}
       </tbody>
     </table>
   `;
@@ -3716,7 +3731,7 @@ function buildTimetableHTML(classId, mode, hl){
         <div class="crest">${DB.school.crest ? `<img src="${DB.school.crest}">` : `<span>${schoolInitials(DB.school.name)}</span>`}</div>
         <div><h2>${DB.school.name}</h2><p>${modeLabel} Timetable — ${cls.name}</p></div>
       </div>
-      ${buildTimetableGridHTML(classId, mode, hl)}
+      ${buildTimetableGridHTML(classId, mode, hl, true)}
     </div>
   `;
 }
@@ -3734,7 +3749,7 @@ function billCategoryLabel(cat){ return BILL_CATEGORY_LABELS[cat] || cat; }
 function classesInCategory(category){
   return DB.classes.filter(c=>billCategoryForClass(c)===category);
 }
-function buildCombinedTimetableGridHTML(category, mode){
+function buildCombinedTimetableGridHTML(category, mode, colorDays){
   mode = mode || activeTimetableMode();
   const level = category==='JHS' ? 'JHS' : 'Primary';
   const slots = timetableSlotsFor(level, mode);
@@ -3745,16 +3760,21 @@ function buildCombinedTimetableGridHTML(category, mode){
     <table class="reg tt-grid">
       <thead><tr><th>Day</th><th>Class</th>${slots.map(s=>`<th>${s.label}<br><span style="font-size:10px;font-weight:400;color:var(--slate);">${s.start}–${s.end}</span></th>`).join('')}</tr></thead>
       <tbody>
-        ${TIMETABLE_DAYS.map(d=>classes.map((c,ci)=>`<tr>
-          ${ci===0 ? `<td class="mono" rowspan="${classes.length}" style="white-space:nowrap;font-weight:600;vertical-align:middle;">${d}</td>` : ''}
-          <td style="white-space:nowrap;font-weight:600;">${c.name}</td>
+        ${TIMETABLE_DAYS.map(d=>{
+          const dc = colorDays ? ttDayColor(d) : '';
+          const dayTint = dc ? ttRgba(dc, 0.10) : '';
+          return classes.map((c,ci)=>`<tr>
+          ${ci===0 ? `<td class="mono" rowspan="${classes.length}" style="white-space:nowrap;font-weight:600;vertical-align:middle;${dc ? `background:${ttRgba(dc,0.16)};box-shadow:inset 3px 0 0 ${dc};-webkit-print-color-adjust:exact;print-color-adjust:exact;` : ''}">${d}</td>` : ''}
+          <td style="white-space:nowrap;font-weight:600;${dayTint ? `background:${dayTint};-webkit-print-color-adjust:exact;print-color-adjust:exact;` : ''}">${c.name}</td>
           ${slots.map(s=>{
             if(s.isBreak) return `<td style="background:var(--paper);text-align:center;font-weight:600;">${s.label}</td>`;
             const classTT = DB.timetable[mode][c.id] || {};
             const val = (classTT[d]||{})[s.id] || '—';
-            return `<td style="text-align:center;${val==='Free Period'?'background:var(--sage-soft);color:var(--sage);font-weight:600;':''}">${val}</td>`;
+            if(val==='Free Period') return `<td style="text-align:center;background:var(--sage-soft);color:var(--sage);font-weight:600;">${val}</td>`;
+            return `<td style="text-align:center;${dayTint ? `background:${dayTint};-webkit-print-color-adjust:exact;print-color-adjust:exact;` : ''}">${val}</td>`;
           }).join('')}
-        </tr>`).join('')).join('')}
+        </tr>`).join('');
+        }).join('')}
       </tbody>
     </table>
   `;
@@ -3768,7 +3788,7 @@ function buildCombinedTimetableHTML(category, mode){
         <div class="crest">${DB.school.crest ? `<img src="${DB.school.crest}">` : `<span>${schoolInitials(DB.school.name)}</span>`}</div>
         <div><h2>${DB.school.name}</h2><p>${modeLabel} Timetable — ${billCategoryLabel(category)}</p></div>
       </div>
-      ${buildCombinedTimetableGridHTML(category, mode)}
+      ${buildCombinedTimetableGridHTML(category, mode, true)}
     </div>
   `;
 }
