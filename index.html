@@ -405,6 +405,21 @@
   table.tt-grid td{border-right:1px solid var(--line);}
   table.tt-grid th:last-child, table.tt-grid td:last-child{border-right:none;}
   table.tt-grid select{width:100%;}
+  /* ---------- Teacher's "my periods" highlight ----------
+     Purely a per-teacher display preference (kept in localStorage on their own device, never in
+     the shared database), so one teacher colouring their timetable can't change what anyone else
+     sees. The tint colour itself is passed in as an inline style on each cell. */
+  table.tt-grid td.tt-mine{font-weight:700; color:var(--ink);}
+  .tt-colorbar{display:flex; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:14px;
+    padding:10px 14px; background:var(--paper); border:1px solid var(--line); border-radius:10px;}
+  .tt-colorbar .cb-label{font-size:11px; text-transform:uppercase; letter-spacing:0.05em; color:var(--slate); font-weight:600; margin-right:2px;}
+  .tt-swatch{width:26px; height:26px; border-radius:50%; border:2px solid transparent; padding:0; cursor:pointer; box-shadow:0 0 0 1px var(--line);}
+  .tt-swatch.on{border-color:var(--ink); box-shadow:0 0 0 1px var(--ink);}
+  .tt-swatch-custom{position:relative; width:26px; height:26px; border-radius:50%; overflow:hidden; box-shadow:0 0 0 1px var(--line); cursor:pointer;
+    background:conic-gradient(#e14b4b,#e1a24b,#d8d84b,#5fae5f,#4bb6c8,#4b6fd8,#9b4bd8,#e14b4b);}
+  .tt-swatch-custom input{position:absolute; inset:-6px; width:150%; height:150%; opacity:0; cursor:pointer; border:none; padding:0;}
+  .tt-legend{font-size:12.5px; color:var(--slate);}
+  .tt-legend b{color:var(--ink);}
   .score-input{width:56px; padding:5px 6px; border:1px solid var(--line); border-radius:6px; text-align:center; font-family:'IBM Plex Mono',monospace; font-size:13px;}
 
   .grade-letter{font-family:'Fraunces',serif; font-weight:700; font-size:15px;}
@@ -3357,6 +3372,113 @@ function activeTimetableMode(){
   return DB.systemStatus==='vacation' ? 'vacation' : 'term';
 }
 
+/* ============================================================
+   Teacher timetable highlight
+   A teacher picks a colour and every period they personally teach lights up in that colour,
+   across all of their classes for the week.
+
+   The chosen colour is saved as a single extra field (ttColor) on that teacher's own user
+   record, so it follows them to any device they sign in on, and a copy is kept on the device
+   for instant/offline use. It is one field on one record — no existing field is rewritten, and
+   nothing outside that record is touched. Each teacher's colour is their own; it doesn't change
+   what anyone else sees.
+============================================================ */
+const TT_COLOR_KEY = 'clyde-academy-tt-colour-v1';
+const TT_COLOR_CHOICES = [
+  { name:'Brass',     hex:'#B8862E' },
+  { name:'Sage',      hex:'#5F7A5E' },
+  { name:'Ink blue',  hex:'#2F5EA8' },
+  { name:'Teal',      hex:'#2E8B92' },
+  { name:'Plum',      hex:'#7A4E8C' },
+  { name:'Brick',     hex:'#B4462F' },
+  { name:'Rose',      hex:'#C25A80' },
+  { name:'Slate',     hex:'#4C5A73' }
+];
+/* Read this teacher's saved colour. '' / null means "no highlight". Wrapped in try/catch so a
+   browser with localStorage blocked just falls back to no highlight instead of erroring out. */
+function ttValidColor(v){
+  return (typeof v === 'string' && /^#[0-9a-fA-F]{6}$/.test(v)) ? v : '';
+}
+/* On-device copy, kept in step with the saved one. It's what shows instantly while a fresh
+   device is still pulling the cloud copy, and what keeps the colour working if this browser is
+   offline. */
+function ttLocalColor(){
+  try{
+    const raw = localStorage.getItem(TT_COLOR_KEY);
+    const map = raw ? JSON.parse(raw) : {};
+    return ttValidColor(map[session && session.username]);
+  }catch(e){ return ''; }
+}
+function ttWriteLocalColor(hex){
+  try{
+    const raw = localStorage.getItem(TT_COLOR_KEY);
+    const map = raw ? JSON.parse(raw) : {};
+    if(hex) map[session.username] = hex; else delete map[session.username];
+    localStorage.setItem(TT_COLOR_KEY, JSON.stringify(map));
+  }catch(e){ /* storage unavailable — the saved copy on the user record still carries it */ }
+}
+/* The teacher's own user record is the source of truth, so the colour follows them to any
+   device they sign in on. A teacher who picked a colour before this change still has it in
+   localStorage only, so that's used as the fallback until their next pick saves it up. */
+function ttMyColor(){
+  const me = session && userByUsername(session.username);
+  if(me && 'ttColor' in me) return ttValidColor(me.ttColor);
+  return ttLocalColor();
+}
+async function setTtMyColor(hex){
+  hex = ttValidColor(hex);
+  ttWriteLocalColor(hex);
+  const me = session && userByUsername(session.username);
+  if(me){
+    // One extra field on this one teacher's user record. Nothing else in DB is touched, and
+    // every other field on the record is left exactly as it was.
+    if(hex) me.ttColor = hex; else delete me.ttColor;
+    render();
+    try{ await saveDB(); }
+    catch(e){ console.error('Could not save timetable colour to the cloud — kept on this device', e); }
+    return;
+  }
+  render();
+}
+/* #rrggbb → rgba(...) at the given alpha, so one picked colour gives both a soft cell tint and
+   a solid edge marker without needing a second colour from the teacher. */
+function ttRgba(hex, alpha){
+  const h = (hex||'').replace('#','');
+  const r = parseInt(h.slice(0,2),16), g = parseInt(h.slice(2,4),16), b = parseInt(h.slice(4,6),16);
+  if([r,g,b].some(isNaN)) return 'transparent';
+  return `rgba(${r},${g},${b},${alpha})`;
+}
+/* Is this timetable cell a period THIS teacher teaches? A cell holds a subject name, so it's
+   "mine" when that class lists the subject with me as its teacher. Breaks, Free Periods and
+   empty cells are never mine. */
+function ttCellIsMine(classId, subjectName, username){
+  if(!subjectName || subjectName==='—' || subjectName==='Free Period') return false;
+  const cls = classOf(classId);
+  if(!cls || !cls.subjects) return false;
+  return cls.subjects.some(s=> s.name===subjectName && s.teacher===username);
+}
+/* How many periods this teacher has in the week, per class and in total — shown next to the
+   colour picker so they get a quick read on their own load. */
+function ttMyWeeklyCounts(mode){
+  mode = mode || activeTimetableMode();
+  const perClass = {};
+  let total = 0;
+  accessibleClasses().forEach(c=>{
+    const slots = timetableSlotsFor(c.level||'JHS', mode);
+    const classTT = (DB.timetable[mode] || {})[c.id] || {};
+    let n = 0;
+    TIMETABLE_DAYS.forEach(d=>{
+      slots.forEach(s=>{
+        if(s.isBreak) return;
+        if(ttCellIsMine(c.id, (classTT[d]||{})[s.id], session.username)) n++;
+      });
+    });
+    perClass[c.id] = n;
+    total += n;
+  });
+  return { perClass, total };
+}
+
 function renderTimetable(){
   if(session.role==='Admin') return renderTimetableAdmin();
   if(session.role==='Parent') return renderTimetableParent();
@@ -3377,19 +3499,36 @@ function renderTimetableTeacher(){
   const mode = activeTimetableMode();
   const modeLabel = mode==='vacation' ? 'Vacation Classes' : 'Term';
   const slots = timetableSlotsFor(cls.level||'JHS', mode);
+  const myColor = ttMyColor();
+  const counts = ttMyWeeklyCounts(mode);
+  const hl = myColor ? { username: session.username, color: myColor } : null;
+  const here = counts.perClass[cls.id] || 0;
   return `
     <div class="topbar">
       <div><div class="eyebrow">Your schedule · ${modeLabel}</div><h1>Timetable</h1></div>
-      <button class="btn-ghost" onclick="printTimetable('${cls.id}','${mode}')">Print / Download</button>
+      <button class="btn-ghost" onclick="printTimetable('${cls.id}','${mode}',true)">Print / Download</button>
+    </div>
+    <div class="tt-colorbar">
+      <span class="cb-label">Highlight my periods</span>
+      ${TT_COLOR_CHOICES.map(c=>`<button class="tt-swatch ${myColor.toLowerCase()===c.hex.toLowerCase()?'on':''}" style="background:${c.hex};" title="${c.name}" aria-label="${c.name}" onclick="setTtMyColor('${c.hex}')"></button>`).join('')}
+      <label class="tt-swatch-custom" title="Pick any other colour">
+        <input type="color" value="${myColor || '#B8862E'}" onchange="setTtMyColor(this.value)">
+      </label>
+      ${myColor ? `<button class="btn-small" onclick="setTtMyColor('')">Clear</button>` : ''}
+      <span class="tt-legend">
+        ${myColor
+          ? `<b>${counts.total}</b> period${counts.total===1?'':'s'} a week are yours${classes.length>1 ? ` · <b>${here}</b> in ${cls.name}` : ''}.`
+          : `Pick a colour and every lesson you teach lights up across your classes.`}
+      </span>
     </div>
     ${classes.length>1 ? `<div class="toolbar" style="margin-bottom:14px;">
       <select onchange="ttSelectedClass=this.value; render()">
-        ${classes.map(c=>`<option value="${c.id}" ${c.id===ttSelectedClass?'selected':''}>${c.name}</option>`).join('')}
+        ${classes.map(c=>`<option value="${c.id}" ${c.id===ttSelectedClass?'selected':''}>${c.name}${myColor ? ` — ${counts.perClass[c.id]||0} of yours` : ''}</option>`).join('')}
       </select>
     </div>` : ''}
     <div class="panel"><div class="panel-head"><h3>${cls.name} — ${modeLabel} timetable</h3></div>
       <div class="panel-body" style="padding-top:10px;padding-bottom:16px;overflow-x:auto;">
-        ${slots.length ? buildTimetableGridHTML(cls.id, mode) : `<p style="margin:0;font-size:13px;color:var(--slate);">The administrator hasn't set up this timetable yet.</p>`}
+        ${slots.length ? buildTimetableGridHTML(cls.id, mode, hl) : `<p style="margin:0;font-size:13px;color:var(--slate);">The administrator hasn't set up this timetable yet.</p>`}
       </div>
     </div>
   `;
@@ -3539,10 +3678,13 @@ function renderTimetableAdmin(){
     </div>
   `;
 }
-function buildTimetableGridHTML(classId, mode){
+/* hl is optional: { username, color }. When absent (admin view, parent view, every whole-school
+   print) this renders exactly as it always did — the highlight is additive only. */
+function buildTimetableGridHTML(classId, mode, hl){
   mode = mode || activeTimetableMode();
   const slots = timetableSlotsFor(classOf(classId).level||'JHS', mode);
   const classTT = DB.timetable[mode][classId] || {};
+  const tint = hl && hl.color ? ttRgba(hl.color, 0.18) : '';
   return `
     <table class="reg tt-grid">
       <thead><tr><th>Day</th>${slots.map(s=>`<th>${s.label}<br><span style="font-size:10px;font-weight:400;color:var(--slate);">${s.start}–${s.end}</span></th>`).join('')}</tr></thead>
@@ -3552,6 +3694,11 @@ function buildTimetableGridHTML(classId, mode){
           ${slots.map(s=>{
             if(s.isBreak) return `<td style="background:var(--paper);text-align:center;font-weight:600;">${s.label}</td>`;
             const val = (classTT[d]||{})[s.id] || '—';
+            const mine = tint && ttCellIsMine(classId, val, hl.username);
+            if(mine){
+              // -webkit-print-color-adjust keeps the tint when the teacher prints the sheet.
+              return `<td class="tt-mine" style="text-align:center;background:${tint};box-shadow:inset 3px 0 0 ${hl.color};-webkit-print-color-adjust:exact;print-color-adjust:exact;">${val}</td>`;
+            }
             return `<td style="text-align:center;${val==='Free Period'?'background:var(--sage-soft);color:var(--sage);font-weight:600;':''}">${val}</td>`;
           }).join('')}
         </tr>`).join('')}
@@ -3559,7 +3706,7 @@ function buildTimetableGridHTML(classId, mode){
     </table>
   `;
 }
-function buildTimetableHTML(classId, mode){
+function buildTimetableHTML(classId, mode, hl){
   mode = mode || activeTimetableMode();
   const cls = classOf(classId);
   const modeLabel = mode==='vacation' ? 'Vacation Classes' : 'Term';
@@ -3569,12 +3716,14 @@ function buildTimetableHTML(classId, mode){
         <div class="crest">${DB.school.crest ? `<img src="${DB.school.crest}">` : `<span>${schoolInitials(DB.school.name)}</span>`}</div>
         <div><h2>${DB.school.name}</h2><p>${modeLabel} Timetable — ${cls.name}</p></div>
       </div>
-      ${buildTimetableGridHTML(classId, mode)}
+      ${buildTimetableGridHTML(classId, mode, hl)}
     </div>
   `;
 }
-function printTimetable(classId, mode){
-  document.getElementById('print-area').innerHTML = buildTimetableHTML(classId, mode);
+/* highlightMine is only ever passed true from the teacher's own Print button. */
+function printTimetable(classId, mode, highlightMine){
+  const hl = highlightMine && ttMyColor() ? { username: session.username, color: ttMyColor() } : null;
+  document.getElementById('print-area').innerHTML = buildTimetableHTML(classId, mode, hl);
   window.print();
 }
 /* Combined grids — one table per level-group (Lower Primary / Upper Primary / JHS) with every
