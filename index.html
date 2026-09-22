@@ -1125,6 +1125,7 @@ async function loadDB(){
 
       window.addEventListener('online', ()=> setSyncBadge('synced'));
       window.addEventListener('offline', ()=> setSyncBadge('offline'));
+      listenToPresence();
       return;
     }catch(e){
       console.error('Cloud load failed, falling back to browser-only mode', e);
@@ -1503,7 +1504,7 @@ function migrateDB(){
     changed = true;
   }
   BILL_CATEGORIES.forEach(cat=>{ if(!DB.billItems[cat]){ DB.billItems[cat] = []; changed = true; } });
-  if(!DB.presence){ DB.presence = {}; changed = true; }
+  if(DB.presence !== undefined){ delete DB.presence; changed = true; } // moved to its own small doc — see listenToPresence()
   if(!DB.idCounters){ DB.idCounters = { STU:0, TCH:0, PAR:0 }; changed = true; }
   if(!DB.vacation){ DB.vacation = { startDate: todayStr(0), weeks: 4 }; changed = true; }
   if(!DB.timetableSlots){
@@ -2160,8 +2161,26 @@ async function verifyPhoneLogin(){
     errEl.style.display = 'block';
   }
 }
-/* Lightweight "who's online" tracking — pings a shared timestamp every so often while a session is
-   open, so the admin can see who's currently active without needing a separate backend. */
+/* Lightweight "who's online" tracking — pings a SEPARATE, tiny Firestore document every so often
+   while a session is open, so the admin can see who's currently active. This used to write the
+   entire multi-KB/MB database document on every 60-second tick for every signed-in user (teachers,
+   parents, admin all at once) just to record a timestamp — that was burning through Firestore's
+   free write quota fast and risking the 1MiB per-document size limit as real school data piled up,
+   which is what was actually behind teachers randomly losing sync / getting stuck on stale data.
+   A merge-only write to its own small doc costs a few dozen bytes instead of the whole payload. */
+let livePresence = {};
+function presenceDocRef(){
+  if(!cloudEnabled || !firestoreDB) return null;
+  return firestoreDB.collection(FIRESTORE_COLLECTION).doc('presence');
+}
+function listenToPresence(){
+  const ref = presenceDocRef();
+  if(!ref) return;
+  ref.onSnapshot(doc=>{
+    livePresence = (doc.exists && doc.data()) ? doc.data() : {};
+    if(session && view && view.page==='activity') render();
+  }, err=>{ console.error('Presence listener error', err); });
+}
 function startPresenceHeartbeat(){
   markPresent();
   if(presenceTimer) clearInterval(presenceTimer);
@@ -2169,9 +2188,11 @@ function startPresenceHeartbeat(){
 }
 async function markPresent(){
   if(!session) return;
-  if(!DB.presence) DB.presence = {};
-  DB.presence[session.username] = Date.now();
-  await saveDB();
+  const ref = presenceDocRef();
+  if(!ref) return; // browser-only mode — no cloud doc to ping, and no one else to see it anyway
+  try{
+    await ref.set({ [session.username]: Date.now() }, { merge:true });
+  }catch(e){ console.error('Presence ping failed (non-critical)', e); }
 }
 let presenceTimer = null;
 let regRole = 'teacher';
@@ -4164,7 +4185,7 @@ function renderActivity(){
   const now = Date.now();
   const onlineWindow = 5*60*1000; // 5 minutes
   const onlineUsers = DB.users
-    .map(u=>({ ...u, lastSeen: (DB.presence||{})[u.username] || null }))
+    .map(u=>({ ...u, lastSeen: (livePresence||{})[u.username] || null }))
     .filter(u=>u.lastSeen && (now - u.lastSeen) <= onlineWindow)
     .sort((a,b)=>b.lastSeen-a.lastSeen);
 
@@ -4186,9 +4207,16 @@ function renderActivity(){
       </div>
     </div>
 
-    <div class="stat-grid" style="grid-template-columns:repeat(2,1fr);">
+    <div class="stat-grid" style="grid-template-columns:repeat(3,1fr);">
       <div class="stat-card"><div class="label">Missed weekly SBA deadlines</div><div class="value" style="${sbaFlags?'color:var(--brick);':''}">${sbaFlags}</div><div class="sub">Through Week ${curWeek}</div></div>
       <div class="stat-card"><div class="label">Days without attendance taken</div><div class="value" style="${attFlags?'color:var(--brick);':''}">${attFlags}</div><div class="sub">Since term start</div></div>
+      ${(()=>{
+        const bytes = new Blob([JSON.stringify(DB)]).size;
+        const kb = Math.round(bytes/1024);
+        const pctOfLimit = Math.round((bytes/1048576)*100); // Firestore's 1 MiB per-document ceiling
+        const danger = pctOfLimit>=80, warn = pctOfLimit>=50;
+        return `<div class="stat-card"><div class="label">Database size</div><div class="value" style="${danger?'color:var(--brick);':warn?'color:var(--brass);':''}">${kb} KB</div><div class="sub">${pctOfLimit}% of the 1 MB cloud sync limit${danger?' — talk to your developer soon':''}</div></div>`;
+      })()}
     </div>
 
     <div class="panel"><div class="panel-head"><h3>Weekly SBA activity — subject teachers</h3></div>
