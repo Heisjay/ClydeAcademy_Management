@@ -1064,17 +1064,12 @@ async function initCloudSync(){
     setSyncBadge('connecting');
     if(!firebase.apps.length) firebase.initializeApp(FIREBASE_CONFIG);
     firestoreDB = firebase.firestore();
-    // enablePersistence({synchronizeTabs:true}) is the call the console flags as deprecated.
-    // Prefer the current settings-based API; fall back to the old one on older SDKs so this
-    // still works either way.
-    try{
-      firestoreDB.settings({
-        cache: firebase.firestore.persistentLocalCache({ tabManager: firebase.firestore.persistentMultipleTabManager() })
-      });
-    }catch(e){
-      try{ await firestoreDB.enablePersistence({ synchronizeTabs:true }); }
-      catch(e2){ /* already enabled elsewhere, or unsupported browser — safe to continue */ }
-    }
+    // NOTE: deliberately NOT enabling Firestore's own offline/IndexedDB persistence here.
+    // This app already has its own localStorage-based offline fallback (see readLocalCache/
+    // writeLocalCache below), and Firestore's IndexedDB persistence layer was found to hang
+    // silently when a browser's tracking-prevention / storage-partitioning feature blocked it —
+    // with no catchable error, just an indefinite stall. Keeping this in-memory-only avoids
+    // that whole failure mode; loadDB()'s timeout below is the real safety net for connectivity.
     cloudEnabled = true;
     return true;
   }catch(e){
@@ -1085,13 +1080,20 @@ async function initCloudSync(){
   }
 }
 
+function withTimeout(promise, ms, label){
+  return Promise.race([
+    promise,
+    new Promise((_, reject)=> setTimeout(()=> reject(new Error(label+' timed out after '+ms+'ms — likely blocked by network/browser privacy settings')), ms))
+  ]);
+}
+
 async function loadDB(){
   const gotCloud = await initCloudSync();
   const localEntry = readLocalCache(); // {payload, updatedAt} or null
   if(gotCloud){
     try{
       const ref = firestoreDB.collection(FIRESTORE_COLLECTION).doc(FIRESTORE_DOC);
-      const snap = await ref.get();
+      const snap = await withTimeout(ref.get(), 8000, 'Initial cloud load');
       const cloudExists = snap.exists && snap.data().payload;
       const cloudUpdatedAt = cloudExists ? (snap.data().updatedAt || 0) : -1;
       const localUpdatedAt = localEntry ? (localEntry.updatedAt || 0) : -1;
@@ -1106,11 +1108,11 @@ async function loadDB(){
         // instead of this device reverting to the cloud's older copy.
         DB = localEntry.payload;
         lastSyncedAt = Date.now();
-        await ref.set({ payload: JSON.stringify(DB), updatedAt: lastSyncedAt });
+        await withTimeout(ref.set({ payload: JSON.stringify(DB), updatedAt: lastSyncedAt }), 8000, 'Cloud write-back');
       } else {
         DB = seedDB();
         lastSyncedAt = Date.now();
-        await ref.set({ payload: JSON.stringify(DB), updatedAt: lastSyncedAt });
+        await withTimeout(ref.set({ payload: JSON.stringify(DB), updatedAt: lastSyncedAt }), 8000, 'Cloud seed write');
       }
       migrateDB();
       writeLocalCache(lastSyncedAt);
@@ -1158,7 +1160,7 @@ async function saveDB(){
   writeLocalCache(stamp); // always keep an on-device copy first, so nothing is lost if offline
   if(cloudEnabled && firestoreDB){
     try{
-      await firestoreDB.collection(FIRESTORE_COLLECTION).doc(FIRESTORE_DOC).set({ payload: JSON.stringify(DB), updatedAt: stamp });
+      await withTimeout(firestoreDB.collection(FIRESTORE_COLLECTION).doc(FIRESTORE_DOC).set({ payload: JSON.stringify(DB), updatedAt: stamp }), 8000, 'Cloud save');
       lastSyncedAt = stamp;
       setSyncBadge('synced');
     }catch(e){
