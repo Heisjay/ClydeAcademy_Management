@@ -1094,13 +1094,30 @@ async function loadDB(){
     try{
       const ref = firestoreDB.collection(FIRESTORE_COLLECTION).doc(FIRESTORE_DOC);
       const snap = await withTimeout(ref.get(), 8000, 'Initial cloud load');
-      const cloudExists = snap.exists && snap.data().payload;
-      const cloudUpdatedAt = cloudExists ? (snap.data().updatedAt || 0) : -1;
+      const rawData = snap.exists ? snap.data() : null;
+      // LEGACY FORMAT: an older version of this app (or a manual import) wrote the database
+      // directly as top-level fields (classes, students, users, ...) instead of wrapping it in
+      // { payload: <JSON string>, updatedAt: <number> }. Detect that shape here so real data
+      // isn't mistaken for "cloud is empty" and accidentally overwritten with a blank seed DB.
+      const isLegacyShape = rawData && !rawData.payload &&
+        (rawData.classes || rawData.students || rawData.users || rawData.gradebook);
+      const cloudExists = !!(rawData && (rawData.payload || isLegacyShape));
+      const cloudUpdatedAt = rawData && rawData.payload ? (rawData.updatedAt || 0)
+        : isLegacyShape ? 0 // no timestamp on legacy docs — treat as oldest so any local edits win,
+                              // but still newer than "nothing", so it's used when local is empty too
+        : -1;
       const localUpdatedAt = localEntry ? (localEntry.updatedAt || 0) : -1;
 
-      if(cloudExists && cloudUpdatedAt >= localUpdatedAt){
+      if(isLegacyShape){
+        // Real data confirmed present in this legacy shape — always trust it over whatever's
+        // on this device (which may just be an empty/seed copy written during earlier
+        // browser-only-mode fallbacks), rather than risking an overwrite of real data.
+        DB = rawData;
+        lastSyncedAt = Date.now();
+        await withTimeout(ref.set({ payload: JSON.stringify(DB), updatedAt: lastSyncedAt }), 8000, 'Cloud format migration');
+      } else if(cloudExists && cloudUpdatedAt >= localUpdatedAt){
         // Cloud copy is the same age or newer than what's on this device — trust it, as before.
-        DB = JSON.parse(snap.data().payload);
+        DB = JSON.parse(rawData.payload);
         lastSyncedAt = cloudUpdatedAt;
       } else if(localEntry){
         // This device has edits the cloud never received (the save silently failed at some
