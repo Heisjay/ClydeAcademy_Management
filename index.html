@@ -1011,14 +1011,24 @@ async function resendFeeSMS(studentId, paymentId){
 function firebaseIsConfigured(){
   return !!(FIREBASE_CONFIG.apiKey && FIREBASE_CONFIG.projectId && FIREBASE_CONFIG.appId);
 }
-function setSyncBadge(mode){
+let lastSyncErrorDetail = ''; // exact Firebase error (code + message) from the most recent failed
+                               // cloud read/write, surfaced in the badge tooltip so the real cause
+                               // (rules, quota, network block, etc.) doesn't require opening devtools
+function setSyncBadge(mode, errorDetail){
   const el = document.getElementById('sync-badge');
+  if(errorDetail !== undefined) lastSyncErrorDetail = errorDetail;
   if(!el) return;
   el.classList.remove('synced','offline','local');
-  if(mode==='synced'){ el.textContent = '☁ Synced'; el.classList.add('synced'); }
-  else if(mode==='offline'){ el.textContent = '📴 Offline — saved on this device'; el.classList.add('offline'); }
-  else if(mode==='connecting'){ el.textContent = 'Connecting…'; }
-  else { el.textContent = '💻 Browser-only mode'; el.classList.add('local'); }
+  if(mode==='synced'){ el.textContent = '☁ Synced'; el.classList.add('synced'); el.title = ''; }
+  else if(mode==='offline'){ el.textContent = '📴 Offline — saved on this device'; el.classList.add('offline'); el.title = lastSyncErrorDetail; }
+  else if(mode==='connecting'){ el.textContent = 'Connecting…'; el.title = ''; }
+  else { el.textContent = '💻 Browser-only mode'; el.classList.add('local'); el.title = lastSyncErrorDetail; }
+  if(errorDetail) console.error('[Firestore sync]', errorDetail);
+}
+function fbErrorDetail(e){
+  // Firebase JS SDK errors carry a .code like "permission-denied", "resource-exhausted",
+  // "unavailable", "failed-precondition" — this is the single most useful diagnostic string.
+  return (e && (e.code ? (e.code+': '+(e.message||'')) : e.message)) || String(e);
 }
 
 /* THE BUG: this used to store/read the DB object directly, with no timestamp attached. loadDB()
@@ -1068,6 +1078,7 @@ async function initCloudSync(){
     cloudEnabled = true;
     return true;
   }catch(e){
+    lastSyncErrorDetail = 'Firebase init failed: ' + fbErrorDetail(e);
     console.error('Firebase init failed — continuing in browser-only mode', e);
     cloudEnabled = false;
     return false;
@@ -1121,13 +1132,14 @@ async function loadDB(){
         applyBranding();
         if(session) render();
         setSyncBadge(doc.metadata.fromCache ? 'offline' : 'synced');
-      }, err=>{ console.error('Sync listener error', err); setSyncBadge('offline'); });
+      }, err=>{ console.error('Sync listener error', err); setSyncBadge('offline', 'Live sync error: ' + fbErrorDetail(err)); });
 
       window.addEventListener('online', ()=> setSyncBadge('synced'));
       window.addEventListener('offline', ()=> setSyncBadge('offline'));
       listenToPresence();
       return;
     }catch(e){
+      lastSyncErrorDetail = 'Cloud load failed: ' + fbErrorDetail(e);
       console.error('Cloud load failed, falling back to browser-only mode', e);
       cloudEnabled = false;
     }
@@ -1151,7 +1163,7 @@ async function saveDB(){
       setSyncBadge('synced');
     }catch(e){
       console.error('Cloud save failed — change is saved on this device and will sync later', e);
-      setSyncBadge('offline');
+      setSyncBadge('offline', 'Save failed: ' + fbErrorDetail(e));
     }
   } else {
     lastSyncedAt = stamp;
@@ -1165,7 +1177,8 @@ async function manualSave(){
   if(!cloudEnabled) { alert('Saved on this device (browser-only mode — no cloud database configured).'); return; }
   const badge = document.getElementById('sync-badge');
   const synced = badge && badge.classList.contains('synced');
-  alert(synced ? 'All changes saved and synced to the cloud.' : "Saved on this device — couldn't reach the cloud right now, it'll sync automatically once you're back online.");
+  alert(synced ? 'All changes saved and synced to the cloud.' : "Saved on this device — couldn't reach the cloud right now, it'll sync automatically once you're back online."
+    + (lastSyncErrorDetail ? ('\n\nDetails: ' + lastSyncErrorDetail) : ''));
 }
 
 function todayStr(offsetDays){
