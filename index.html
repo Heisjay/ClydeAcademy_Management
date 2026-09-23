@@ -327,6 +327,8 @@
   .sync-badge.synced{background:rgba(95,122,94,0.25); color:#9CC79A;}
   .sync-badge.offline{background:rgba(184,134,46,0.22); color:var(--brass-soft);}
   .sync-badge.local{background:rgba(196,203,221,0.12); color:#C4CBDD;}
+  .sync-badge.pending{background:rgba(184,134,46,0.22); color:var(--brass-soft);}
+  .sync-badge.error{background:rgba(166,72,60,0.3); color:#F3B5AB;}
 
   .main{flex:1; min-width:0; padding:26px 32px 90px;}
   .topbar{display:flex; align-items:center; justify-content:space-between; margin-bottom:22px; flex-wrap:wrap; gap:10px;}
@@ -405,21 +407,6 @@
   table.tt-grid td{border-right:1px solid var(--line);}
   table.tt-grid th:last-child, table.tt-grid td:last-child{border-right:none;}
   table.tt-grid select{width:100%;}
-  /* ---------- Teacher's "my periods" highlight ----------
-     Purely a per-teacher display preference (kept in localStorage on their own device, never in
-     the shared database), so one teacher colouring their timetable can't change what anyone else
-     sees. The tint colour itself is passed in as an inline style on each cell. */
-  table.tt-grid td.tt-mine{font-weight:700; color:var(--ink);}
-  .tt-colorbar{display:flex; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:14px;
-    padding:10px 14px; background:var(--paper); border:1px solid var(--line); border-radius:10px;}
-  .tt-colorbar .cb-label{font-size:11px; text-transform:uppercase; letter-spacing:0.05em; color:var(--slate); font-weight:600; margin-right:2px;}
-  .tt-swatch{width:26px; height:26px; border-radius:50%; border:2px solid transparent; padding:0; cursor:pointer; box-shadow:0 0 0 1px var(--line);}
-  .tt-swatch.on{border-color:var(--ink); box-shadow:0 0 0 1px var(--ink);}
-  .tt-swatch-custom{position:relative; width:26px; height:26px; border-radius:50%; overflow:hidden; box-shadow:0 0 0 1px var(--line); cursor:pointer;
-    background:conic-gradient(#e14b4b,#e1a24b,#d8d84b,#5fae5f,#4bb6c8,#4b6fd8,#9b4bd8,#e14b4b);}
-  .tt-swatch-custom input{position:absolute; inset:-6px; width:150%; height:150%; opacity:0; cursor:pointer; border:none; padding:0;}
-  .tt-legend{font-size:12.5px; color:var(--slate);}
-  .tt-legend b{color:var(--ink);}
   .score-input{width:56px; padding:5px 6px; border:1px solid var(--line); border-radius:6px; text-align:center; font-family:'IBM Plex Mono',monospace; font-size:13px;}
 
   .grade-letter{font-family:'Fraunces',serif; font-weight:700; font-size:15px;}
@@ -1011,193 +998,506 @@ async function resendFeeSMS(studentId, paymentId){
 function firebaseIsConfigured(){
   return !!(FIREBASE_CONFIG.apiKey && FIREBASE_CONFIG.projectId && FIREBASE_CONFIG.appId);
 }
-let lastSyncErrorDetail = ''; // exact Firebase error (code + message) from the most recent failed
-                               // cloud read/write, surfaced in the badge tooltip so the real cause
-                               // (rules, quota, network block, etc.) doesn't require opening devtools
-function setSyncBadge(mode, errorDetail){
+
+/* ============================================================
+   DATA SAFETY LAYER  (rewritten to stop data being lost)
+   ------------------------------------------------------------
+   WHY DATA USED TO DISAPPEAR
+   1. The whole database was stored as ONE Firestore document. Firestore documents are capped at
+      1 MB, and student photos/signatures push the database past that — so cloud saves started
+      failing silently and other devices only ever saw an old copy.
+   2. Every save overwrote the entire cloud copy ("last device to save wins"), so a device that
+      had loaded an older copy could wipe out what another device had entered.
+   3. A device that couldn't reach the cloud could fall back to demo/seed data and push it up.
+   4. The only local copy was localStorage (small quota, easily cleared).
+
+   HOW IT WORKS NOW
+   • Every change is written to THIS DEVICE first (IndexedDB, with localStorage fallback).
+   • Changes are then uploaded to Firestore automatically (and immediately when you press Save /
+     Sync now). If offline, they stay on the device, marked "unsynced", and upload later.
+   • The cloud copy is split into several small chunks, so there is no 1 MB ceiling.
+   • Uploads are version-checked. If another device saved in the meantime, the two sets of
+     changes are MERGED (per student / class / record) instead of one overwriting the other.
+   • A device with no data and no cloud connection never invents demo data or uploads anything.
+   • Automatic cloud backups (last 20) + downloadable backup files + one-click restore.
+============================================================ */
+const IDB_NAME = 'clyde-academy-local', IDB_STORE = 'kv', IDB_KEY = 'record';
+const CHUNK_CHARS = 250000;          // well under Firestore's 1 MB-per-document limit, even for non-ASCII text
+const MAX_BACKUPS = 20;
+const AUTO_BACKUP_EVERY_MS = 3*60*60*1000;
+
+let baseStr = null;      // JSON of the last state known to be identical in the cloud (used for merging)
+let cloudRev = null;     // revision id of the cloud copy that baseStr came from
+let dirty = false;       // true = this device has changes the cloud doesn't have yet
+let editSeq = 0;         // bumps on every local edit, so we can tell if edits happened mid-upload
+let placeholder = false; // true = no real data loaded (never saved, never uploaded)
+let syncReady = false;
+let syncError = null;
+let syncTimer = null, syncPromise = null, syncQueued = false;
+let lastBackupAt = 0;
+const deviceId = (function(){
+  try{
+    let d = localStorage.getItem('clyde-device-id');
+    if(!d){ d = 'dev-' + Math.random().toString(36).slice(2,10); localStorage.setItem('clyde-device-id', d); }
+    return d;
+  }catch(e){ return 'dev-' + Math.random().toString(36).slice(2,10); }
+})();
+
+function setSyncBadge(mode){
   const el = document.getElementById('sync-badge');
-  if(errorDetail !== undefined) lastSyncErrorDetail = errorDetail;
   if(!el) return;
-  el.classList.remove('synced','offline','local');
-  if(mode==='synced'){ el.textContent = '☁ Synced'; el.classList.add('synced'); el.title = ''; }
-  else if(mode==='offline'){ el.textContent = '📴 Offline — saved on this device'; el.classList.add('offline'); el.title = lastSyncErrorDetail; }
-  else if(mode==='connecting'){ el.textContent = 'Connecting…'; el.title = ''; }
-  else { el.textContent = '💻 Browser-only mode'; el.classList.add('local'); el.title = lastSyncErrorDetail; }
-  if(errorDetail) console.error('[Firestore sync]', errorDetail);
+  el.classList.remove('synced','offline','local','pending','error');
+  if(mode==='synced'){ el.textContent = '☁ Synced'; el.classList.add('synced'); }
+  else if(mode==='pending'){ el.textContent = '⏳ Saved on device — uploading'; el.classList.add('pending'); }
+  else if(mode==='offline'){ el.textContent = '📴 Offline — saved on this device'; el.classList.add('offline'); }
+  else if(mode==='error'){ el.textContent = '⚠ Saved on device — cloud problem'; el.classList.add('error'); }
+  else if(mode==='placeholder'){ el.textContent = '⚠ Data not loaded — reconnect'; el.classList.add('error'); }
+  else if(mode==='connecting'){ el.textContent = 'Connecting…'; }
+  else { el.textContent = '💻 Browser-only mode'; el.classList.add('local'); }
 }
-function fbErrorDetail(e){
-  // Firebase JS SDK errors carry a .code like "permission-denied", "resource-exhausted",
-  // "unavailable", "failed-precondition" — this is the single most useful diagnostic string.
-  return (e && (e.code ? (e.code+': '+(e.message||'')) : e.message)) || String(e);
+function refreshBadge(){
+  if(placeholder) return setSyncBadge('placeholder');
+  if(!cloudEnabled) return setSyncBadge('local');
+  if(syncError && dirty) return setSyncBadge(navigator.onLine===false ? 'offline' : 'error');
+  if(dirty) return setSyncBadge(navigator.onLine===false ? 'offline' : 'pending');
+  setSyncBadge(navigator.onLine===false ? 'offline' : 'synced');
 }
 
-/* THE BUG: this used to store/read the DB object directly, with no timestamp attached. loadDB()
-   below then always trusted whatever was in Firestore over what was on the device — so if a cloud
-   save ever failed silently (offline moment, a dropped connection, temporarily-denied write) the
-   next page load would pull the older cloud copy and overwrite the newer local edits with it. That
-   is the "my changes don't save, it keeps reverting to old data" bug. The fix is to always know
-   which copy — local or cloud — is actually newer, which needs a timestamp on both sides. */
-function readLocalCache(){
+/* ---------- On-device store ---------- */
+let _idbPromise = null;
+function idbOpen(){
+  if(_idbPromise) return _idbPromise;
+  _idbPromise = new Promise((resolve,reject)=>{
+    if(!window.indexedDB) return reject(new Error('IndexedDB unavailable'));
+    const req = indexedDB.open(IDB_NAME, 1);
+    req.onupgradeneeded = ()=> req.result.createObjectStore(IDB_STORE);
+    req.onsuccess = ()=> resolve(req.result);
+    req.onerror = ()=> reject(req.error);
+  });
+  return _idbPromise;
+}
+async function idbGet(key){
+  const db = await idbOpen();
+  return new Promise((res,rej)=>{
+    const r = db.transaction(IDB_STORE,'readonly').objectStore(IDB_STORE).get(key);
+    r.onsuccess = ()=> res(r.result); r.onerror = ()=> rej(r.error);
+  });
+}
+async function idbSet(key,val){
+  const db = await idbOpen();
+  return new Promise((res,rej)=>{
+    const tx = db.transaction(IDB_STORE,'readwrite');
+    tx.objectStore(IDB_STORE).put(val,key);
+    tx.oncomplete = ()=> res(); tx.onerror = ()=> rej(tx.error); tx.onabort = ()=> rej(tx.error);
+  });
+}
+let persistChain = Promise.resolve();
+function persistLocal(){
+  if(placeholder || !DB) return persistChain;
+  const rec = { payload: DB, base: baseStr, cloudRev, dirty, updatedAt: Date.now(), lastBackupAt };
+  persistChain = persistChain.then(async ()=>{
+    try{ await idbSet(IDB_KEY, rec); }
+    catch(e){
+      console.error('IndexedDB save failed, using localStorage fallback', e);
+      try{ localStorage.setItem(STORAGE_KEY, JSON.stringify({ payload: rec.payload, updatedAt: rec.updatedAt })); }
+      catch(e2){ console.error('Could not save on this device at all', e2); }
+    }
+  });
+  return persistChain;
+}
+async function readLocalRecord(){
+  try{ const r = await idbGet(IDB_KEY); if(r && r.payload) return r; }catch(e){ console.warn('IndexedDB read failed', e); }
+  // Copy from the OLD storage format (localStorage). On a device that still has it, it may hold
+  // data that never reached the cloud — it is kept and merged up rather than discarded.
   try{
     const raw = localStorage.getItem(STORAGE_KEY);
-    if(!raw) return null;
-    const parsed = JSON.parse(raw);
-    // Back-compat: a cache written before this fix has no wrapper, just the raw DB object.
-    // Treat it as timestamp 0 (oldest) — a real cloud copy will still be preferred if newer,
-    // but it will never lose to a *stale* cloud copy the way the old code did.
-    if(parsed && typeof parsed === 'object' && 'payload' in parsed && 'updatedAt' in parsed){
-      return parsed;
+    if(raw){
+      const parsed = JSON.parse(raw);
+      const wrapped = parsed && typeof parsed==='object' && 'payload' in parsed && 'updatedAt' in parsed;
+      const payload = wrapped ? parsed.payload : parsed;
+      if(payload && typeof payload==='object' && payload.classes){
+        return { payload, base:null, cloudRev:null, dirty:true, updatedAt: wrapped ? (parsed.updatedAt||0) : 0, legacy:true };
+      }
     }
-    return { payload: parsed, updatedAt: 0 };
-  }catch(e){ return null; }
-}
-function writeLocalCache(stamp){
-  try{
-    const updatedAt = stamp !== undefined ? stamp : (lastSyncedAt || Date.now());
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ payload: DB, updatedAt }));
-  }catch(e){ console.error('local cache save failed', e); }
+  }catch(e){}
+  return null;
 }
 
+/* ---------- Helpers ---------- */
+function looksPristineSeed(db){
+  try{
+    if(!db || db.resetEpoch) return false;
+    const seed = seedDB();
+    const nm = x => (x||[]).map(s=>s.name).join('|');
+    return nm(db.students)===nm(seed.students) && nm(db.classes)===nm(seed.classes);
+  }catch(e){ return false; }
+}
+function chunkString(str){
+  const out = [];
+  for(let i=0;i<str.length;i+=CHUNK_CHARS) out.push(str.slice(i,i+CHUNK_CHARS));
+  return out.length ? out : [''];
+}
+function newRev(){ return deviceId + ':' + Date.now() + ':' + Math.random().toString(36).slice(2,8); }
+const sleep = ms => new Promise(r=>setTimeout(r,ms));
+function cloudCol(){ return firestoreDB.collection(FIRESTORE_COLLECTION); }
+
+/* ---------- 3-way merge (base = last synced, local = this device, remote = cloud) ---------- */
+const _isObj = v => v && typeof v==='object' && !Array.isArray(v);
+const _same = (a,b) => JSON.stringify(a)===JSON.stringify(b);
+const _idLike = arr => arr.every(x=>_isObj(x) && x.id!==undefined && x.id!==null);
+function merge3(base, local, remote){
+  if(_same(local, remote)) return local;
+  if(_same(base, local)) return remote;     // only the cloud changed
+  if(_same(base, remote)) return local;     // only this device changed
+  if(_isObj(local) && _isObj(remote)){
+    const b = _isObj(base) ? base : {};
+    const out = {};
+    const keys = new Set([...Object.keys(local), ...Object.keys(remote), ...Object.keys(b)]);
+    keys.forEach(k=>{
+      const inL = k in local, inR = k in remote, inB = k in b;
+      if(inL && inR) out[k] = merge3(b[k], local[k], remote[k]);
+      else if(inL){ if(!inB || !_same(b[k], local[k])) out[k] = local[k]; }     // removed in cloud: keep only if edited here
+      else if(inR){ if(!inB || !_same(b[k], remote[k])) out[k] = remote[k]; }   // removed here: keep only if edited in cloud
+    });
+    return out;
+  }
+  if(Array.isArray(local) && Array.isArray(remote) && _idLike(local) && _idLike(remote)){
+    const b = Array.isArray(base) && _idLike(base) ? base : [];
+    const bm = new Map(b.map(x=>[x.id,x])), rm = new Map(remote.map(x=>[x.id,x]));
+    const out = [], used = new Set();
+    local.forEach(l=>{
+      used.add(l.id);
+      if(rm.has(l.id)) out.push(merge3(bm.get(l.id), l, rm.get(l.id)));
+      else if(!bm.has(l.id) || !_same(bm.get(l.id), l)) out.push(l);
+    });
+    remote.forEach(r=>{
+      if(used.has(r.id)) return;
+      if(!bm.has(r.id) || !_same(bm.get(r.id), r)) out.push(r);
+    });
+    return out;
+  }
+  return local; // both edited the same plain value — this device's edit wins
+}
+
+/* ---------- Cloud read / write (chunked, atomic) ---------- */
+async function fetchRemote(){
+  const col = cloudCol();
+  for(let attempt=0; attempt<3; attempt++){
+    const snap = await col.doc(FIRESTORE_DOC).get({ source:'server' });
+    if(!snap.exists) return { exists:false, rev:null };
+    const m = snap.data();
+    if(typeof m.payload==='string' && m.chunkCount===undefined){   // old single-document format
+      return { exists:true, legacy:true, rev:'legacy:'+(m.updatedAt||0), str:m.payload, updatedAt:m.updatedAt||0 };
+    }
+    const n = m.chunkCount||0;
+    const parts = await Promise.all(Array.from({length:n},(_,i)=> col.doc(`${FIRESTORE_DOC}_p${i}`).get({ source:'server' })));
+    if(parts.every(p=>p.exists && p.data().rev===m.rev)){
+      return { exists:true, rev:m.rev, str:parts.map(p=>p.data().data).join(''), updatedAt:m.updatedAt||0 };
+    }
+    await sleep(400); // a write landed mid-read — read again
+  }
+  throw new Error('Could not read a consistent copy of the cloud data');
+}
+async function pushToCloud(str, expectedRev, force){
+  const col = cloudCol();
+  const parts = chunkString(str);
+  const rev = newRev();
+  const metaRef = col.doc(FIRESTORE_DOC);
+  await firestoreDB.runTransaction(async tx=>{
+    const snap = await tx.get(metaRef);
+    const m = snap.exists ? snap.data() : null;
+    const curRev = m ? (m.chunkCount!==undefined ? m.rev : 'legacy:'+(m.updatedAt||0)) : null;
+    if(!force && curRev !== expectedRev){ const e = new Error('conflict'); e.code = 'conflict'; throw e; }
+    const oldCount = (m && m.chunkCount) || 0;
+    parts.forEach((d,i)=> tx.set(col.doc(`${FIRESTORE_DOC}_p${i}`), { kind:'part', rev, i, data:d }));
+    for(let i=parts.length;i<oldCount;i++) tx.delete(col.doc(`${FIRESTORE_DOC}_p${i}`));
+    tx.set(metaRef, { kind:'meta', v:2, rev, chunkCount:parts.length, updatedAt:Date.now(), device:deviceId, size:str.length });
+  });
+  return rev;
+}
+
+/* ---------- Cloud backups ---------- */
+async function writeBackup(str, reason){
+  if(!cloudEnabled || !firestoreDB) return null;
+  const col = cloudCol(), id = 'bk_' + Date.now(), parts = chunkString(str);
+  for(let i=0;i<parts.length;i+=20){
+    const batch = firestoreDB.batch();
+    parts.slice(i,i+20).forEach((d,j)=> batch.set(col.doc(`${id}_p${i+j}`), { kind:'bkpart', i:i+j, data:d }));
+    await batch.commit();
+  }
+  await col.doc(id).set({ kind:'backup', createdAt:Date.now(), reason, chunkCount:parts.length, size:str.length, device:deviceId });
+  pruneBackups().catch(e=>console.warn('backup prune failed', e));
+  return id;
+}
+async function listCloudBackups(){
+  const snap = await cloudCol().where('kind','==','backup').get();
+  return snap.docs.map(d=>({ id:d.id, ...d.data() })).sort((a,b)=>b.createdAt-a.createdAt);
+}
+async function pruneBackups(){
+  const all = await listCloudBackups();
+  for(const b of all.slice(MAX_BACKUPS)){
+    const batch = firestoreDB.batch();
+    for(let i=0;i<(b.chunkCount||0);i++) batch.delete(cloudCol().doc(`${b.id}_p${i}`));
+    batch.delete(cloudCol().doc(b.id));
+    await batch.commit();
+  }
+}
+async function readCloudBackup(id){
+  const meta = await cloudCol().doc(id).get({ source:'server' });
+  if(!meta.exists) throw new Error('Backup not found');
+  const n = meta.data().chunkCount||0;
+  const parts = await Promise.all(Array.from({length:n},(_,i)=> cloudCol().doc(`${id}_p${i}`).get({ source:'server' })));
+  if(!parts.every(p=>p.exists)) throw new Error('Backup is incomplete');
+  return parts.map(p=>p.data().data).join('');
+}
+function maybeAutoBackup(str){
+  if(Date.now() - lastBackupAt < AUTO_BACKUP_EVERY_MS) return;
+  lastBackupAt = Date.now();
+  writeBackup(str, 'auto').then(()=>persistLocal()).catch(e=>{ lastBackupAt = 0; console.warn('auto backup failed', e); });
+}
+
+/* ---------- Sync engine ---------- */
 async function initCloudSync(){
   if(!firebaseIsConfigured()) return false;
   try{
     setSyncBadge('connecting');
     if(!firebase.apps.length) firebase.initializeApp(FIREBASE_CONFIG);
     firestoreDB = firebase.firestore();
-    // NOTE: deliberately NOT enabling Firestore's own offline/IndexedDB persistence here.
-    // This app already has its own localStorage-based offline fallback (see readLocalCache/
-    // writeLocalCache below), and Firestore's IndexedDB persistence layer was found to hang
-    // silently when a browser's tracking-prevention / storage-partitioning feature blocked it —
-    // with no catchable error, just an indefinite stall. Keeping this in-memory-only avoids
-    // that whole failure mode; loadDB()'s timeout below is the real safety net for connectivity.
+    // Helps on flaky mobile networks. The on-device store above is our offline copy, so Firestore's own cache isn't used.
+    try{ firestoreDB.settings({ experimentalAutoDetectLongPolling:true, merge:true }); }catch(e){}
     cloudEnabled = true;
     return true;
   }catch(e){
-    lastSyncErrorDetail = 'Firebase init failed: ' + fbErrorDetail(e);
     console.error('Firebase init failed — continuing in browser-only mode', e);
     cloudEnabled = false;
     return false;
   }
 }
+function requestSync(delay){
+  clearTimeout(syncTimer);
+  syncTimer = setTimeout(()=>{ syncNow().catch(()=>{}); }, delay||0);
+}
+async function syncNow(){
+  if(!cloudEnabled || !firestoreDB || !syncReady) return 'local';
+  if(syncPromise){ syncQueued = true; return syncPromise; }
+  syncPromise = (async()=>{
+    let result = 'synced';
+    try{
+      do{ syncQueued = false; await syncOnce(); }while(syncQueued);
+      syncError = null;
+    }catch(e){
+      console.error('Sync failed', e);
+      syncError = e;
+      result = (navigator.onLine===false || (e && e.code==='unavailable')) ? 'offline' : 'error';
+    }
+    syncPromise = null;
+    refreshBadge();
+    return result;
+  })();
+  return syncPromise;
+}
+async function tryPush(expectedRev, force){
+  const seq = editSeq;
+  const str = JSON.stringify(DB);
+  try{
+    const rev = await pushToCloud(str, expectedRev, force);
+    cloudRev = rev; baseStr = str;
+    if(editSeq===seq) dirty = false; else { dirty = true; syncQueued = true; }
+    await persistLocal();
+    maybeAutoBackup(str);
+    return true;
+  }catch(e){
+    if(e && e.code==='conflict') return false;
+    throw e;
+  }
+}
+function refreshUIAfterRemoteChange(){
+  applyBranding();
+  if(!session) return;
+  const a = document.activeElement;
+  if(a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)){ setTimeout(refreshUIAfterRemoteChange, 4000); return; }
+  render();
+}
+function adoptRemote(remote){
+  DB = JSON.parse(remote.str);
+  baseStr = remote.str; cloudRev = remote.rev; dirty = false;
+  migrateDB();
+}
+async function syncOnce(){
+  for(let attempt=0; attempt<4; attempt++){
+    const remote = await fetchRemote();
 
-function withTimeout(promise, ms, label){
-  return Promise.race([
-    promise,
-    new Promise((_, reject)=> setTimeout(()=> reject(new Error(label+' timed out after '+ms+'ms — likely blocked by network/browser privacy settings')), ms))
-  ]);
+    if(placeholder){
+      if(remote.exists){ adoptRemote(remote); placeholder = false; await persistLocal(); refreshUIAfterRemoteChange(); return; }
+      placeholder = false; DB = seedDB(); dirty = true; cloudRev = null; baseStr = null;   // cloud confirmed empty: first ever install
+    }
+
+    if(!remote.exists){                       // cloud has nothing — this device's copy is the good one, restore the cloud from it
+      if(await tryPush(null)) return;
+      continue;
+    }
+    if(remote.rev === cloudRev){              // cloud unchanged since we last synced
+      if(!dirty) return;
+      if(await tryPush(remote.rev)) return;
+      continue;
+    }
+
+    const remoteDB = JSON.parse(remote.str);
+    // Cloud was reset to blank demo data by accident (not a deliberate "Reset entire system") while this device has real data: put the real data back.
+    if(looksPristineSeed(remoteDB) && !looksPristineSeed(DB)){
+      await writeBackup(remote.str, 'cloud-was-blank').catch(()=>{});
+      if(await tryPush(remote.rev, true)) return;
+      continue;
+    }
+    if(!dirty){                               // nothing unsynced here — just take the newer cloud copy
+      adoptRemote(remote);
+      await persistLocal(); refreshUIAfterRemoteChange();
+      return;
+    }
+    // Both sides changed: merge instead of overwriting either
+    await writeBackup(remote.str, 'before-merge').catch(()=>{});
+    let merged;
+    if(baseStr===null){
+      // Never synced from this copy (e.g. an old device). Newer side wins ties; nothing gets deleted.
+      const localAt = (window.__localUpdatedAt||0);
+      merged = (remote.updatedAt > localAt) ? merge3(null, remoteDB, DB) : merge3(null, DB, remoteDB);
+    } else {
+      merged = merge3(JSON.parse(baseStr), DB, remoteDB);
+    }
+    DB = merged; baseStr = remote.str; cloudRev = remote.rev; dirty = true; editSeq++;
+    migrateDB();
+    await persistLocal();
+    if(await tryPush(remote.rev)){ refreshUIAfterRemoteChange(); return; }
+  }
+  throw new Error('Several devices are saving at once — will retry shortly');
+}
+async function forcePushCurrent(){
+  const remote = await fetchRemote();
+  const str = JSON.stringify(DB);
+  cloudRev = await pushToCloud(str, remote.rev, true);
+  baseStr = str; dirty = false;
+  await persistLocal();
 }
 
 async function loadDB(){
+  try{ if(navigator.storage && navigator.storage.persist) navigator.storage.persist(); }catch(e){}   // ask the browser not to evict our on-device copy
+  const local = await readLocalRecord();
+  let haveLocal = false;
+  if(local && local.payload && !(local.legacy && looksPristineSeed(local.payload))){
+    DB = local.payload; baseStr = local.base || null; cloudRev = local.cloudRev || null;
+    dirty = !!local.dirty; lastBackupAt = local.lastBackupAt || 0;
+    window.__localUpdatedAt = local.updatedAt || 0;
+    haveLocal = true;
+  }
   const gotCloud = await initCloudSync();
-  const localEntry = readLocalCache(); // {payload, updatedAt} or null
-  if(gotCloud){
-    try{
-      const ref = firestoreDB.collection(FIRESTORE_COLLECTION).doc(FIRESTORE_DOC);
-      const snap = await withTimeout(ref.get(), 8000, 'Initial cloud load');
-      const rawData = snap.exists ? snap.data() : null;
-      // LEGACY FORMAT: an older version of this app (or a manual import) wrote the database
-      // directly as top-level fields (classes, students, users, ...) instead of wrapping it in
-      // { payload: <JSON string>, updatedAt: <number> }. Detect that shape here so real data
-      // isn't mistaken for "cloud is empty" and accidentally overwritten with a blank seed DB.
-      const isLegacyShape = rawData && !rawData.payload &&
-        (rawData.classes || rawData.students || rawData.users || rawData.gradebook);
-      const cloudExists = !!(rawData && (rawData.payload || isLegacyShape));
-      const cloudUpdatedAt = rawData && rawData.payload ? (rawData.updatedAt || 0)
-        : isLegacyShape ? 0 // no timestamp on legacy docs — treat as oldest so any local edits win,
-                              // but still newer than "nothing", so it's used when local is empty too
-        : -1;
-      const localUpdatedAt = localEntry ? (localEntry.updatedAt || 0) : -1;
 
-      if(isLegacyShape){
-        // Real data confirmed present in this legacy shape — always trust it over whatever's
-        // on this device (which may just be an empty/seed copy written during earlier
-        // browser-only-mode fallbacks), rather than risking an overwrite of real data.
-        DB = rawData;
-        lastSyncedAt = Date.now();
-        await withTimeout(ref.set({ payload: JSON.stringify(DB), updatedAt: lastSyncedAt }), 8000, 'Cloud format migration');
-      } else if(cloudExists && cloudUpdatedAt >= localUpdatedAt){
-        // Cloud copy is the same age or newer than what's on this device — trust it, as before.
-        DB = JSON.parse(rawData.payload);
-        lastSyncedAt = cloudUpdatedAt;
-      } else if(localEntry){
-        // This device has edits the cloud never received (the save silently failed at some
-        // point) — keep them, and push them back up so the cloud catches up to this device
-        // instead of this device reverting to the cloud's older copy.
-        DB = localEntry.payload;
-        lastSyncedAt = Date.now();
-        await withTimeout(ref.set({ payload: JSON.stringify(DB), updatedAt: lastSyncedAt }), 8000, 'Cloud write-back');
-      } else {
-        DB = seedDB();
-        lastSyncedAt = Date.now();
-        await withTimeout(ref.set({ payload: JSON.stringify(DB), updatedAt: lastSyncedAt }), 8000, 'Cloud seed write');
-      }
-      migrateDB();
-      writeLocalCache(lastSyncedAt);
-      applyBranding();
-      setSyncBadge(snap.metadata && snap.metadata.fromCache ? 'offline' : 'synced');
-
-      // live updates from other devices/browsers
-      ref.onSnapshot(doc=>{
-        if(!doc.exists || !doc.data().payload) return;
-        const incomingUpdatedAt = doc.data().updatedAt || 0;
-        // Ignore anything not actually newer than what we already have — this is what stops a
-        // delayed echo of our own write (or a late from-cache event) from clobbering edits made
-        // in the moment right after that write.
-        if(incomingUpdatedAt <= lastSyncedAt) { setSyncBadge(doc.metadata.fromCache ? 'offline' : 'synced'); return; }
-        DB = JSON.parse(doc.data().payload);
-        lastSyncedAt = incomingUpdatedAt;
-        migrateDB();
-        writeLocalCache(lastSyncedAt);
-        applyBranding();
-        if(session) render();
-        setSyncBadge(doc.metadata.fromCache ? 'offline' : 'synced');
-      }, err=>{ console.error('Sync listener error', err); setSyncBadge('offline', 'Live sync error: ' + fbErrorDetail(err)); });
-
-      window.addEventListener('online', ()=> setSyncBadge('synced'));
-      window.addEventListener('offline', ()=> setSyncBadge('offline'));
-      listenToPresence();
-      return;
-    }catch(e){
-      lastSyncErrorDetail = 'Cloud load failed: ' + fbErrorDetail(e);
-      console.error('Cloud load failed, falling back to browser-only mode', e);
-      cloudEnabled = false;
+  if(!haveLocal){
+    let remote = null, reachable = false;
+    if(gotCloud){ try{ remote = await fetchRemote(); reachable = true; }catch(e){ console.error('Cloud unreachable at startup', e); } }
+    if(reachable && remote.exists){ adoptRemote(remote); }
+    else if(reachable){ DB = seedDB(); dirty = true; cloudRev = null; baseStr = null; }       // brand-new, empty cloud
+    else if(!gotCloud){ DB = seedDB(); dirty = false; }                                       // browser-only mode
+    else {
+      // Cloud is configured but can't be reached, and this device has no saved copy. Do NOT save or upload anything.
+      DB = seedDB(); placeholder = true;
+      setTimeout(()=>alert('This device has no saved data yet and can’t reach the cloud database right now.\n\nConnect to the internet and reload the page. Nothing you type before then will be saved.'), 300);
     }
   }
-  // browser-only mode (no Firebase configured, or it failed to connect)
-  DB = (localEntry && localEntry.payload) || seedDB();
-  lastSyncedAt = (localEntry && localEntry.updatedAt) || Date.now();
   migrateDB();
-  writeLocalCache(lastSyncedAt);
   applyBranding();
-  setSyncBadge('local');
+  await persistLocal();
+  syncReady = true;
+  refreshBadge();
+
+  if(gotCloud){
+    try{
+      cloudCol().doc(FIRESTORE_DOC).onSnapshot(doc=>{
+        if(doc.metadata.fromCache) return;
+        const m = doc.exists ? doc.data() : null;
+        const rev = m ? (m.chunkCount!==undefined ? m.rev : 'legacy:'+(m.updatedAt||0)) : null;
+        if(rev !== cloudRev) requestSync(400);
+      }, err=>{ console.error('Sync listener error', err); syncError = err; refreshBadge(); });
+    }catch(e){ console.error(e); }
+    window.addEventListener('online', ()=>{ refreshBadge(); requestSync(300); });
+    window.addEventListener('offline', refreshBadge);
+    document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='visible') requestSync(300); });
+    setInterval(()=>{ if(dirty || placeholder) requestSync(0); }, 45000);
+    // Pull the latest (and push anything waiting) before the login screen is used, but don't hang the page if the network is slow.
+    await Promise.race([ syncNow(), sleep(8000) ]);
+    refreshBadge();
+  }
 }
 
 async function saveDB(){
-  const stamp = Date.now();
-  writeLocalCache(stamp); // always keep an on-device copy first, so nothing is lost if offline
-  if(cloudEnabled && firestoreDB){
-    try{
-      await withTimeout(firestoreDB.collection(FIRESTORE_COLLECTION).doc(FIRESTORE_DOC).set({ payload: JSON.stringify(DB), updatedAt: stamp }), 8000, 'Cloud save');
-      lastSyncedAt = stamp;
-      setSyncBadge('synced');
-    }catch(e){
-      console.error('Cloud save failed — change is saved on this device and will sync later', e);
-      setSyncBadge('offline', 'Save failed: ' + fbErrorDetail(e));
-    }
-  } else {
-    lastSyncedAt = stamp;
+  if(placeholder) return;
+  editSeq++; dirty = true;
+  const saved = persistLocal();          // on-device copy first — nothing is lost even if the network is down
+  refreshBadge();
+  if(syncReady && cloudEnabled) requestSync(1500);
+  await saved;
+}
+/* The "Save" buttons: make sure the on-device copy is written, then upload to the cloud right now and say exactly what happened. */
+async function manualSave(){
+  if(placeholder){ alert('Nothing has been loaded on this device yet, so there is nothing to save. Connect to the internet and reload the page.'); return; }
+  await persistLocal();
+  if(!cloudEnabled){ alert('Saved on this device (browser-only mode — no cloud database configured).'); return; }
+  const r = await syncNow();
+  if(r==='synced' && !dirty) alert('All changes are saved on this device and in the cloud.');
+  else if(r==='offline') alert('Saved on this device. There is no connection to the cloud right now — it will upload automatically when you are back online. Please don’t clear this browser’s data until the badge says “Synced”.');
+  else {
+    const msg = syncError && syncError.message ? syncError.message : 'unknown error';
+    const denied = syncError && syncError.code==='permission-denied';
+    alert('Saved on this device, but the upload to the cloud failed' + (denied ? ': the cloud database refused access (its security rules may have expired — see Data safety & backups).' : ': ' + msg + '.') + '\n\nYour data is safe on this device and will keep retrying.');
   }
 }
-/* Explicit "Save" buttons on admin pages call this — every field already auto-saves the moment
-   it's changed, so this just re-runs saveDB() and gives a clear, immediate confirmation that
-   everything currently on screen has gone through (or explains why it hasn't, if offline). */
-async function manualSave(){
-  await saveDB();
-  if(!cloudEnabled) { alert('Saved on this device (browser-only mode — no cloud database configured).'); return; }
-  const badge = document.getElementById('sync-badge');
-  const synced = badge && badge.classList.contains('synced');
-  alert(synced ? 'All changes saved and synced to the cloud.' : "Saved on this device — couldn't reach the cloud right now, it'll sync automatically once you're back online."
-    + (lastSyncErrorDetail ? ('\n\nDetails: ' + lastSyncErrorDetail) : ''));
+
+/* ---------- Backup / restore tools (admin settings page) ---------- */
+function downloadTextFile(name, text){
+  const blob = new Blob([text], { type:'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = name;
+  document.body.appendChild(a); a.click();
+  setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); }, 500);
+}
+function backupFileName(){ return 'clyde-backup-' + new Date().toISOString().slice(0,16).replace(/[:T]/g,'-') + '.json'; }
+async function dsDownloadBackup(){ downloadTextFile(backupFileName(), JSON.stringify(DB)); }
+async function dsSyncNow(){ await manualSave(); }
+async function restoreFromString(str, label){
+  let obj;
+  try{ obj = JSON.parse(str); if(obj && obj.db && !obj.classes) obj = obj.db; }catch(e){ alert('That file is not a valid backup.'); return; }
+  if(!obj || typeof obj!=='object' || !Array.isArray(obj.classes) || !Array.isArray(obj.students)){ alert('That file does not look like a Clyde Academy backup.'); return; }
+  if(!confirm('Replace ALL current data with this backup (' + label + ')?\n\nThe current data is saved as a safety backup first, so this can be undone.')) return;
+  try{
+    const current = JSON.stringify(DB);
+    downloadTextFile('before-restore-' + backupFileName(), current);
+    if(cloudEnabled) await writeBackup(current, 'before-restore');
+    DB = obj; migrateDB(); editSeq++; dirty = true; placeholder = false;
+    await persistLocal();
+    if(cloudEnabled) await forcePushCurrent();
+    refreshBadge(); applyBranding(); render();
+    alert('Backup restored' + (cloudEnabled ? ' and uploaded to the cloud.' : '.'));
+  }catch(e){ console.error(e); alert('Restore failed: ' + (e && e.message ? e.message : e)); }
+}
+async function dsRestoreFile(input){
+  const f = input.files && input.files[0]; if(!f) return;
+  const text = await f.text(); input.value = '';
+  await restoreFromString(text, f.name);
+}
+async function dsListCloudBackups(){
+  const box = document.getElementById('ds-backups'); if(!box) return;
+  if(!cloudEnabled){ box.textContent = 'Cloud is not configured.'; return; }
+  box.textContent = 'Loading…';
+  try{
+    const list = await listCloudBackups();
+    if(!list.length){ box.textContent = 'No cloud backups yet. One is created automatically after saves (at most every 3 hours) and before risky operations.'; return; }
+    box.innerHTML = list.map(b=>`<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;border-top:1px solid var(--line);font-size:12.5px;">
+      <span><b>${fmtDateTime(new Date(b.createdAt).toISOString())}</b> · ${b.reason||'backup'} · ${Math.round((b.size||0)/1024)} KB</span>
+      <button class="btn-small" onclick="dsRestoreCloud('${b.id}')">Restore</button></div>`).join('');
+  }catch(e){ box.textContent = 'Could not load backups: ' + (e && e.message ? e.message : e); }
+}
+async function dsRestoreCloud(id){
+  try{ const str = await readCloudBackup(id); await restoreFromString(str, 'cloud backup'); }
+  catch(e){ alert('Could not read that backup: ' + (e && e.message ? e.message : e)); }
 }
 
 function todayStr(offsetDays){
@@ -1536,7 +1836,7 @@ function migrateDB(){
     changed = true;
   }
   BILL_CATEGORIES.forEach(cat=>{ if(!DB.billItems[cat]){ DB.billItems[cat] = []; changed = true; } });
-  if(DB.presence !== undefined){ delete DB.presence; changed = true; } // moved to its own small doc — see listenToPresence()
+  if(!DB.presence){ DB.presence = {}; changed = true; }
   if(!DB.idCounters){ DB.idCounters = { STU:0, TCH:0, PAR:0 }; changed = true; }
   if(!DB.vacation){ DB.vacation = { startDate: todayStr(0), weeks: 4 }; changed = true; }
   if(!DB.timetableSlots){
@@ -2193,26 +2493,8 @@ async function verifyPhoneLogin(){
     errEl.style.display = 'block';
   }
 }
-/* Lightweight "who's online" tracking — pings a SEPARATE, tiny Firestore document every so often
-   while a session is open, so the admin can see who's currently active. This used to write the
-   entire multi-KB/MB database document on every 60-second tick for every signed-in user (teachers,
-   parents, admin all at once) just to record a timestamp — that was burning through Firestore's
-   free write quota fast and risking the 1MiB per-document size limit as real school data piled up,
-   which is what was actually behind teachers randomly losing sync / getting stuck on stale data.
-   A merge-only write to its own small doc costs a few dozen bytes instead of the whole payload. */
-let livePresence = {};
-function presenceDocRef(){
-  if(!cloudEnabled || !firestoreDB) return null;
-  return firestoreDB.collection(FIRESTORE_COLLECTION).doc('presence');
-}
-function listenToPresence(){
-  const ref = presenceDocRef();
-  if(!ref) return;
-  ref.onSnapshot(doc=>{
-    livePresence = (doc.exists && doc.data()) ? doc.data() : {};
-    if(session && view && view.page==='activity') render();
-  }, err=>{ console.error('Presence listener error', err); });
-}
+/* Lightweight "who's online" tracking — pings a shared timestamp every so often while a session is
+   open, so the admin can see who's currently active without needing a separate backend. */
 function startPresenceHeartbeat(){
   markPresent();
   if(presenceTimer) clearInterval(presenceTimer);
@@ -2220,11 +2502,9 @@ function startPresenceHeartbeat(){
 }
 async function markPresent(){
   if(!session) return;
-  const ref = presenceDocRef();
-  if(!ref) return; // browser-only mode — no cloud doc to ping, and no one else to see it anyway
-  try{
-    await ref.set({ [session.username]: Date.now() }, { merge:true });
-  }catch(e){ console.error('Presence ping failed (non-critical)', e); }
+  if(!DB.presence) DB.presence = {};
+  DB.presence[session.username] = Date.now();
+  await saveDB();
 }
 let presenceTimer = null;
 let regRole = 'teacher';
@@ -3425,121 +3705,6 @@ function activeTimetableMode(){
   return DB.systemStatus==='vacation' ? 'vacation' : 'term';
 }
 
-/* ============================================================
-   Teacher timetable highlight
-   A teacher picks a colour and every period they personally teach lights up in that colour,
-   across all of their classes for the week.
-
-   The chosen colour is saved as a single extra field (ttColor) on that teacher's own user
-   record, so it follows them to any device they sign in on, and a copy is kept on the device
-   for instant/offline use. It is one field on one record — no existing field is rewritten, and
-   nothing outside that record is touched. Each teacher's colour is their own; it doesn't change
-   what anyone else sees.
-============================================================ */
-const TT_COLOR_KEY = 'clyde-academy-tt-colour-v1';
-const TT_COLOR_CHOICES = [
-  { name:'Brass',     hex:'#B8862E' },
-  { name:'Sage',      hex:'#5F7A5E' },
-  { name:'Ink blue',  hex:'#2F5EA8' },
-  { name:'Teal',      hex:'#2E8B92' },
-  { name:'Plum',      hex:'#7A4E8C' },
-  { name:'Brick',     hex:'#B4462F' },
-  { name:'Rose',      hex:'#C25A80' },
-  { name:'Slate',     hex:'#4C5A73' }
-];
-/* ---------- Printed-timetable day colours ----------
-   Purely visual, print-only: one accent per weekday so a printed sheet is easy to scan at a
-   glance. Reuses five of the swatches above so it stays consistent with the teacher highlight
-   colours rather than introducing a whole new palette. Nothing here reads or writes DB — it's
-   applied only inside the print-page builders below, so every on-screen timetable (Admin's
-   Step 3 preview, the teacher's and parent's live views) renders exactly as it did before. */
-const TT_DAY_COLORS = { Monday:'#B8862E', Tuesday:'#2F5EA8', Wednesday:'#5F7A5E', Thursday:'#7A4E8C', Friday:'#B4462F' };
-function ttDayColor(day){ return TT_DAY_COLORS[day] || 'var(--slate)'; }
-/* Read this teacher's saved colour. '' / null means "no highlight". Wrapped in try/catch so a
-   browser with localStorage blocked just falls back to no highlight instead of erroring out. */
-function ttValidColor(v){
-  return (typeof v === 'string' && /^#[0-9a-fA-F]{6}$/.test(v)) ? v : '';
-}
-/* On-device copy, kept in step with the saved one. It's what shows instantly while a fresh
-   device is still pulling the cloud copy, and what keeps the colour working if this browser is
-   offline. */
-function ttLocalColor(){
-  try{
-    const raw = localStorage.getItem(TT_COLOR_KEY);
-    const map = raw ? JSON.parse(raw) : {};
-    return ttValidColor(map[session && session.username]);
-  }catch(e){ return ''; }
-}
-function ttWriteLocalColor(hex){
-  try{
-    const raw = localStorage.getItem(TT_COLOR_KEY);
-    const map = raw ? JSON.parse(raw) : {};
-    if(hex) map[session.username] = hex; else delete map[session.username];
-    localStorage.setItem(TT_COLOR_KEY, JSON.stringify(map));
-  }catch(e){ /* storage unavailable — the saved copy on the user record still carries it */ }
-}
-/* The teacher's own user record is the source of truth, so the colour follows them to any
-   device they sign in on. A teacher who picked a colour before this change still has it in
-   localStorage only, so that's used as the fallback until their next pick saves it up. */
-function ttMyColor(){
-  const me = session && userByUsername(session.username);
-  if(me && 'ttColor' in me) return ttValidColor(me.ttColor);
-  return ttLocalColor();
-}
-async function setTtMyColor(hex){
-  hex = ttValidColor(hex);
-  ttWriteLocalColor(hex);
-  const me = session && userByUsername(session.username);
-  if(me){
-    // One extra field on this one teacher's user record. Nothing else in DB is touched, and
-    // every other field on the record is left exactly as it was.
-    if(hex) me.ttColor = hex; else delete me.ttColor;
-    render();
-    try{ await saveDB(); }
-    catch(e){ console.error('Could not save timetable colour to the cloud — kept on this device', e); }
-    return;
-  }
-  render();
-}
-/* #rrggbb → rgba(...) at the given alpha, so one picked colour gives both a soft cell tint and
-   a solid edge marker without needing a second colour from the teacher. */
-function ttRgba(hex, alpha){
-  const h = (hex||'').replace('#','');
-  const r = parseInt(h.slice(0,2),16), g = parseInt(h.slice(2,4),16), b = parseInt(h.slice(4,6),16);
-  if([r,g,b].some(isNaN)) return 'transparent';
-  return `rgba(${r},${g},${b},${alpha})`;
-}
-/* Is this timetable cell a period THIS teacher teaches? A cell holds a subject name, so it's
-   "mine" when that class lists the subject with me as its teacher. Breaks, Free Periods and
-   empty cells are never mine. */
-function ttCellIsMine(classId, subjectName, username){
-  if(!subjectName || subjectName==='—' || subjectName==='Free Period') return false;
-  const cls = classOf(classId);
-  if(!cls || !cls.subjects) return false;
-  return cls.subjects.some(s=> s.name===subjectName && s.teacher===username);
-}
-/* How many periods this teacher has in the week, per class and in total — shown next to the
-   colour picker so they get a quick read on their own load. */
-function ttMyWeeklyCounts(mode){
-  mode = mode || activeTimetableMode();
-  const perClass = {};
-  let total = 0;
-  accessibleClasses().forEach(c=>{
-    const slots = timetableSlotsFor(c.level||'JHS', mode);
-    const classTT = (DB.timetable[mode] || {})[c.id] || {};
-    let n = 0;
-    TIMETABLE_DAYS.forEach(d=>{
-      slots.forEach(s=>{
-        if(s.isBreak) return;
-        if(ttCellIsMine(c.id, (classTT[d]||{})[s.id], session.username)) n++;
-      });
-    });
-    perClass[c.id] = n;
-    total += n;
-  });
-  return { perClass, total };
-}
-
 function renderTimetable(){
   if(session.role==='Admin') return renderTimetableAdmin();
   if(session.role==='Parent') return renderTimetableParent();
@@ -3560,36 +3725,19 @@ function renderTimetableTeacher(){
   const mode = activeTimetableMode();
   const modeLabel = mode==='vacation' ? 'Vacation Classes' : 'Term';
   const slots = timetableSlotsFor(cls.level||'JHS', mode);
-  const myColor = ttMyColor();
-  const counts = ttMyWeeklyCounts(mode);
-  const hl = myColor ? { username: session.username, color: myColor } : null;
-  const here = counts.perClass[cls.id] || 0;
   return `
     <div class="topbar">
       <div><div class="eyebrow">Your schedule · ${modeLabel}</div><h1>Timetable</h1></div>
-      <button class="btn-ghost" onclick="printTimetable('${cls.id}','${mode}',true)">Print / Download</button>
-    </div>
-    <div class="tt-colorbar">
-      <span class="cb-label">Highlight my periods</span>
-      ${TT_COLOR_CHOICES.map(c=>`<button class="tt-swatch ${myColor.toLowerCase()===c.hex.toLowerCase()?'on':''}" style="background:${c.hex};" title="${c.name}" aria-label="${c.name}" onclick="setTtMyColor('${c.hex}')"></button>`).join('')}
-      <label class="tt-swatch-custom" title="Pick any other colour">
-        <input type="color" value="${myColor || '#B8862E'}" onchange="setTtMyColor(this.value)">
-      </label>
-      ${myColor ? `<button class="btn-small" onclick="setTtMyColor('')">Clear</button>` : ''}
-      <span class="tt-legend">
-        ${myColor
-          ? `<b>${counts.total}</b> period${counts.total===1?'':'s'} a week are yours${classes.length>1 ? ` · <b>${here}</b> in ${cls.name}` : ''}.`
-          : `Pick a colour and every lesson you teach lights up across your classes.`}
-      </span>
+      <button class="btn-ghost" onclick="printTimetable('${cls.id}','${mode}')">Print / Download</button>
     </div>
     ${classes.length>1 ? `<div class="toolbar" style="margin-bottom:14px;">
       <select onchange="ttSelectedClass=this.value; render()">
-        ${classes.map(c=>`<option value="${c.id}" ${c.id===ttSelectedClass?'selected':''}>${c.name}${myColor ? ` — ${counts.perClass[c.id]||0} of yours` : ''}</option>`).join('')}
+        ${classes.map(c=>`<option value="${c.id}" ${c.id===ttSelectedClass?'selected':''}>${c.name}</option>`).join('')}
       </select>
     </div>` : ''}
     <div class="panel"><div class="panel-head"><h3>${cls.name} — ${modeLabel} timetable</h3></div>
       <div class="panel-body" style="padding-top:10px;padding-bottom:16px;overflow-x:auto;">
-        ${slots.length ? buildTimetableGridHTML(cls.id, mode, hl) : `<p style="margin:0;font-size:13px;color:var(--slate);">The administrator hasn't set up this timetable yet.</p>`}
+        ${slots.length ? buildTimetableGridHTML(cls.id, mode) : `<p style="margin:0;font-size:13px;color:var(--slate);">The administrator hasn't set up this timetable yet.</p>`}
       </div>
     </div>
   `;
@@ -3739,42 +3887,27 @@ function renderTimetableAdmin(){
     </div>
   `;
 }
-/* hl is optional: { username, color } for the teacher's own "mine" highlight. colorDays is
-   optional and print-only: when true, each day's row gets a light per-weekday tint (from
-   TT_DAY_COLORS) so a printed sheet is easy to scan — it never touches the break or Free Period
-   styling, and a "mine" cell always wins over the day tint since that's the more specific signal. */
-function buildTimetableGridHTML(classId, mode, hl, colorDays){
+function buildTimetableGridHTML(classId, mode){
   mode = mode || activeTimetableMode();
   const slots = timetableSlotsFor(classOf(classId).level||'JHS', mode);
   const classTT = DB.timetable[mode][classId] || {};
-  const tint = hl && hl.color ? ttRgba(hl.color, 0.18) : '';
   return `
     <table class="reg tt-grid">
       <thead><tr><th>Day</th>${slots.map(s=>`<th>${s.label}<br><span style="font-size:10px;font-weight:400;color:var(--slate);">${s.start}–${s.end}</span></th>`).join('')}</tr></thead>
       <tbody>
-        ${TIMETABLE_DAYS.map(d=>{
-          const dc = colorDays ? ttDayColor(d) : '';
-          const dayTint = dc ? ttRgba(dc, 0.10) : '';
-          return `<tr>
-          <td class="mono" style="white-space:nowrap;font-weight:600;${dc ? `background:${ttRgba(dc,0.16)};box-shadow:inset 3px 0 0 ${dc};-webkit-print-color-adjust:exact;print-color-adjust:exact;` : ''}">${d}</td>
+        ${TIMETABLE_DAYS.map(d=>`<tr>
+          <td class="mono" style="white-space:nowrap;font-weight:600;">${d}</td>
           ${slots.map(s=>{
             if(s.isBreak) return `<td style="background:var(--paper);text-align:center;font-weight:600;">${s.label}</td>`;
             const val = (classTT[d]||{})[s.id] || '—';
-            const mine = tint && ttCellIsMine(classId, val, hl.username);
-            if(mine){
-              // -webkit-print-color-adjust keeps the tint when the teacher prints the sheet.
-              return `<td class="tt-mine" style="text-align:center;background:${tint};box-shadow:inset 3px 0 0 ${hl.color};-webkit-print-color-adjust:exact;print-color-adjust:exact;">${val}</td>`;
-            }
-            if(val==='Free Period') return `<td style="text-align:center;background:var(--sage-soft);color:var(--sage);font-weight:600;">${val}</td>`;
-            return `<td style="text-align:center;${dayTint ? `background:${dayTint};-webkit-print-color-adjust:exact;print-color-adjust:exact;` : ''}">${val}</td>`;
+            return `<td style="text-align:center;${val==='Free Period'?'background:var(--sage-soft);color:var(--sage);font-weight:600;':''}">${val}</td>`;
           }).join('')}
-        </tr>`;
-        }).join('')}
+        </tr>`).join('')}
       </tbody>
     </table>
   `;
 }
-function buildTimetableHTML(classId, mode, hl){
+function buildTimetableHTML(classId, mode){
   mode = mode || activeTimetableMode();
   const cls = classOf(classId);
   const modeLabel = mode==='vacation' ? 'Vacation Classes' : 'Term';
@@ -3784,14 +3917,12 @@ function buildTimetableHTML(classId, mode, hl){
         <div class="crest">${DB.school.crest ? `<img src="${DB.school.crest}">` : `<span>${schoolInitials(DB.school.name)}</span>`}</div>
         <div><h2>${DB.school.name}</h2><p>${modeLabel} Timetable — ${cls.name}</p></div>
       </div>
-      ${buildTimetableGridHTML(classId, mode, hl, true)}
+      ${buildTimetableGridHTML(classId, mode)}
     </div>
   `;
 }
-/* highlightMine is only ever passed true from the teacher's own Print button. */
-function printTimetable(classId, mode, highlightMine){
-  const hl = highlightMine && ttMyColor() ? { username: session.username, color: ttMyColor() } : null;
-  document.getElementById('print-area').innerHTML = buildTimetableHTML(classId, mode, hl);
+function printTimetable(classId, mode){
+  document.getElementById('print-area').innerHTML = buildTimetableHTML(classId, mode);
   window.print();
 }
 /* Combined grids — one table per level-group (Lower Primary / Upper Primary / JHS) with every
@@ -3802,7 +3933,7 @@ function billCategoryLabel(cat){ return BILL_CATEGORY_LABELS[cat] || cat; }
 function classesInCategory(category){
   return DB.classes.filter(c=>billCategoryForClass(c)===category);
 }
-function buildCombinedTimetableGridHTML(category, mode, colorDays){
+function buildCombinedTimetableGridHTML(category, mode){
   mode = mode || activeTimetableMode();
   const level = category==='JHS' ? 'JHS' : 'Primary';
   const slots = timetableSlotsFor(level, mode);
@@ -3813,21 +3944,16 @@ function buildCombinedTimetableGridHTML(category, mode, colorDays){
     <table class="reg tt-grid">
       <thead><tr><th>Day</th><th>Class</th>${slots.map(s=>`<th>${s.label}<br><span style="font-size:10px;font-weight:400;color:var(--slate);">${s.start}–${s.end}</span></th>`).join('')}</tr></thead>
       <tbody>
-        ${TIMETABLE_DAYS.map(d=>{
-          const dc = colorDays ? ttDayColor(d) : '';
-          const dayTint = dc ? ttRgba(dc, 0.10) : '';
-          return classes.map((c,ci)=>`<tr>
-          ${ci===0 ? `<td class="mono" rowspan="${classes.length}" style="white-space:nowrap;font-weight:600;vertical-align:middle;${dc ? `background:${ttRgba(dc,0.16)};box-shadow:inset 3px 0 0 ${dc};-webkit-print-color-adjust:exact;print-color-adjust:exact;` : ''}">${d}</td>` : ''}
-          <td style="white-space:nowrap;font-weight:600;${dayTint ? `background:${dayTint};-webkit-print-color-adjust:exact;print-color-adjust:exact;` : ''}">${c.name}</td>
+        ${TIMETABLE_DAYS.map(d=>classes.map((c,ci)=>`<tr>
+          ${ci===0 ? `<td class="mono" rowspan="${classes.length}" style="white-space:nowrap;font-weight:600;vertical-align:middle;">${d}</td>` : ''}
+          <td style="white-space:nowrap;font-weight:600;">${c.name}</td>
           ${slots.map(s=>{
             if(s.isBreak) return `<td style="background:var(--paper);text-align:center;font-weight:600;">${s.label}</td>`;
             const classTT = DB.timetable[mode][c.id] || {};
             const val = (classTT[d]||{})[s.id] || '—';
-            if(val==='Free Period') return `<td style="text-align:center;background:var(--sage-soft);color:var(--sage);font-weight:600;">${val}</td>`;
-            return `<td style="text-align:center;${dayTint ? `background:${dayTint};-webkit-print-color-adjust:exact;print-color-adjust:exact;` : ''}">${val}</td>`;
+            return `<td style="text-align:center;${val==='Free Period'?'background:var(--sage-soft);color:var(--sage);font-weight:600;':''}">${val}</td>`;
           }).join('')}
-        </tr>`).join('');
-        }).join('')}
+        </tr>`).join('')).join('')}
       </tbody>
     </table>
   `;
@@ -3841,7 +3967,7 @@ function buildCombinedTimetableHTML(category, mode){
         <div class="crest">${DB.school.crest ? `<img src="${DB.school.crest}">` : `<span>${schoolInitials(DB.school.name)}</span>`}</div>
         <div><h2>${DB.school.name}</h2><p>${modeLabel} Timetable — ${billCategoryLabel(category)}</p></div>
       </div>
-      ${buildCombinedTimetableGridHTML(category, mode, true)}
+      ${buildCombinedTimetableGridHTML(category, mode)}
     </div>
   `;
 }
@@ -4217,7 +4343,7 @@ function renderActivity(){
   const now = Date.now();
   const onlineWindow = 5*60*1000; // 5 minutes
   const onlineUsers = DB.users
-    .map(u=>({ ...u, lastSeen: (livePresence||{})[u.username] || null }))
+    .map(u=>({ ...u, lastSeen: (DB.presence||{})[u.username] || null }))
     .filter(u=>u.lastSeen && (now - u.lastSeen) <= onlineWindow)
     .sort((a,b)=>b.lastSeen-a.lastSeen);
 
@@ -4239,16 +4365,9 @@ function renderActivity(){
       </div>
     </div>
 
-    <div class="stat-grid" style="grid-template-columns:repeat(3,1fr);">
+    <div class="stat-grid" style="grid-template-columns:repeat(2,1fr);">
       <div class="stat-card"><div class="label">Missed weekly SBA deadlines</div><div class="value" style="${sbaFlags?'color:var(--brick);':''}">${sbaFlags}</div><div class="sub">Through Week ${curWeek}</div></div>
       <div class="stat-card"><div class="label">Days without attendance taken</div><div class="value" style="${attFlags?'color:var(--brick);':''}">${attFlags}</div><div class="sub">Since term start</div></div>
-      ${(()=>{
-        const bytes = new Blob([JSON.stringify(DB)]).size;
-        const kb = Math.round(bytes/1024);
-        const pctOfLimit = Math.round((bytes/1048576)*100); // Firestore's 1 MiB per-document ceiling
-        const danger = pctOfLimit>=80, warn = pctOfLimit>=50;
-        return `<div class="stat-card"><div class="label">Database size</div><div class="value" style="${danger?'color:var(--brick);':warn?'color:var(--brass);':''}">${kb} KB</div><div class="sub">${pctOfLimit}% of the 1 MB cloud sync limit${danger?' — talk to your developer soon':''}</div></div>`;
-      })()}
     </div>
 
     <div class="panel"><div class="panel-head"><h3>Weekly SBA activity — subject teachers</h3></div>
@@ -4919,12 +5038,25 @@ function renderStaff(){
       </div>
     </div>
 
+    <div class="panel"><div class="panel-head"><h3>Data safety &amp; backups</h3></div>
+      <div class="panel-body" style="padding-top:14px;padding-bottom:16px;">
+        <p style="margin:0 0 10px;font-size:13px;color:var(--slate);">Every change is saved on this device first, then uploaded to the cloud automatically. If two devices edit at the same time their changes are merged. Copies of the whole database are also kept in the cloud, and you can download one to keep.</p>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button class="btn-small brass" onclick="dsSyncNow()">Sync now</button>
+          <button class="btn-small" onclick="dsDownloadBackup()">Download backup file</button>
+          <label class="btn-small" style="cursor:pointer;display:inline-block;">Restore from file<input type="file" accept=".json,application/json" style="display:none" onchange="dsRestoreFile(this)"></label>
+          <button class="btn-small" onclick="dsListCloudBackups()">Cloud backups…</button>
+        </div>
+        <div id="ds-backups" style="margin-top:12px;"></div>
+      </div>
+    </div>
+
     <div class="panel"><div class="panel-head"><h3 style="color:var(--brick);">Danger zone</h3></div>
       <div class="panel-body" style="padding-top:14px;padding-bottom:16px;">
         <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;padding:14px;background:var(--brick-soft);border:1px solid var(--brick);border-radius:10px;">
           <div>
             <h4 style="margin-bottom:2px;color:var(--brick);">Reset entire system</h4>
-            <span style="font-size:12.5px;color:var(--ink-soft);">Wipes everything — every class, student, mark, attendance record, fee/payment, staff and parent account, and setting — and puts the app back to its original just-installed state. This cannot be undone and there is no backup. Only do this if you genuinely want to start completely over.</span>
+            <span style="font-size:12.5px;color:var(--ink-soft);">Wipes everything — every class, student, mark, attendance record, fee/payment, staff and parent account, and setting — and puts the app back to its original just-installed state. A backup is saved first (downloaded + kept in the cloud). Only do this if you genuinely want to start completely over.</span>
           </div>
           <button class="btn-danger" style="background:var(--brick);color:#fff;border-color:var(--brick);" onclick="factoryResetSystem()">Reset everything</button>
         </div>
@@ -5112,21 +5244,22 @@ async function resetAttendance(){
    AND the shared cloud copy (if connected) are both overwritten, so this
    can't be undone by simply reloading the page. */
 async function factoryResetSystem(){
-  if(!confirm('This will PERMANENTLY delete every class, student, mark, attendance record, fee/payment, and staff & parent account, and reset all settings back to defaults. There is no backup and this cannot be undone.\n\nAre you absolutely sure you want to continue?')) return;
+  if(!confirm('This will PERMANENTLY delete every class, student, mark, attendance record, fee/payment, and staff & parent account, and reset all settings back to defaults. A backup file will be downloaded and a copy kept in the cloud first.\n\nAre you absolutely sure you want to continue?')) return;
   const typed = prompt('To confirm, type RESET (in capitals) below:');
   if(typed !== 'RESET'){
     alert('Reset cancelled — the text you typed didn\'t match "RESET".');
     return;
   }
   try{
+    const oldStr = JSON.stringify(DB);
+    downloadTextFile('before-reset-' + backupFileName(), oldStr);          // a copy on this device first
+    if(cloudEnabled) await writeBackup(oldStr, 'before-factory-reset');    // and a copy in the cloud
     DB = seedDB();
+    DB.resetEpoch = Date.now();   // marks this as a deliberate reset so other devices accept it
     migrateDB();
-    const stamp = Date.now();
-    writeLocalCache(stamp);
-    lastSyncedAt = stamp;
-    if(cloudEnabled && firestoreDB){
-      await firestoreDB.collection(FIRESTORE_COLLECTION).doc(FIRESTORE_DOC).set({ payload: JSON.stringify(DB), updatedAt: stamp });
-    }
+    editSeq++; dirty = true;
+    await persistLocal();
+    if(cloudEnabled) await forcePushCurrent();
   }catch(e){
     console.error('Factory reset failed', e);
     alert('Something went wrong while resetting: '+(e && e.message ? e.message : e));
