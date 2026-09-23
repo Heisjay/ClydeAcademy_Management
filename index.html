@@ -330,6 +330,23 @@
   .sync-badge.pending{background:rgba(184,134,46,0.22); color:var(--brass-soft);}
   .sync-badge.error{background:rgba(166,72,60,0.3); color:#F3B5AB;}
 
+  /* ---------- Data-risk banner: hard to miss, unlike the small sidebar badge ---------- */
+  #data-risk-banner{
+    display:none; position:fixed; top:0; left:0; right:0; z-index:9999;
+    padding:11px 16px; font-size:13px; font-weight:600; text-align:center;
+    color:#fff; background:var(--brick); box-shadow:0 2px 10px rgba(0,0,0,0.25);
+    align-items:center; justify-content:center; gap:14px; flex-wrap:wrap;
+  }
+  #data-risk-banner.show{ display:flex; }
+  #data-risk-banner.warn{ background:#8a5a12; }
+  #data-risk-banner button{
+    background:rgba(255,255,255,0.18); border:1px solid rgba(255,255,255,0.4); color:#fff;
+    border-radius:6px; padding:4px 10px; font-size:12px; font-weight:600;
+  }
+  #data-risk-banner button:hover{ background:rgba(255,255,255,0.3); }
+  body:has(#data-risk-banner.show) #app-screen{ padding-top:42px; }
+  body:has(#data-risk-banner.show) #login-screen{ padding-top:42px; }
+
   .main{flex:1; min-width:0; padding:26px 32px 90px;}
   .topbar{display:flex; align-items:center; justify-content:space-between; margin-bottom:22px; flex-wrap:wrap; gap:10px;}
   .topbar h1{font-size:22px; margin:0;}
@@ -522,6 +539,7 @@
 </style>
 </head>
 <body>
+<div id="data-risk-banner"><span id="data-risk-text"></span><button id="data-risk-btn" style="display:none;" onclick="dsVerifyCloudCopy()">Check now</button></div>
 
 <!-- ===================== LOGIN ===================== -->
 <div id="login-screen">
@@ -1055,12 +1073,65 @@ function setSyncBadge(mode){
   else if(mode==='connecting'){ el.textContent = 'Connecting…'; }
   else { el.textContent = '💻 Browser-only mode'; el.classList.add('local'); }
 }
+
+/* ---------- Data-risk banner ----------
+   The sidebar badge above is small and easy to not notice. Anything that puts data at real
+   risk of being lost also raises this full-width banner, which stays up until the problem
+   clears (or the person dismisses it after reading it). */
+let dirtySinceTs = 0;
+let verifyProblem = null; // set by dsVerifyCloudCopy() when a background check finds a real mismatch
+const OFFLINE_WARN_MS = 3*60*1000;
+
+function showDataRiskBanner(text, opts){
+  const el = document.getElementById('data-risk-banner');
+  const btn = document.getElementById('data-risk-btn');
+  if(!el) return;
+  document.getElementById('data-risk-text').textContent = text;
+  el.classList.add('show');
+  el.classList.toggle('warn', !!(opts && opts.warn));
+  if(btn) btn.style.display = (opts && opts.showCheck) ? 'inline-block' : 'none';
+}
+function hideDataRiskBanner(){
+  const el = document.getElementById('data-risk-banner');
+  if(el) el.classList.remove('show');
+}
+
 function refreshBadge(){
-  if(placeholder) return setSyncBadge('placeholder');
-  if(!cloudEnabled) return setSyncBadge('local');
-  if(syncError && dirty) return setSyncBadge(navigator.onLine===false ? 'offline' : 'error');
-  if(dirty) return setSyncBadge(navigator.onLine===false ? 'offline' : 'pending');
-  setSyncBadge(navigator.onLine===false ? 'offline' : 'synced');
+  if(placeholder){
+    setSyncBadge('placeholder');
+    showDataRiskBanner('⚠ DATA IS NOT BEING SAVED: this device has no data loaded and can\'t reach the cloud database. Do not type anything in until this is fixed — connect to the internet and reload the page.');
+    return;
+  }
+  if(!cloudEnabled){ setSyncBadge('local'); hideDataRiskBanner(); return; }
+
+  if(dirty){ if(!dirtySinceTs) dirtySinceTs = Date.now(); } else { dirtySinceTs = 0; }
+  const dirtyForMin = dirtySinceTs ? Math.round((Date.now()-dirtySinceTs)/60000) : 0;
+  const offline = navigator.onLine===false;
+  const denied = syncError && syncError.code==='permission-denied';
+
+  if(syncError && dirty){
+    setSyncBadge(offline ? 'offline' : 'error');
+    if(denied){
+      showDataRiskBanner('🔒 DATA AT RISK: the cloud database is refusing to store this device\'s changes (its security rules are blocking the save). Your work exists ONLY on this device right now and would be lost if this browser\'s data were ever cleared. See Settings → Data safety & backups to fix the rules.', {showCheck:true});
+    } else if(offline){
+      showDataRiskBanner(dirtyForMin>0
+        ? ('📴 Offline with unsaved changes for ' + dirtyForMin + ' min. Don\'t let another device make changes until this one reconnects and shows "Synced" — and don\'t clear this browser\'s data until then.')
+        : '📴 Offline — changes are saved on this device and will upload once you\'re back online.', {warn: dirtyForMin>=Math.round(OFFLINE_WARN_MS/60000), showCheck:false});
+    } else {
+      showDataRiskBanner('⚠ Saved on this device, but uploading to the cloud keeps failing (' + (syncError.message||'unknown error') + '). Your work is safe here for now — press Check now to test the connection.', {showCheck:true});
+    }
+    return;
+  }
+  if(dirty){
+    setSyncBadge(offline ? 'offline' : 'pending');
+    if(offline && dirtyForMin*60000 > OFFLINE_WARN_MS){
+      showDataRiskBanner('📴 Offline with unsaved changes for ' + dirtyForMin + ' min. Reconnect before another device saves — and don\'t clear this browser\'s data yet.', {warn:true, showCheck:false});
+    } else hideDataRiskBanner();
+    return;
+  }
+  if(verifyProblem){ showDataRiskBanner(verifyProblem, {warn:true, showCheck:true}); return; }
+  setSyncBadge(offline ? 'offline' : 'synced');
+  hideDataRiskBanner();
 }
 
 /* ---------- On-device store ---------- */
@@ -1265,6 +1336,16 @@ async function initCloudSync(){
     firestoreDB = firebase.firestore();
     // Helps on flaky mobile networks. The on-device store above is our offline copy, so Firestore's own cache isn't used.
     try{ firestoreDB.settings({ experimentalAutoDetectLongPolling:true, merge:true }); }catch(e){}
+    // Sign this browser in anonymously so Firestore Security Rules can require "request.auth != null"
+    // instead of being wide open to anyone on the internet. This is separate from the app's own
+    // username/password login — it just proves "this is a real browser running this app's code",
+    // not "this is a specific staff member". See Settings → Data safety & backups for the rules
+    // this pairs with, and why that split matters.
+    try{
+      if(typeof firebase.auth==='function' && !firebase.auth().currentUser){
+        await firebase.auth().signInAnonymously();
+      }
+    }catch(e){ console.warn('Anonymous auth failed — Firestore rules requiring request.auth will reject writes until this succeeds', e); }
     cloudEnabled = true;
     return true;
   }catch(e){
@@ -1422,6 +1503,8 @@ async function loadDB(){
     window.addEventListener('offline', refreshBadge);
     document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='visible') requestSync(300); });
     setInterval(()=>{ if(dirty || placeholder) requestSync(0); }, 45000);
+    setInterval(refreshBadge, 30000); // keeps the "offline for N minutes" banner text current even when nothing else triggers a refresh
+    setInterval(()=>{ if(!dirty && !placeholder) dsVerifyCloudCopy(false); }, 10*60*1000); // background proof-of-save check, every 10 min
     // Pull the latest (and push anything waiting) before the login screen is used, but don't hang the page if the network is slow.
     await Promise.race([ syncNow(), sleep(8000) ]);
     refreshBadge();
@@ -1462,6 +1545,58 @@ function downloadTextFile(name, text){
 function backupFileName(){ return 'clyde-backup-' + new Date().toISOString().slice(0,16).replace(/[:T]/g,'-') + '.json'; }
 async function dsDownloadBackup(){ downloadTextFile(backupFileName(), JSON.stringify(DB)); }
 async function dsSyncNow(){ await manualSave(); }
+/* Reads DIRECTLY from Firestore's server (bypassing any local cache) and reports plainly
+   whether what's on this device is actually the same as what's actually stored in the cloud.
+   Used by the "Check now" button on the data-risk banner, and by the Settings button, and
+   run automatically in the background (see setInterval near the bottom of loadDB). */
+async function dsVerifyCloudCopy(showAlert){
+  const box = document.getElementById('ds-verify-result');
+  if(!cloudEnabled){
+    const msg = 'Cloud is not configured — this app is running in browser-only mode, so there is no separate cloud copy to check against. Data only lives on this device.';
+    if(box) box.textContent = msg;
+    if(showAlert!==false) alert(msg);
+    return;
+  }
+  if(box) box.textContent = 'Checking Firestore directly…';
+  try{
+    const remote = await fetchRemote();
+    if(!remote.exists){
+      verifyProblem = null; // nothing to flag as a mismatch — this is the "brand new" case, handled elsewhere
+      const msg = '❌ Nothing exists in Firestore yet for this school. This device\'s data has never successfully reached the cloud. Press "Sync now" above to upload it.';
+      if(box) box.textContent = msg;
+      if(showAlert!==false) alert(msg);
+      refreshBadge();
+      return false;
+    }
+    const matches = remote.str === JSON.stringify(DB);
+    const when = fmtDateTime(new Date(remote.updatedAt||Date.now()).toISOString());
+    let msg;
+    if(matches){
+      verifyProblem = null;
+      msg = '✅ Verified directly against Firestore: this device\'s data is exactly what is stored in the cloud (last cloud write: ' + when + ').';
+    } else if(dirty){
+      verifyProblem = null; // expected — this device just hasn't uploaded its latest edits yet
+      msg = '⏳ Firestore\'s copy is from ' + when + '. This device has newer changes waiting to upload — press "Sync now" to send them immediately, then check again.';
+    } else {
+      verifyProblem = 'Data mismatch detected: this device shows "Synced" but its data does not actually match what\'s in Firestore (last cloud write: ' + when + '). Press "Sync now", then Check now again.';
+      msg = '⚠ ' + verifyProblem;
+    }
+    if(box) box.textContent = msg;
+    if(showAlert!==false) alert(msg);
+    refreshBadge();
+    return matches;
+  }catch(e){
+    const denied = e && e.code==='permission-denied';
+    verifyProblem = denied
+      ? 'Could not verify the cloud copy: the security rules are refusing read access. See "Secure this database" below.'
+      : ('Could not verify the cloud copy right now: ' + ((e&&e.message)||e) + '.');
+    const msg = '❌ ' + verifyProblem + '\n\nThis device\'s own copy is still safe on this device, but it is NOT confirmed to be in Firestore.';
+    if(box) box.textContent = msg;
+    if(showAlert!==false) alert(msg);
+    refreshBadge();
+    return false;
+  }
+}
 async function restoreFromString(str, label){
   let obj;
   try{ obj = JSON.parse(str); if(obj && obj.db && !obj.classes) obj = obj.db; }catch(e){ alert('That file is not a valid backup.'); return; }
@@ -5043,11 +5178,43 @@ function renderStaff(){
         <p style="margin:0 0 10px;font-size:13px;color:var(--slate);">Every change is saved on this device first, then uploaded to the cloud automatically. If two devices edit at the same time their changes are merged. Copies of the whole database are also kept in the cloud, and you can download one to keep.</p>
         <div style="display:flex;gap:8px;flex-wrap:wrap;">
           <button class="btn-small brass" onclick="dsSyncNow()">Sync now</button>
+          <button class="btn-small" onclick="dsVerifyCloudCopy()">Verify cloud copy now</button>
           <button class="btn-small" onclick="dsDownloadBackup()">Download backup file</button>
           <label class="btn-small" style="cursor:pointer;display:inline-block;">Restore from file<input type="file" accept=".json,application/json" style="display:none" onchange="dsRestoreFile(this)"></label>
           <button class="btn-small" onclick="dsListCloudBackups()">Cloud backups…</button>
         </div>
+        <p style="margin:8px 0 0;font-size:12px;color:var(--slate);">"Verify cloud copy now" reads directly from Firestore's server (not this device's memory) and tells you plainly whether what's on this device is actually what's stored in the cloud. It also runs automatically every 10 minutes in the background — if it ever finds a real mismatch, the banner at the top of the screen will say so.</p>
+        <div id="ds-verify-result" style="margin-top:10px;font-size:12.5px;"></div>
         <div id="ds-backups" style="margin-top:12px;"></div>
+      </div>
+    </div>
+
+    <div class="panel"><div class="panel-head"><h3>Secure this database</h3></div>
+      <div class="panel-body" style="padding-top:14px;padding-bottom:16px;">
+        <p style="margin:0 0 10px;font-size:13px;color:var(--slate);">Firestore databases created in "test mode" start out open to <b>anyone on the internet</b> who has the project's web address — not just this app — and after 30 days test-mode rules switch to blocking everyone, including this app, which looks exactly like the data "disappearing". Paste the rules below into the Firebase console to fix both problems at once: they require a real connection from this app (this device already signs itself in silently for this — nothing for staff or parents to do) and they never expire on their own.</p>
+        <ol style="margin:0 0 10px;padding-left:18px;font-size:12.5px;color:var(--ink-soft);line-height:1.6;">
+          <li>Go to <span class="mono">console.firebase.google.com</span> → open the <span class="mono">${FIREBASE_CONFIG.projectId||'your'}</span> project.</li>
+          <li>Build → Firestore Database → the "Rules" tab.</li>
+          <li>Replace everything in the box with the rules below, then click Publish.</li>
+        </ol>
+        <pre class="mono" style="background:var(--ink);color:#DCE3F5;padding:12px;border-radius:8px;font-size:12px;overflow-x:auto;white-space:pre;">rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /${FIRESTORE_COLLECTION}/{docId} {
+      allow read, write: if request.auth != null;
+    }
+  }
+}</pre>
+        <button class="btn-small" style="margin-top:8px;" onclick="navigator.clipboard.writeText(document.getElementById('fs-rules-text').textContent).then(()=>alert('Copied.'))" id="fs-rules-copy">Copy rules</button>
+        <span id="fs-rules-text" style="display:none;">rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /${FIRESTORE_COLLECTION}/{docId} {
+      allow read, write: if request.auth != null;
+    }
+  }
+}</span>
+        <p style="margin:12px 0 0;font-size:12px;color:var(--slate);">Worth knowing: this blocks outsiders and expired-rule lockouts, but it can't tell a teacher's browser from a parent's — that split is enforced by this app's own screens (e.g. parents only ever see their own child), not by Firestore. Keeping it that way exactly is fine for a school register like this; true per-role database enforcement would need a real backend and is a bigger project than a rules change.</p>
       </div>
     </div>
 
@@ -5533,6 +5700,18 @@ function printClassReportCards(studentIds){
   document.getElementById('print-area').innerHTML = ids.map(id=>buildReportCardHTML(id)).join('');
   window.print();
 }
+
+/* Warn before closing/reloading the tab while changes haven't reached the cloud yet — this is the
+   single most common way data used to go missing: someone closes the laptop or switches tabs a
+   second after typing, before the upload has had a chance to run. Most browsers show their own
+   generic wording rather than the text below, but showing the prompt at all is what matters. */
+window.addEventListener('beforeunload', function(e){
+  if(dirty && cloudEnabled && !placeholder){
+    e.preventDefault();
+    e.returnValue = 'Changes on this device have not finished uploading to the cloud yet. Leave anyway?';
+    return e.returnValue;
+  }
+});
 
 /* ============================================================
    Boot
