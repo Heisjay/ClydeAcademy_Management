@@ -384,6 +384,8 @@
 
   .btn-ghost{background:none; border:1px solid var(--line); border-radius:7px; padding:6px 12px; font-size:12.5px; font-weight:600; color:var(--slate);}
   .btn-ghost:hover{border-color:var(--ink); color:var(--ink);}
+  .btn-ghost:disabled{opacity:0.4; cursor:not-allowed;}
+  .btn-ghost:disabled:hover{border-color:var(--line); color:var(--slate);}
   .btn-small{background:var(--ink); color:var(--white); border:none; border-radius:7px; padding:6px 12px; font-size:12.5px; font-weight:600;}
   .btn-small:hover{background:var(--ink-soft);}
   .btn-small.brass{background:var(--brass);}
@@ -2042,6 +2044,7 @@ function migrateDB(){
     if(u.resetOTP===undefined){ u.resetOTP = null; changed = true; }
     if(!u.staffId && u.role==='Teacher'){ u.staffId = nextDisplayId('TCH'); changed = true; }
     if(!u.parentId && u.role==='Parent'){ u.parentId = nextDisplayId('PAR'); changed = true; }
+    if(u.role==='Teacher' && !u.color){ u.color = nextTeacherColor(); changed = true; }
   });
   DB.students.forEach(s=>{
     if(s.photo===undefined){ s.photo = null; changed = true; }
@@ -2160,6 +2163,30 @@ function classOf(id){ return DB.classes.find(c=>c.id===id); }
 function studentById(id){ return DB.students.find(s=>s.id===id); }
 function userByUsername(u){ return DB.users.find(x=>x.username===u); }
 function teacherName(username){ const u = userByUsername(username); return u ? u.name : null; }
+/* Timetable colors — one per teacher, so their periods stand out on the grid at a glance.
+   Auto-assigned the first time a teacher account exists without one; admins can override any
+   teacher's color from Staff Accounts → Existing accounts. */
+const TEACHER_COLOR_PALETTE = ['#C0483C','#3C6E71','#B8862E','#5B7B5A','#4A5FA0','#A0527E','#2E7D6B','#8A5A12','#6B5B95','#3D8C8C','#A85C32','#5A6B8C'];
+function nextTeacherColor(){
+  const used = new Set(DB.users.filter(u=>u.role==='Teacher' && u.color).map(u=>u.color));
+  const free = TEACHER_COLOR_PALETTE.find(c=>!used.has(c));
+  if(free) return free;
+  const teacherCount = DB.users.filter(u=>u.role==='Teacher').length;
+  return TEACHER_COLOR_PALETTE[teacherCount % TEACHER_COLOR_PALETTE.length];
+}
+async function setTeacherColor(username, color){
+  const u = userByUsername(username);
+  if(!u) return;
+  u.color = color;
+  await saveDB();
+  render();
+}
+function hexToRgba(hex, alpha){
+  const h = (hex||'#999999').replace('#','');
+  const full = h.length===3 ? h.split('').map(c=>c+c).join('') : h;
+  const n = parseInt(full,16) || 0x999999;
+  return `rgba(${(n>>16)&255},${(n>>8)&255},${n&255},${alpha})`;
+}
 function subjectNames(cls){ return cls.subjects.map(s=>s.name); }
 function subjectOf(cls, name){ return cls.subjects.find(s=>s.name===name); }
 
@@ -3375,6 +3402,17 @@ async function reinstateStudent(id){
   render();
 }
 function openStudent(id){ navHistory.push({ page: view.page, studentId: null }); view.studentId = id; view.tab='overview'; render(); }
+/* Moves to the previous/next student in the SAME class, keeping whichever tab (Overview/Grades/
+   Attendance) is currently open — so a teacher going through a class to enter marks or remarks can
+   press Next repeatedly and land straight on that tab for each student in turn. */
+function stepStudent(dir){
+  const s = studentById(view.studentId);
+  if(!s) return;
+  const roster = studentsOf(s.classId);
+  const idx = roster.findIndex(x=>x.id===s.id);
+  const target = roster[idx+dir];
+  if(target){ view.studentId = target.id; render(); }
+}
 let profilePhotoTarget = null;
 async function openEditProfile(id){
   const s = studentById(id);
@@ -3419,6 +3457,12 @@ function renderStudentDetail(id){
   const avg = overallAverage(id);
   const att = attendanceRate(id, s.classId);
   const classTeacherName = cls.classTeacher ? teacherName(cls.classTeacher) : null;
+  // Same-class roster order, so "Next" walks straight through the class one student at a time —
+  // handy when a teacher is entering marks/remarks and wants to move on without going back to the list.
+  const roster = studentsOf(s.classId);
+  const rosterIdx = roster.findIndex(x=>x.id===id);
+  const prevStudent = rosterIdx>0 ? roster[rosterIdx-1] : null;
+  const nextStudent = (rosterIdx>=0 && rosterIdx<roster.length-1) ? roster[rosterIdx+1] : null;
 
   const pos = classPosition(id);
   const sixSum = sixSubjectSummary(s.classId, id);
@@ -3534,9 +3578,13 @@ function renderStudentDetail(id){
     <div class="topbar">
       <div style="display:flex;align-items:center;gap:14px;">
         <div class="avatar" style="width:48px;height:48px;font-size:16px;background:var(--ink);color:var(--brass-soft);">${s.name.split(' ').map(w=>w[0]).slice(0,2).join('')}</div>
-        <div><div class="eyebrow">${cls.name}</div><h1>${s.name}</h1></div>
+        <div><div class="eyebrow">${cls.name}${rosterIdx>=0 ? ` · ${rosterIdx+1} of ${roster.length}` : ''}</div><h1>${s.name}</h1></div>
       </div>
-      <button class="btn-small brass" onclick="printReportCard('${id}')">Print report card</button>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+        <button class="btn-ghost" ${!prevStudent?'disabled':''} onclick="stepStudent(-1)" title="${prevStudent ? 'Previous: '+prevStudent.name : 'First student in this class'}">&larr; Prev</button>
+        <button class="btn-ghost" ${!nextStudent?'disabled':''} onclick="stepStudent(1)" title="${nextStudent ? 'Next: '+nextStudent.name : 'Last student in this class'}">Next &rarr;</button>
+        <button class="btn-small brass" onclick="printReportCard('${id}')">Print report card</button>
+      </div>
     </div>
     <div class="tabs">
       <button class="tab-btn ${view.tab==='overview'?'active':''}" onclick="view.tab='overview'; render()">Overview</button>
@@ -3824,6 +3872,36 @@ async function bulkMarkAllMissedAttendancePresent(){
    assignment per day, bulk import, and a printable grid.
 ============================================================ */
 const TIMETABLE_DAYS = ['Monday','Tuesday','Wednesday','Thursday','Friday'];
+/* Looks up the teacher assigned to a subject (as it's entered on a class's timetable) and returns
+   their timetable color, or null for Free Period / an unassigned subject / no color set. */
+function teacherColorForSubject(classId, subjectName){
+  if(!subjectName || subjectName==='—' || subjectName==='Free Period') return null;
+  const cls = classOf(classId);
+  if(!cls) return null;
+  const subj = cls.subjects.find(sub=>sub.name===subjectName);
+  if(!subj || !subj.teacher) return null;
+  const t = userByUsername(subj.teacher);
+  return t ? t.color : null;
+}
+function timetableCellStyle(classId, val){
+  if(val==='Free Period') return 'background:var(--sage-soft);color:var(--sage);font-weight:600;';
+  const color = teacherColorForSubject(classId, val);
+  return color ? `background:${hexToRgba(color,0.16)};border-left:3px solid ${color};` : '';
+}
+/* Small color-key under a timetable so the borrowed colors are legible — lists every teacher who
+   teaches at least one subject across the class(es) shown. */
+function timetableColorLegendHTML(classIds){
+  const usernames = new Set();
+  (Array.isArray(classIds) ? classIds : [classIds]).forEach(cid=>{
+    const cls = classOf(cid);
+    if(cls) cls.subjects.forEach(sub=>{ if(sub.teacher) usernames.add(sub.teacher); });
+  });
+  const teachers = [...usernames].map(userByUsername).filter(Boolean).sort((a,b)=>a.name.localeCompare(b.name));
+  if(!teachers.length) return '';
+  return `<div style="display:flex;flex-wrap:wrap;gap:12px;margin-top:10px;padding-top:10px;border-top:1px solid var(--line);font-size:11.5px;color:var(--ink-soft);">
+    ${teachers.map(t=>`<span style="display:inline-flex;align-items:center;gap:6px;"><span style="width:11px;height:11px;border-radius:3px;background:${t.color||'#999'};display:inline-block;flex-shrink:0;"></span>${t.name}</span>`).join('')}
+  </div>`;
+}
 let ttSelectedClass = null;
 let ttSelectedLevel = 'JHS';
 let ttSelectedMode = 'term';
@@ -3978,7 +4056,7 @@ function renderTimetableAdmin(){
               ${slots.map(s=>{
                 if(s.isBreak) return `<td style="background:var(--paper);text-align:center;font-size:11px;color:var(--slate);">${s.label}</td>`;
                 const current = (classTT[d]||{})[s.id] || '';
-                return `<td><select onchange="setTimetableCell('${ttSelectedMode}','${cls.id}','${d}','${s.id}',this.value)">
+                return `<td style="${current?timetableCellStyle(cls.id,current):''}"><select style="background:transparent;" onchange="setTimetableCell('${ttSelectedMode}','${cls.id}','${d}','${s.id}',this.value)">
                   <option value="">—</option>
                   <option value="Free Period" ${current==='Free Period'?'selected':''}>Free Period</option>
                   ${cls.subjects.map(sub=>`<option value="${sub.name}" ${current===sub.name?'selected':''}>${sub.name}</option>`).join('')}
@@ -3987,6 +4065,7 @@ function renderTimetableAdmin(){
             </tr>`).join('')}
           </tbody>
         </table>
+        ${timetableColorLegendHTML(cls.id)}
         </div>`)}
       </div>
     </div>
@@ -4035,11 +4114,12 @@ function buildTimetableGridHTML(classId, mode){
           ${slots.map(s=>{
             if(s.isBreak) return `<td style="background:var(--paper);text-align:center;font-weight:600;">${s.label}</td>`;
             const val = (classTT[d]||{})[s.id] || '—';
-            return `<td style="text-align:center;${val==='Free Period'?'background:var(--sage-soft);color:var(--sage);font-weight:600;':''}">${val}</td>`;
+            return `<td style="text-align:center;${timetableCellStyle(classId,val)}">${val}</td>`;
           }).join('')}
         </tr>`).join('')}
       </tbody>
     </table>
+    ${timetableColorLegendHTML(classId)}
   `;
 }
 function buildTimetableHTML(classId, mode){
@@ -4086,11 +4166,12 @@ function buildCombinedTimetableGridHTML(category, mode){
             if(s.isBreak) return `<td style="background:var(--paper);text-align:center;font-weight:600;">${s.label}</td>`;
             const classTT = DB.timetable[mode][c.id] || {};
             const val = (classTT[d]||{})[s.id] || '—';
-            return `<td style="text-align:center;${val==='Free Period'?'background:var(--sage-soft);color:var(--sage);font-weight:600;':''}">${val}</td>`;
+            return `<td style="text-align:center;${timetableCellStyle(c.id,val)}">${val}</td>`;
           }).join('')}
         </tr>`).join('')).join('')}
       </tbody>
     </table>
+    ${timetableColorLegendHTML(classes.map(c=>c.id))}
   `;
 }
 function buildCombinedTimetableHTML(category, mode){
@@ -5343,6 +5424,7 @@ service cloud.firestore {
               <div style="font-size:12px;color:var(--slate);">@${u.username} · ${u.role}${u.contact ? ' · '+u.contact : ' · <span style=\'color:var(--brick);\'>no phone on file</span>'}${assignSummary ? ' · '+assignSummary : ''}${wardSummary ? ' · '+wardSummary : ''}</div>
             </div>
             ${u.signature ? `<img src="${u.signature}" style="height:28px;object-fit:contain;border:1px solid var(--line);border-radius:4px;padding:2px;background:#fff;" title="Uploaded signature">` : ''}
+            ${u.role==='Teacher' ? `<input type="color" value="${u.color||'#C0483C'}" title="${u.name}'s timetable color" style="width:34px;height:30px;padding:2px;border-radius:6px;border:1.5px solid var(--line);cursor:pointer;background:none;" onchange="setTeacherColor('${u.username}', this.value)">` : ''}
             <button class="btn-ghost" onclick="editAccount('${u.username}')">Edit</button>
             <button class="btn-ghost" onclick="resetPassword('${u.username}')">Reset password</button>
             ${u.signature ? `<button class="btn-ghost" style="color:var(--brick);border-color:var(--brick-soft);" onclick="removeStaffSignature('${u.username}')">Remove signature</button>` : ''}
