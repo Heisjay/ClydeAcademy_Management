@@ -444,6 +444,12 @@
   .att-toggle button.sel-present.on{background:var(--sage-soft); color:var(--sage);}
   .att-toggle button.sel-late.on{background:#F4EAD2; color:var(--brass);}
   .att-toggle button.sel-absent.on{background:var(--brick-soft); color:var(--brick);}
+  @keyframes attFlash{ 0%{box-shadow:inset 0 0 0 2px var(--att-flash,#6a9a7b); background:var(--att-flash-bg,#E4F0E8);} 100%{box-shadow:inset 0 0 0 2px transparent; background:transparent;} }
+  @keyframes attPop{ 0%{transform:scale(1);} 40%{transform:scale(1.18);} 100%{transform:scale(1);} }
+  .ledger-row.att-flash{ animation:attFlash 1.3s ease-out; border-radius:8px; }
+  .ledger-row.att-flash .att-toggle button.on{ animation:attPop 0.4s ease-out; }
+  .att-toast{ position:fixed; left:50%; bottom:28px; transform:translateX(-50%) translateY(20px); background:var(--ink,#1c2430); color:#fff; padding:10px 18px; border-radius:24px; font-size:13.5px; font-weight:600; box-shadow:0 6px 20px rgba(0,0,0,.25); opacity:0; transition:opacity .2s, transform .2s; z-index:9999; pointer-events:none; }
+  .att-toast.show{ opacity:1; transform:translateX(-50%) translateY(0); }
 
   .empty{padding:30px 10px; text-align:center; color:var(--slate); font-size:13.5px;}
 
@@ -3826,7 +3832,7 @@ function renderAttendance(){
     <div class="panel"><div class="panel-body" style="padding-top:14px;">
       ${roster.map((s,i)=>{
         const status = rec[s.id] || 'present';
-        return `<div class="ledger-row">
+        return `<div class="ledger-row" data-sid="${s.id}">
           <span class="idx mono">${String(i+1).padStart(2,'0')}</span>
           <span style="flex:1;font-weight:600;">${s.name}</span>
           <div class="att-toggle">
@@ -3846,6 +3852,28 @@ async function markAttendance(classId, date, studentId, status){
   recordAttendanceMeta(classId, date);
   await saveDB();
   render();
+  showAttendanceFeedback(studentId, status);
+}
+/* Visible confirmation after a register button is clicked: the student's row flashes and a small
+   toast confirms who was marked as what. */
+let attToastTimer = null;
+function showAttendanceFeedback(studentId, status){
+  const st = studentById(studentId);
+  const label = status==='present' ? 'Present' : (status==='late' ? 'Late' : 'Absent');
+  const icon = status==='present' ? '✓' : (status==='late' ? '⏰' : '✗');
+  const row = document.querySelector('.ledger-row[data-sid="'+studentId+'"]');
+  if(row){
+    if(status==='late'){ row.style.setProperty('--att-flash','#c9a24a'); row.style.setProperty('--att-flash-bg','#F4EAD2'); }
+    else if(status==='absent'){ row.style.setProperty('--att-flash','#b5473c'); row.style.setProperty('--att-flash-bg','#F6E1DE'); }
+    row.classList.add('att-flash');
+  }
+  let t = document.getElementById('att-toast');
+  if(!t){ t = document.createElement('div'); t.id = 'att-toast'; t.className = 'att-toast'; document.body.appendChild(t); }
+  t.textContent = icon+' '+(st?st.name:'Student')+' marked '+label;
+  void t.offsetWidth;
+  t.classList.add('show');
+  clearTimeout(attToastTimer);
+  attToastTimer = setTimeout(()=>t.classList.remove('show'), 1800);
 }
 /* Bulk-clean every flagged "Not taken" day, across every class, by marking the whole roster
    Present for each missed past school day. Only touches days that genuinely have no register
