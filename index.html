@@ -1716,7 +1716,7 @@ function activeSession(){
   if(DB.systemStatus==='vacation' && DB.vacation && DB.vacation.startDate){
     return { startDate: DB.vacation.startDate, weeks: Math.min(4, DB.vacation.weeks || 4) };
   }
-  return { startDate: DB.term?.startDate || todayStr(0), weeks: DB.term?.weeks || 12 };
+  return { startDate: DB.term?.startDate || todayStr(0), weeks: DB.term?.weeks || 13 };
 }
 /* Which System status ('term'/'vacation'/'inactive') was in effect on a given date, based on the
    history of status changes recorded in DB.statusLog. Used so that stretches where the admin had
@@ -1930,7 +1930,7 @@ function seedDB(){
     { username:'boateng', password:'teach123', role:'Teacher', name:'Mr. Boateng', signature:null, contact:'+233 24 333 4455' },
   ];
 
-  const term = { startDate: todayStr(0), weeks: 12, termNumber: 1, examDeclared: false };
+  const term = { startDate: todayStr(0), weeks: 13, termNumber: 1, examDeclared: false };
 
   const vacation = { startDate: todayStr(0), weeks: 4 };
 
@@ -1960,7 +1960,7 @@ function seedDB(){
 function migrateDB(){
   let changed = false;
   if(!DB.users){ DB.users = seedDB().users; changed = true; }
-  if(!DB.term){ DB.term = { startDate: todayStr(0), weeks: 12, termNumber: 1, examDeclared:false }; changed = true; }
+  if(!DB.term){ DB.term = { startDate: todayStr(0), weeks: 13, termNumber: 1, examDeclared:false }; changed = true; }
   if(DB.term.examDeclared === undefined){ DB.term.examDeclared = false; changed = true; }
   if(!DB.weeklyMeta){ DB.weeklyMeta = {}; changed = true; }
   if(!DB.attendanceMeta){ DB.attendanceMeta = {}; changed = true; }
@@ -2227,7 +2227,7 @@ function teachableSubjects(cls){
 function subjectBreakdown(classId, subj, studentId){
   const sub = DB.gradebook[classId]?.[subj];
   if(!sub) return null;
-  let sbaRaw = null, sbaMax = null;
+  let sbaRaw = null, sbaMax = null, weeksEnteredOut = null, weeksTotalOut = null;
   if(sub.weeklyEnabled){
     const weeks = activeSession().weeks;
     let earned = 0, weeksEntered = 0;
@@ -2236,7 +2236,10 @@ function subjectBreakdown(classId, subj, studentId){
       const v = weeklyRec['w'+w];
       if(v!==undefined && v!==null){ earned += Number(v)||0; weeksEntered++; }
     }
-    if(weeksEntered>0){ sbaRaw = earned; sbaMax = weeksEntered * (sub.weeklyMax||10); }
+    // Fixed base: every week of the session counts, so a full set of weekly marks = 60.
+    // A week with no mark entered simply counts as 0 until it is filled in.
+    if(weeksEntered>0){ sbaRaw = earned; sbaMax = weeks * (sub.weeklyMax||10); }
+    weeksEnteredOut = weeksEntered; weeksTotalOut = weeks;
   } else {
     const sc = sub.scores[studentId];
     if(sc && Object.keys(sc).length){
@@ -2248,13 +2251,16 @@ function subjectBreakdown(classId, subj, studentId){
       if(anyEntered){ sbaRaw = earned; sbaMax = total; }
     }
   }
-  const sba50 = (sbaRaw!==null && sbaMax) ? (sbaRaw/sbaMax)*50 : null;
+  // Class score: raw marks are scaled to a mark out of 60 (sba60), then converted to the class's
+  // 50% share of the final grade (sba50 = sba60 x 50/60), which is added to the exam's 50%.
+  const sba60 = (sbaRaw!==null && sbaMax) ? (sbaRaw/sbaMax)*60 : null;
+  const sba50 = sba60!==null ? sba60*50/60 : null;
   const examRaw = sub.examScores ? sub.examScores[studentId] : null;
   const examScore = (examRaw!==undefined && examRaw!==null) ? Number(examRaw) : null;
   const exam50 = examScore!==null ? (examScore/100)*50 : null;
   let grand = null;
   if(sba50!==null || exam50!==null) grand = Math.round((sba50||0) + (exam50||0));
-  return { sbaRaw, sbaMax, sba50: sba50!==null?Math.round(sba50*10)/10:null, examScore, exam50: exam50!==null?Math.round(exam50*10)/10:null, grand };
+  return { sbaRaw, sbaMax, sba60: sba60!==null?Math.round(sba60*10)/10:null, weeksEntered: weeksEnteredOut, weeksTotal: weeksTotalOut, sba50: sba50!==null?Math.round(sba50*10)/10:null, examScore, exam50: exam50!==null?Math.round(exam50*10)/10:null, grand };
 }
 function subjectAverage(classId, subj, studentId){
   const b = subjectBreakdown(classId, subj, studentId);
@@ -2833,17 +2839,24 @@ async function registerParent(){
   const errEl = document.getElementById('register-error');
   const showErr = msg=>{ errEl.textContent = msg; errEl.style.display='block'; };
   if(!name || !phone || !username || !password){ showErr('Please fill in your name, phone number, username, and password.'); return; }
+  { const np = normalizePhone(phone);
+    const okPhone = np.startsWith('+233') ? /^\+233\d{9}$/.test(np) : /^\+\d{10,15}$/.test(np);
+    if(!okPhone){ showErr('Please enter a valid phone number, e.g. 024 123 4567 or +233 24 123 4567.'); return; } }
   if(password.length<4){ showErr('Password should be at least 4 characters.'); return; }
   if(password!==password2){ showErr('Passwords do not match.'); return; }
   if(DB.users.find(u=>u.username.toLowerCase()===username)){ showErr('That username is already taken — choose another.'); return; }
   if(!selectedWards.length){ showErr('Please search for and select at least one child.'); return; }
   errEl.style.display='none';
+  // Check BEFORE adding this parent: which of these children already have a registered parent?
+  const alreadyHasParent = new Set();
+  DB.users.forEach(u=>{ if(u.role==='Parent') (u.wardIds||[]).forEach(w=>alreadyHasParent.add(w)); });
   DB.users.push({ name, username, password, role:'Parent', wardIds: selectedWards.slice(), signature:null, contact:phone, resetOTP:null, parentId: nextDisplayId('PAR') });
   // Automatically put this parent's phone number on file as the guardian contact for each ward, so
   // the school always has a working number for that child without needing separate data entry.
+  // If another parent has already registered for the child, the first parent's number is kept.
   selectedWards.forEach(wid=>{
     const st = studentById(wid);
-    if(st) st.guardian = phone;
+    if(st && !alreadyHasParent.has(wid)) st.guardian = phone;
   });
   await saveDB();
   alert('Account created! You can now sign in to view your child\'s progress report and fees.');
@@ -3558,7 +3571,7 @@ function renderStudentDetail(id){
           <td>${(canEdit && examOpen) ? `<input class="score-input" type="number" min="0" max="100" value="${b.examScore??''}" placeholder="—" onchange="updateExamScore('${s.classId}','${subj}','${id}',this.value)">` : (examOpen ? (b.examScore??'—') : 'Not open yet')}</td>
           <td class="mono">100</td></tr>
         </tbody></table>
-        <p style="margin:10px 0 0;font-size:12.5px;color:var(--slate);">Class Score (50%): <b class="mono">${b.sba50??'—'}</b> &nbsp;+&nbsp; Exam Score (50%): <b class="mono">${b.exam50??'—'}</b> &nbsp;=&nbsp; Total: <b class="mono">${b.grand??'—'}</b> &nbsp;·&nbsp; Position: <b class="mono">${spos?ordinal(spos.rank)+'/'+spos.of:'—'}</b> &nbsp;·&nbsp; Remark: <b>${remarkFor(gradePointFor(b.grand))}</b></p>
+        <p style="margin:10px 0 0;font-size:12.5px;color:var(--slate);">${b.sba60!==null ? `Class marks: <b class="mono">${b.sba60}/60</b>${b.weeksTotal ? ' ('+b.weeksEntered+'/'+b.weeksTotal+' weeks entered)' : ''} &nbsp;→&nbsp; ` : ''}Class Score (50%): <b class="mono">${b.sba50??'—'}</b> &nbsp;+&nbsp; Exam Score (50%): <b class="mono">${b.exam50??'—'}</b> &nbsp;=&nbsp; Total: <b class="mono">${b.grand??'—'}</b> &nbsp;·&nbsp; Position: <b class="mono">${spos?ordinal(spos.rank)+'/'+spos.of:'—'}</b> &nbsp;·&nbsp; Remark: <b>${remarkFor(gradePointFor(b.grand))}</b></p>
       </div></div>`;
     }).join('');
   } else if(view.tab==='attendance'){
@@ -3658,7 +3671,7 @@ function renderGradebook(){
     <div class="crud-box" style="display:flex;align-items:center;gap:10px;justify-content:space-between;flex-wrap:wrap;">
       <div>
         <h4 style="margin-bottom:2px;">Weekly assessment for ${view.subject}</h4>
-        <span style="font-size:12.5px;color:var(--slate);">When on, weekly marks replace the 4 SBA categories below for this subject. Both are scaled to 50% the same way.</span>
+        <span style="font-size:12.5px;color:var(--slate);">When on, weekly marks replace the 4 SBA categories below for this subject. Both are scaled to a mark out of 60, then converted to the 50% class score the same way.</span>
       </div>
       <label style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;">
         <input type="checkbox" ${sub.weeklyEnabled?'checked':''} onchange="toggleWeekly('${cls.id}','${view.subject}',this.checked)"> Conduct weekly assessment
@@ -3718,7 +3731,7 @@ function renderGradebook(){
     <div class="panel"><div class="panel-head"><h3>End-of-term exam &amp; grand total</h3></div>
     <div class="panel-body" style="padding-top:10px;">
       ${!DB.term?.examDeclared && !isAdminUser ? `<p style="margin:0 0 10px;font-size:12.5px;color:var(--slate);">Exam marks entry isn't open yet — the head teacher will declare exams week when it's time.</p>` : ''}
-      ${sub.weeklyEnabled ? `<p style="margin:0 0 10px;font-size:12.5px;color:var(--slate);">Every week's mark entered so far is added up, then scaled down to a mark out of 60 — that's the "Class Score" workings shown under each student's total below. 50% of that feeds into their final grade, alongside 50% from the exam.</p>` : ''}
+      ${sub.weeklyEnabled ? `<p style="margin:0 0 10px;font-size:12.5px;color:var(--slate);">All ${weeks} weeks' marks are added up and scaled to a mark out of 60 once every week has been entered. That /60 is converted to the Class Score (the 50% share of the final grade, shown /50) and added to the exam's 50%. A week with no mark yet counts as 0 until it is entered.</p>` : ''}
       <table class="reg">
         <thead><tr><th>Student</th><th>Class Score<br><span class="mono" style="font-weight:400;">/50</span></th><th>Exam<br><span class="mono" style="font-weight:400;">/100</span></th><th>Exam Score<br><span class="mono" style="font-weight:400;">/50</span></th><th>Total<br><span class="mono" style="font-weight:400;">/100</span></th><th>Grade</th><th>Position</th></tr></thead>
         <tbody>
@@ -3726,10 +3739,10 @@ function renderGradebook(){
             const b = subjectBreakdown(cls.id, view.subject, s.id);
             const spos = subjectPosition(cls.id, view.subject, s.id);
             const examOpen = DB.term?.examDeclared || isAdminUser;
-            const struckTo60 = (b.sbaRaw!==null && b.sbaMax) ? Math.round((b.sbaRaw/b.sbaMax)*60*10)/10 : null;
+            const struckTo60 = b.sba60;
             return `<tr>
               <td onclick="openStudent('${s.id}')" style="cursor:pointer;font-weight:600;">${s.name}</td>
-              <td class="mono">${b.sba50??'—'}${struckTo60!==null ? `<br><span style="font-size:9px;color:var(--slate);font-weight:400;">${b.sbaRaw}/${b.sbaMax} → ${struckTo60}/60 → ×50%</span>` : ''}</td>
+              <td class="mono">${b.sba50??'—'}${struckTo60!==null ? `<br><span style="font-size:9px;color:var(--slate);font-weight:400;">${b.sbaRaw}/${b.sbaMax} → ${struckTo60}/60 → ${b.sba50}/50${b.weeksTotal ? ' · '+b.weeksEntered+'/'+b.weeksTotal+' weeks entered' : ''}</span>` : ''}</td>
               <td>${(canEdit && examOpen) ? `<input class="score-input" type="number" min="0" max="100" value="${b.examScore??''}" placeholder="—" onchange="updateExamScore('${cls.id}','${view.subject}','${s.id}',this.value)">` : (examOpen ? (b.examScore??'—') : '—')}</td>
               <td class="mono">${b.exam50??'—'}</td>
               <td class="grade-letter grade-${gradeClass(b.grand)}">${b.grand??'—'}${b.grand!==null?'%':''}</td>
@@ -5201,7 +5214,7 @@ function renderParentPortal(){
 }
 
 function renderStaff(){
-  const term = DB.term || { startDate: todayStr(0), weeks:12, termNumber:1 };
+  const term = DB.term || { startDate: todayStr(0), weeks:13, termNumber:1 };
   const vacation = DB.vacation || { startDate: todayStr(0), weeks:4 };
   const vacationEndDate = addDays(vacation.startDate, vacation.weeks*7);
   const termEndDate = todayStr(term.weeks*7);
@@ -5445,7 +5458,7 @@ async function uploadMySignature(file){
 }
 async function saveTermSetup(){
   const startDate = document.getElementById('term-start').value;
-  const weeks = Math.max(1, Number(document.getElementById('term-weeks').value)||12);
+  const weeks = Math.max(1, Number(document.getElementById('term-weeks').value)||13);
   const termNumber = Number(document.getElementById('term-number').value);
   if(!startDate) return;
   DB.term = { startDate, weeks, termNumber, examDeclared: DB.term?.examDeclared || false };
@@ -5635,9 +5648,19 @@ async function editAccount(username){
   const newPhone = newPhoneRaw.trim();
 
   const oldUsername = u.username;
+  const oldPhone = u.contact || '';
   u.name = newName;
   u.username = newUsername;
   u.contact = newPhone;
+  // For a parent, keep each child's guardian contact in step — but only where that child's guardian
+  // number was this parent's old number (so a different parent's number is never overwritten).
+  if(u.role==='Parent' && newPhone && newPhone!==oldPhone){
+    const oldNorm = normalizePhone(oldPhone);
+    (u.wardIds||[]).forEach(wid=>{
+      const st = studentById(wid);
+      if(st && (!st.guardian || st.guardian==='—' || (oldNorm && normalizePhone(st.guardian)===oldNorm) || st.guardian===oldPhone)) st.guardian = newPhone;
+    });
+  }
 
   if(oldUsername!==newUsername){
     // keep class/subject teacher assignments pointing at the right person
