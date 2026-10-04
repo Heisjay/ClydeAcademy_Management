@@ -3709,7 +3709,9 @@ function renderGradebook(){
   // a week that hasn't arrived yet. Admin can browse the full term either way.
   if(!isAdminUser){ if(gbWeek < 1 || gbWeek > curWeek) gbWeek = curWeek; }
   else if(gbWeek < 1 || gbWeek > weeks){ gbWeek = curWeek; }
-  const weekIsLocked = !isAdminUser && !!(sub.weeklyLocks && sub.weeklyLocks[gbWeek]);
+  // Locked state applies the same way for everyone (including admin) so the banner and Unlock
+  // button actually show for admin too; admin just gets Lock/Unlock controls teachers don't.
+  const weekIsLocked = !!(sub.weeklyLocks && sub.weeklyLocks[gbWeek]);
 
   const catMax = sub.assessments.reduce((a,c)=>a+c.max,0);
 
@@ -3749,7 +3751,10 @@ function renderGradebook(){
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
         <label style="font-size:12.5px;color:var(--slate);">Week</label>
         ${isAdminUser ? `<select onchange="gbWeek=Number(this.value); render()">
-          ${Array.from({length:weeks},(_,i)=>i+1).map(w=>`<option value="${w}" ${w===gbWeek?'selected':''}>Week ${w}</option>`).join('')}
+          ${Array.from({length:weeks},(_,i)=>i+1).map(w=>{
+            const locked = !!(sub.weeklyLocks && sub.weeklyLocks[w]);
+            return `<option value="${w}" ${w===gbWeek?'selected':''}>Week ${w}${locked?' (locked)':''}</option>`;
+          }).join('')}
         </select>` : `<select onchange="gbWeek=Number(this.value); render()">
           ${Array.from({length:curWeek},(_,i)=>i+1).map(w=>{
             const locked = !!(sub.weeklyLocks && sub.weeklyLocks[w]);
@@ -3764,7 +3769,7 @@ function renderGradebook(){
     </div>
     ${weekIsLocked ? `<div class="crud-box" style="border-color:var(--sage);background:var(--sage-soft);">
       <span style="font-size:12.5px;color:var(--ink);">&#128274; Week ${gbWeek} is locked — it was submitted${(()=>{ const meta=DB.weeklyMeta[cls.id]?.[view.subject]?.[gbWeek]; return meta ? ` by <b>${meta.byName}</b> on ${fmtDate(new Date(meta.at).toISOString().slice(0,10))}` : ''; })()} and can no longer be edited. ${isAdminUser ? '' : 'Contact the administrator if a correction is needed.'}</span>
-      ${isAdminUser ? `<button class="btn-ghost" style="margin-left:10px;" onclick="unlockWeeklyWeek('${cls.id}','${view.subject}',${gbWeek})">Admin: Unlock</button>` : ''}
+      ${isAdminUser ? `<button class="btn-ghost" style="margin-left:10px;" onclick="unlockWeeklyWeek('${cls.id}','${view.subject}',${gbWeek})">Unlock week</button>` : ''}
     </div>` : ''}
     <div class="panel-body" style="padding-top:0;">
       <table class="reg"><thead><tr><th>Student</th><th>Week ${gbWeek} mark<br><span class="mono" style="font-weight:400;">/${sub.weeklyMax}</span></th></tr></thead>
@@ -3777,10 +3782,10 @@ function renderGradebook(){
         }).join('')}
       </tbody></table>
       ${(()=>{ const meta = DB.weeklyMeta[cls.id]?.[view.subject]?.[gbWeek]; return meta ? `<p style="margin:10px 0 0;font-size:12px;color:var(--slate);">Last recorded by <b>${meta.byName}</b> on ${fmtDate(new Date(meta.at).toISOString().slice(0,10))}.</p>` : ''; })()}
-      ${canEdit && !isAdminUser && gbWeek<curWeek && !weekIsLocked ? `
+      ${canEdit && gbWeek<curWeek && !weekIsLocked ? `
       <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line);">
-        <button class="btn-small brass" onclick="lockWeeklyWeek('${cls.id}','${view.subject}',${gbWeek})">Submit &amp; lock Week ${gbWeek}</button>
-        <span style="font-size:11.5px;color:var(--slate);margin-left:8px;">Once you lock this week, you won't be able to change these marks again — only the administrator can.</span>
+        <button class="btn-small brass" onclick="lockWeeklyWeek('${cls.id}','${view.subject}',${gbWeek})">${isAdminUser ? `Lock Week ${gbWeek}` : `Submit &amp; lock Week ${gbWeek}`}</button>
+        <span style="font-size:11.5px;color:var(--slate);margin-left:8px;">${isAdminUser ? 'Locking stops the teacher from editing this week — you can unlock it again any time.' : "Once you lock this week, you won't be able to change these marks again — only the administrator can."}</span>
       </div>` : ''}
     </div></div>
     ` : (()=>{
