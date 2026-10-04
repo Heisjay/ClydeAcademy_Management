@@ -1803,8 +1803,13 @@ function readImageResized(file, maxWidth){
         const w = Math.round(img.width * scale), h = Math.round(img.height * scale);
         const canvas = document.createElement('canvas');
         canvas.width = w; canvas.height = h;
-        canvas.getContext('2d').drawImage(img, 0, 0, w, h);
-        resolve(canvas.toDataURL('image/jpeg', 0.82));
+        const ctx = canvas.getContext('2d');
+        // JPEG has no transparency - without this, a transparent PNG signature would flatten
+        // onto a black background and become unreadable. Fill white first, as if signed on paper.
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, w, h);
+        ctx.drawImage(img, 0, 0, w, h);
+        resolve(canvas.toDataURL('image/jpeg', 0.92));
       };
       img.src = reader.result;
     };
@@ -2200,9 +2205,6 @@ function subjectOf(cls, name){ return cls.subjects.find(s=>s.name===name); }
 /* which classes can this session act on, and with which subjects */
 function accessibleClasses(){
   if(session.role==='Admin') return DB.classes;
-  // The assistant head teacher (fees/bill access) needs to see every class's students to record
-  // payments, even for classes they don't teach — so give them the same full visibility as Admin.
-  if(isBillAccess()) return DB.classes;
   return DB.classes.filter(c=> c.classTeacher===session.username || c.subjects.some(s=>s.teacher===session.username));
 }
 function classTeacherClasses(){
@@ -3228,7 +3230,9 @@ function renderDashboard(){
 ============================================================ */
 let studentFilter = { q:'', classId:'all' };
 function renderStudents(){
-  const scope = accessibleClasses();
+  // The assistant head teacher (fees/bill access) needs to search and record payments for any
+  // student, even in classes they don't teach — but only here, not in Timetable/Gradebook/Dashboard.
+  const scope = isBillAccess() ? DB.classes : accessibleClasses();
   const scopeIds = scope.map(c=>c.id);
   let list = session.role==='Admin' ? DB.students : DB.students.filter(s=>scopeIds.includes(s.classId));
   // "Graduated" is a status, not a class, so it isn't in the class dropdown as an option to move
@@ -5037,7 +5041,7 @@ function buildFeeReceiptHTML(studentId, paymentId){
       <p style="font-size:12px;color:var(--slate);margin-top:16px;">This receipt confirms that the above amount was received towards this student's school fees. Please retain it for your records.</p>
       <div class="rc-sign" style="justify-content:center;">
         <div style="width:42%;">
-          ${asstHeadUser && asstHeadUser.signature ? `<img src="${asstHeadUser.signature}" style="height:40px;object-fit:contain;display:block;margin:0 auto 4px;">` : '<div style="height:44px;"></div>'}
+          ${asstHeadUser && asstHeadUser.signature ? `<img src="${asstHeadUser.signature}" style="width:150px;height:40px;object-fit:contain;display:block;margin:0 auto 4px;">` : '<div style="height:44px;"></div>'}
           Assistant Head Teacher
         </div>
       </div>
@@ -5548,7 +5552,7 @@ service cloud.firestore {
               <div style="font-weight:600;">${u.name} ${displayId ? `<span class="mono" style='font-size:10.5px;color:var(--brass);'>${displayId}</span>` : ''} ${u.username===session.username ? '<span class="mono" style=\'font-size:10.5px;color:var(--slate);\'>(you)</span>':''}</div>
               <div style="font-size:12px;color:var(--slate);">@${u.username} · ${u.role}${u.contact ? ' · '+u.contact : ' · <span style=\'color:var(--brick);\'>no phone on file</span>'}${assignSummary ? ' · '+assignSummary : ''}${wardSummary ? ' · '+wardSummary : ''}</div>
             </div>
-            ${u.signature ? `<img src="${u.signature}" style="height:28px;object-fit:contain;border:1px solid var(--line);border-radius:4px;padding:2px;background:#fff;" title="Uploaded signature">` : ''}
+            ${u.signature ? `<img src="${u.signature}" style="width:70px;height:28px;object-fit:contain;border:1px solid var(--line);border-radius:4px;padding:2px;background:#fff;" title="Uploaded signature">` : ''}
             ${u.role==='Teacher' ? `<input type="color" value="${u.color||'#C0483C'}" title="${u.name}'s timetable color" style="width:34px;height:30px;padding:2px;border-radius:6px;border:1.5px solid var(--line);cursor:pointer;background:none;" onchange="setTeacherColor('${u.username}', this.value)">` : ''}
             <button class="btn-ghost" onclick="editAccount('${u.username}')">Edit</button>
             <button class="btn-ghost" onclick="resetPassword('${u.username}')">Reset password</button>
@@ -5897,11 +5901,11 @@ function buildReportCardHTML(studentId){
       </table>` : ''}
       <div class="rc-sign">
         <div>
-          ${classTeacherUser && classTeacherUser.signature ? `<img src="${classTeacherUser.signature}" style="height:40px;object-fit:contain;display:block;margin:0 auto 4px;">` : '<div style="height:44px;"></div>'}
+          ${classTeacherUser && classTeacherUser.signature ? `<img src="${classTeacherUser.signature}" style="width:150px;height:40px;object-fit:contain;display:block;margin:0 auto 4px;">` : '<div style="height:44px;"></div>'}
           Class Teacher
         </div>
         <div>
-          ${headUser && headUser.signature ? `<img src="${headUser.signature}" style="height:40px;object-fit:contain;display:block;margin:0 auto 4px;">` : '<div style="height:44px;"></div>'}
+          ${headUser && headUser.signature ? `<img src="${headUser.signature}" style="width:150px;height:40px;object-fit:contain;display:block;margin:0 auto 4px;">` : '<div style="height:44px;"></div>'}
           Head Teacher
         </div>
       </div>
