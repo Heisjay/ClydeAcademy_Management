@@ -1908,7 +1908,7 @@ function seedDB(){
         weeklyScores[s.id] = {};
         examScores[s.id] = Math.min(100, 48 + (seed*5) % 40);
       });
-      gradebook[c.id][subj] = { assessments, scores, weeklyEnabled:false, weeklyMax:10, weeklyScores, examScores };
+      gradebook[c.id][subj] = { assessments, scores, weeklyEnabled:false, weeklyMax:10, weeklyScores, examScores, weeklyLocks:{} };
     });
   });
 
@@ -2087,6 +2087,7 @@ function migrateDB(){
       if(sub.weeklyMax===undefined){ sub.weeklyMax = 10; changed = true; }
       if(!sub.weeklyScores){ sub.weeklyScores = {}; changed = true; }
       if(!sub.examScores){ sub.examScores = {}; changed = true; }
+      if(!sub.weeklyLocks){ sub.weeklyLocks = {}; changed = true; }
     });
   });
   DB.classes.forEach(c=>{
@@ -2119,7 +2120,7 @@ function migrateDB(){
       if(!DB.gradebook[c.id][subj.name]){
         // a subject that somehow has no matching gradebook record — recreate it rather than
         // leaving a landmine that crashes the dashboard/gradebook the moment it's touched.
-        DB.gradebook[c.id][subj.name] = { assessments: SBA_CATEGORIES.slice(), scores:{}, weeklyEnabled:false, weeklyMax:10, weeklyScores:{}, examScores:{} };
+        DB.gradebook[c.id][subj.name] = { assessments: SBA_CATEGORIES.slice(), scores:{}, weeklyEnabled:false, weeklyMax:10, weeklyScores:{}, examScores:{}, weeklyLocks:{} };
         studentsOf(c.id).forEach(s=>{ DB.gradebook[c.id][subj.name].scores[s.id] = {}; });
         changed = true;
       }
@@ -3700,8 +3701,11 @@ function renderGradebook(){
   const weeks = activeSession().weeks;
   const curWeek = currentTermWeek();
   const isAdminUser = session.role==='Admin';
-  if(!isAdminUser){ gbWeek = curWeek; }
+  // Teachers may revisit any week up to the current one (to catch up on a missed week), but never
+  // a week that hasn't arrived yet. Admin can browse the full term either way.
+  if(!isAdminUser){ if(gbWeek < 1 || gbWeek > curWeek) gbWeek = curWeek; }
   else if(gbWeek < 1 || gbWeek > weeks){ gbWeek = curWeek; }
+  const weekIsLocked = !isAdminUser && !!(sub.weeklyLocks && sub.weeklyLocks[gbWeek]);
 
   const catMax = sub.assessments.reduce((a,c)=>a+c.max,0);
 
@@ -3738,25 +3742,42 @@ function renderGradebook(){
 
     ${sub.weeklyEnabled ? `
     <div class="panel"><div class="panel-head"><h3>Weekly marks</h3>
-      <div style="display:flex;align-items:center;gap:8px;">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
         <label style="font-size:12.5px;color:var(--slate);">Week</label>
         ${isAdminUser ? `<select onchange="gbWeek=Number(this.value); render()">
           ${Array.from({length:weeks},(_,i)=>i+1).map(w=>`<option value="${w}" ${w===gbWeek?'selected':''}>Week ${w}</option>`).join('')}
-        </select>` : `<span class="mono" style="font-weight:600;">Week ${gbWeek} (current — ${fmtDate(weekMonday(gbWeek))} to ${fmtDate(weekFriday(gbWeek))})</span>`}
-        ${canEdit ? `<label style="font-size:12.5px;color:var(--slate);">Max for this week</label>
+        </select>` : `<select onchange="gbWeek=Number(this.value); render()">
+          ${Array.from({length:curWeek},(_,i)=>i+1).map(w=>{
+            const locked = !!(sub.weeklyLocks && sub.weeklyLocks[w]);
+            const tag = w===curWeek ? ' (current)' : (locked ? ' (locked)' : ' (open — not yet submitted)');
+            return `<option value="${w}" ${w===gbWeek?'selected':''}>Week ${w}${tag}</option>`;
+          }).join('')}
+        </select>`}
+        ${gbWeek===curWeek ? `<span class="mono" style="font-size:11.5px;color:var(--slate);">${fmtDate(weekMonday(gbWeek))} to ${fmtDate(weekFriday(gbWeek))}</span>` : ''}
+        ${canEdit && isAdminUser ? `<label style="font-size:12.5px;color:var(--slate);">Max for this week</label>
         <input type="number" class="score-input" style="width:56px;" min="1" value="${sub.weeklyMax}" onchange="setWeeklyMax('${cls.id}','${view.subject}',this.value)">` : ''}
       </div>
     </div>
+    ${weekIsLocked ? `<div class="crud-box" style="border-color:var(--sage);background:var(--sage-soft);">
+      <span style="font-size:12.5px;color:var(--ink);">&#128274; Week ${gbWeek} is locked — it was submitted${(()=>{ const meta=DB.weeklyMeta[cls.id]?.[view.subject]?.[gbWeek]; return meta ? ` by <b>${meta.byName}</b> on ${fmtDate(new Date(meta.at).toISOString().slice(0,10))}` : ''; })()} and can no longer be edited. ${isAdminUser ? '' : 'Contact the administrator if a correction is needed.'}</span>
+      ${isAdminUser ? `<button class="btn-ghost" style="margin-left:10px;" onclick="unlockWeeklyWeek('${cls.id}','${view.subject}',${gbWeek})">Admin: Unlock</button>` : ''}
+    </div>` : ''}
     <div class="panel-body" style="padding-top:0;">
       <table class="reg"><thead><tr><th>Student</th><th>Week ${gbWeek} mark<br><span class="mono" style="font-weight:400;">/${sub.weeklyMax}</span></th></tr></thead>
       <tbody>
         ${roster.map(s=>{
           const v = (sub.weeklyScores[s.id]||{})['w'+gbWeek];
+          const cellEditable = canEdit && !weekIsLocked;
           return `<tr><td style="font-weight:600;">${s.name}</td>
-            <td>${canEdit ? `<input class="score-input" type="number" min="0" max="${sub.weeklyMax}" value="${v??''}" placeholder="—" onchange="updateWeeklyScore('${cls.id}','${view.subject}','${s.id}',${gbWeek},this.value)">` : (v??'—')}</td></tr>`;
+            <td>${cellEditable ? `<input class="score-input" type="number" min="0" max="${sub.weeklyMax}" value="${v??''}" placeholder="—" onchange="updateWeeklyScore('${cls.id}','${view.subject}','${s.id}',${gbWeek},this.value)">` : (v??'—')}</td></tr>`;
         }).join('')}
       </tbody></table>
       ${(()=>{ const meta = DB.weeklyMeta[cls.id]?.[view.subject]?.[gbWeek]; return meta ? `<p style="margin:10px 0 0;font-size:12px;color:var(--slate);">Last recorded by <b>${meta.byName}</b> on ${fmtDate(new Date(meta.at).toISOString().slice(0,10))}.</p>` : ''; })()}
+      ${canEdit && !isAdminUser && gbWeek<curWeek && !weekIsLocked ? `
+      <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line);">
+        <button class="btn-small brass" onclick="lockWeeklyWeek('${cls.id}','${view.subject}',${gbWeek})">Submit &amp; lock Week ${gbWeek}</button>
+        <span style="font-size:11.5px;color:var(--slate);margin-left:8px;">Once you lock this week, you won't be able to change these marks again — only the administrator can.</span>
+      </div>` : ''}
     </div></div>
     ` : (()=>{
       const activeIdx = activeCatIndex();
@@ -3831,6 +3852,23 @@ async function updateWeeklyScore(classId, subj, studentId, week, val){
   }
   sub.weeklyScores[studentId]['w'+week] = n;
   recordWeeklyMeta(classId, subj, week);
+  await saveDB();
+  render();
+}
+async function lockWeeklyWeek(classId, subj, week){
+  const sub = DB.gradebook[classId][subj];
+  if(!sub) return;
+  if(!confirm(`Lock Week ${week}? Once locked, you won't be able to change these marks yourself again — only the administrator can.`)) return;
+  if(!sub.weeklyLocks) sub.weeklyLocks = {};
+  sub.weeklyLocks[week] = { by: session.username, byName: session.name, at: Date.now() };
+  await saveDB();
+  render();
+}
+async function unlockWeeklyWeek(classId, subj, week){
+  if(session.role!=='Admin') return;
+  const sub = DB.gradebook[classId][subj];
+  if(!sub || !sub.weeklyLocks) return;
+  delete sub.weeklyLocks[week];
   await saveDB();
   render();
 }
@@ -4514,7 +4552,7 @@ async function addSubject(classId){
   if(c.subjects.some(s=>s.name.toLowerCase()===name.toLowerCase())){ alert('That subject already exists in this class.'); return; }
   c.subjects.push({ name, teacher:null, type });
   DB.gradebook[classId][name] = {
-    assessments: SBA_CATEGORIES.slice(), scores:{}, weeklyEnabled:false, weeklyMax:10, weeklyScores:{}, examScores:{}
+    assessments: SBA_CATEGORIES.slice(), scores:{}, weeklyEnabled:false, weeklyMax:10, weeklyScores:{}, examScores:{}, weeklyLocks:{}
   };
   studentsOf(classId).forEach(s=>{ DB.gradebook[classId][name].scores[s.id] = {}; });
   await saveDB();
@@ -4549,7 +4587,7 @@ async function processSubjectRows(rows){
     }
     cls.subjects.push({ name: subjectName, teacher, type });
     DB.gradebook[cls.id][subjectName] = {
-      assessments: SBA_CATEGORIES.slice(), scores:{}, weeklyEnabled:false, weeklyMax:10, weeklyScores:{}, examScores:{}
+      assessments: SBA_CATEGORIES.slice(), scores:{}, weeklyEnabled:false, weeklyMax:10, weeklyScores:{}, examScores:{}, weeklyLocks:{}
     };
     studentsOf(cls.id).forEach(s=>{ DB.gradebook[cls.id][subjectName].scores[s.id] = {}; });
     added++;
