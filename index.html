@@ -2169,10 +2169,18 @@ function nextClassOf(classId){
    view (gradebook, attendance, promote, bills, class position/rankings) reads through this and
    naturally stops including them. Use allStudentsOf() where a graduated student's history still
    needs to be found by their last class. */
-function studentsOf(classId){ return DB.students.filter(s=>s.classId===classId && !s.graduated); }
-function allStudentsOf(classId){ return DB.students.filter(s=>s.classId===classId); }
+function studentsOf(classId){ return DB.students.filter(s=>s.classId===classId && !s.graduated).sort((a,b)=>a.name.localeCompare(b.name)); }
+function allStudentsOf(classId){ return DB.students.filter(s=>s.classId===classId).sort((a,b)=>a.name.localeCompare(b.name)); }
 function classOf(id){ return DB.classes.find(c=>c.id===id); }
 function studentById(id){ return DB.students.find(s=>s.id===id); }
+// A profile is "incomplete" if it's missing the photo or a real guardian contact (the two fields
+// everything else — ID cards, receipts, fee SMS — depends on). Returns which ones are missing.
+function missingProfileFields(s){
+  const missing = [];
+  if(!s.photo) missing.push('photo');
+  if(!s.guardian || s.guardian==='—' || !s.guardian.trim()) missing.push('guardian contact');
+  return missing;
+}
 function userByUsername(u){ return DB.users.find(x=>x.username===u); }
 function teacherName(username){ const u = userByUsername(username); return u ? u.name : null; }
 /* Timetable colors — one per teacher, so their periods stand out on the grid at a glance.
@@ -2364,15 +2372,21 @@ function sixSubjectSummary(classId, studentId){
   const cls = classOf(classId);
   if(!cls) return { subjects:[], raw:null, average:null, aggregate:null, count:0 };
   const withScores = list => list.map(s=>({ name:s.name, grand: subjectAverage(classId, s.name, studentId) }));
+  // Only a subject that actually has a mark (class score and/or exam entered) can count toward the
+  // "best 6" total — a subject with nothing entered yet is left out entirely, not treated as a 0.
+  // Counting it would both understate the raw total and overstate "Total Marks" (count x 100) as if
+  // every chosen subject had already been fully graded.
   const core = withScores(cls.subjects.filter(s=>s.type!=='elective' && s.type!=='nonacademic'))
-    .sort((a,b)=>(b.grand??-1)-(a.grand??-1))
+    .filter(s=>s.grand!==null)
+    .sort((a,b)=>b.grand-a.grand)
     .slice(0,4);
   const electives = withScores(cls.subjects.filter(s=>s.type==='elective'))
-    .sort((a,b)=>(b.grand??-1)-(a.grand??-1))
+    .filter(s=>s.grand!==null)
+    .sort((a,b)=>b.grand-a.grand)
     .slice(0,2);
   const chosen = [...core, ...electives];
   if(!chosen.length) return { subjects:[], raw:null, average:null, aggregate:null, count:0 };
-  const raw = chosen.reduce((sum,s)=>sum+(s.grand??0), 0);
+  const raw = chosen.reduce((sum,s)=>sum+s.grand, 0);
   const average = Math.round(raw/chosen.length);
   const aggregate = chosen.reduce((sum,s)=>sum+(gradePointFor(s.grand)??9), 0);
   return { subjects:chosen, raw, average, aggregate, count:chosen.length };
@@ -3228,13 +3242,14 @@ function renderDashboard(){
 /* ============================================================
    Students list
 ============================================================ */
-let studentFilter = { q:'', classId:'all' };
+let studentFilter = { q:'', classId:'all', incompleteOnly:false };
 function renderStudents(){
   // The assistant head teacher (fees/bill access) needs to search and record payments for any
   // student, even in classes they don't teach — but only here, not in Timetable/Gradebook/Dashboard.
   const scope = isBillAccess() ? DB.classes : accessibleClasses();
   const scopeIds = scope.map(c=>c.id);
   let list = session.role==='Admin' ? DB.students : DB.students.filter(s=>scopeIds.includes(s.classId));
+  list = list.slice().sort((a,b)=>a.name.localeCompare(b.name));
   // "Graduated" is a status, not a class, so it isn't in the class dropdown as an option to move
   // students into — it's its own filter value here, and the default "All classes" view is the
   // active roster only (graduated alumni are tucked away until you specifically ask to see them).
@@ -3278,14 +3293,21 @@ function renderStudents(){
         ${session.role==='Admin' ? `<option value="graduated" ${studentFilter.classId==='graduated'?'selected':''}>Graduated</option>` : ''}
       </select>` : ''}
       ${list.length ? `<button class="btn-ghost" onclick='printClassReportCards(${JSON.stringify(list.map(s=>s.id))})'>Print report cards</button>` : ''}
+      <label style="display:flex;align-items:center;gap:5px;font-size:12.5px;color:var(--slate);margin-left:4px;">
+        <input type="checkbox" ${studentFilter.incompleteOnly?'checked':''} onchange="studentFilter.incompleteOnly=this.checked; render()">
+        Incomplete profiles only
+      </label>
     </div>
+    ${(()=>{ const n = list.filter(s=>missingProfileFields(s).length).length; return n ? `<p style="margin:0 0 10px;font-size:12.5px;color:var(--brick);">&#9888; ${n} student${n===1?'':'s'} shown ${studentFilter.classId==='all'?'':'in this class '}${n===1?'has':'have'} an incomplete profile (missing photo and/or guardian contact).</p>` : ''; })()}
     <div class="student-grid">
-      ${list.length ? list.map(s=>{
+      ${(studentFilter.incompleteOnly ? list.filter(s=>missingProfileFields(s).length) : list).length ? (studentFilter.incompleteOnly ? list.filter(s=>missingProfileFields(s).length) : list).map(s=>{
         const avg = overallAverage(s.id);
         const att = attendanceRate(s.id, s.classId);
+        const missing = missingProfileFields(s);
         return `
         <div class="student-card">
-          <div onclick="openStudent('${s.id}')" style="cursor:pointer;">
+          <div onclick="openStudent('${s.id}')" style="cursor:pointer;position:relative;">
+          ${missing.length ? `<span title="Missing: ${missing.join(', ')}" style="position:absolute;top:0;right:0;background:var(--brick);color:#fff;font-size:10.5px;font-weight:700;padding:2px 7px;border-radius:10px;">&#9888; Incomplete</span>` : ''}
           <div class="top">
             ${s.photo ? `<img src="${s.photo}" style="width:38px;height:38px;border-radius:50%;object-fit:cover;flex-shrink:0;">` : `<div class="avatar" style="width:38px;height:38px;">${s.name.split(' ').map(w=>w[0]).slice(0,2).join('')}</div>`}
             <div><div class="name">${s.name}</div><div class="cls">${s.graduated ? 'Graduated · ' : ''}${classOf(s.classId).name}${s.studentId ? ' · '+s.studentId : ''}</div></div>
@@ -3505,6 +3527,9 @@ function renderStudentDetail(id){
         <div class="stat-card"><div class="label">Attendance rate</div><div class="value">${att??'—'}${att!==null?'%':''}</div><div class="sub">This term</div></div>
         <div class="stat-card"><div class="label">Class</div><div class="value" style="font-size:20px;">${cls.name}</div><div class="sub">${s.graduated ? 'Graduated — no longer active here' : (classTeacherName || 'No class teacher assigned')}</div></div>
       </div>
+      ${(()=>{ const missing = missingProfileFields(s); return missing.length ? `<div class="crud-box" style="border-color:var(--brick);background:#FBEAE8;">
+        <span style="font-size:12.5px;color:var(--brick);">&#9888; This profile is incomplete — missing ${missing.join(' and ')}. ${canEditProfile ? 'Use "Edit profile" below to fill it in.' : ''}</span>
+      </div>` : ''; })()}
       <div class="panel"><div class="panel-head"><h3>Profile${s.graduated ? ' <span class="badge-unassigned" style="background:var(--sage-soft);color:var(--sage);">Graduated</span>' : ''}</h3>${canEditProfile ? `
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
           ${!s.graduated && DB.classes.length>1 ? `
@@ -5889,6 +5914,7 @@ function buildReportCardHTML(studentId){
           </tr>
         </tbody>
       </table>
+      ${sixSum.count && sixSum.count<6 ? `<p style="margin:-10px 0 12px;font-size:11px;color:var(--brick);">Based on ${sixSum.count} of 6 subjects graded so far — the rest have no marks entered yet, so the total and average above will change once they do.</p>` : ''}
       <div class="panel" style="box-shadow:none;margin-bottom:16px;"><div class="panel-body" style="padding-top:14px;">
         <div style="font-size:11px;text-transform:uppercase;letter-spacing:0.05em;color:var(--slate);font-weight:600;margin-bottom:4px;">Teacher's remarks</div>
         <div style="font-size:13px;">${s.remark || '—'}</div>
