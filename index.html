@@ -1224,7 +1224,11 @@ function cloudCol(){ return firestoreDB.collection(FIRESTORE_COLLECTION); }
 const _isObj = v => v && typeof v==='object' && !Array.isArray(v);
 const _same = (a,b) => JSON.stringify(a)===JSON.stringify(b);
 const _idLike = arr => arr.every(x=>_isObj(x) && x.id!==undefined && x.id!==null);
-function merge3(base, local, remote){
+// path/conflicts let a caller find every spot where THIS device and the cloud changed the very
+// same value to two different things — the one case this merge can't safely combine on its own.
+// Everything else (additions, one-sided edits, different fields) merges automatically either way.
+function merge3(base, local, remote, path, conflicts){
+  path = path || ''; conflicts = conflicts || [];
   if(_same(local, remote)) return local;
   if(_same(base, local)) return remote;     // only the cloud changed
   if(_same(base, remote)) return local;     // only this device changed
@@ -1234,7 +1238,7 @@ function merge3(base, local, remote){
     const keys = new Set([...Object.keys(local), ...Object.keys(remote), ...Object.keys(b)]);
     keys.forEach(k=>{
       const inL = k in local, inR = k in remote, inB = k in b;
-      if(inL && inR) out[k] = merge3(b[k], local[k], remote[k]);
+      if(inL && inR) out[k] = merge3(b[k], local[k], remote[k], path?path+'.'+k:k, conflicts);
       else if(inL){ if(!inB || !_same(b[k], local[k])) out[k] = local[k]; }     // removed in cloud: keep only if edited here
       else if(inR){ if(!inB || !_same(b[k], remote[k])) out[k] = remote[k]; }   // removed here: keep only if edited in cloud
     });
@@ -1246,7 +1250,7 @@ function merge3(base, local, remote){
     const out = [], used = new Set();
     local.forEach(l=>{
       used.add(l.id);
-      if(rm.has(l.id)) out.push(merge3(bm.get(l.id), l, rm.get(l.id)));
+      if(rm.has(l.id)) out.push(merge3(bm.get(l.id), l, rm.get(l.id), path+'['+l.id+']', conflicts));
       else if(!bm.has(l.id) || !_same(bm.get(l.id), l)) out.push(l);
     });
     remote.forEach(r=>{
@@ -1255,7 +1259,58 @@ function merge3(base, local, remote){
     });
     return out;
   }
-  return local; // both edited the same plain value — this device's edit wins
+  // True same-field conflict: both sides changed this exact value, to two different things.
+  // Default to keeping this device's edit (unchanged behaviour) — the caller may ask the user
+  // and override it below via setAtConflictPath.
+  conflicts.push({ path, local, remote });
+  return local;
+}
+// Writes `value` into `obj` at a path produced by merge3 above (e.g. "students[s12].guardian" or
+// "gradebook.c1.Math.scores.s9.CAT1"), so a user's conflict choice can be applied after the fact.
+function setAtConflictPath(obj, path, value){
+  const segs = [];
+  path.replace(/([^.\[\]]+)|\[([^\]]+)\]/g, (m, plain, idseg)=>{
+    segs.push(plain!==undefined ? {type:'key', v:plain} : {type:'id', v:idseg});
+    return '';
+  });
+  let cur = obj;
+  for(let i=0;i<segs.length-1;i++){
+    const seg = segs[i];
+    cur = seg.type==='key' ? cur[seg.v] : (Array.isArray(cur) ? cur.find(x=>String(x.id)===seg.v) : undefined);
+    if(cur===undefined) return false;
+  }
+  const last = segs[segs.length-1];
+  if(last.type!=='key') return false;
+  cur[last.v] = value;
+  return true;
+}
+// A short, readable label for a conflict path, e.g. "students[s12].guardian" -> "Students / guardian".
+const CONFLICT_SECTION_LABELS = { students:'Students', users:'Staff/Parent accounts', classes:'Classes',
+  gradebook:'Gradebook', attendance:'Attendance', billItems:'Fees/Bill items', term:'Term setup',
+  school:'School settings', announcements:'Announcements', timetable:'Timetable', vacation:'Vacation' };
+function friendlyConflictPath(path){
+  const head = path.split(/[.\[]/)[0];
+  const label = CONFLICT_SECTION_LABELS[head] || head;
+  const rest = path.slice(head.length).replace(/^\./,'').replace(/\[[^\]]+\]\.?/g,'').trim();
+  return rest ? `${label} / ${rest}` : label;
+}
+function fmtConflictValue(v){
+  if(v===null || v===undefined || v==='') return '(empty)';
+  const str = typeof v==='object' ? JSON.stringify(v) : String(v);
+  return str.length>60 ? str.slice(0,57)+'…' : str;
+}
+// Asks the user, in ONE dialog, whether to keep this device's edits or take the other device's,
+// for every field both sides genuinely changed differently. Mutates and returns `merged`.
+function resolveSyncConflicts(merged, conflicts){
+  if(!conflicts.length) return merged;
+  const lines = conflicts.slice(0,8).map(c=>
+    `• ${friendlyConflictPath(c.path)}\n   This device: ${fmtConflictValue(c.local)}\n   Other device: ${fmtConflictValue(c.remote)}`
+  );
+  const more = conflicts.length>8 ? `\n…and ${conflicts.length-8} more.` : '';
+  const msg = `This device and another device both changed the same ${conflicts.length===1?'item':'items'} since they last synced:\n\n${lines.join('\n\n')}${more}\n\nKeep THIS DEVICE's version for ${conflicts.length===1?'it':'all of these'}?\n\nOK = keep this device's version.\nCancel = use the other device's version instead.`;
+  const keepLocal = confirm(msg);
+  if(!keepLocal){ conflicts.forEach(c=> setAtConflictPath(merged, c.path, c.remote)); }
+  return merged;
 }
 
 /* ---------- Cloud read / write (chunked, atomic) ---------- */
@@ -1445,14 +1500,18 @@ async function syncOnce(){
     }
     // Both sides changed: merge instead of overwriting either
     await writeBackup(remote.str, 'before-merge').catch(()=>{});
-    let merged;
+    let merged, conflicts = [];
     if(baseStr===null){
       // Never synced from this copy (e.g. an old device). Newer side wins ties; nothing gets deleted.
       const localAt = (window.__localUpdatedAt||0);
-      merged = (remote.updatedAt > localAt) ? merge3(null, remoteDB, DB) : merge3(null, DB, remoteDB);
+      merged = (remote.updatedAt > localAt) ? merge3(null, remoteDB, DB, '', conflicts) : merge3(null, DB, remoteDB, '', conflicts);
     } else {
-      merged = merge3(JSON.parse(baseStr), DB, remoteDB);
+      merged = merge3(JSON.parse(baseStr), DB, remoteDB, '', conflicts);
     }
+    // Almost everything merges automatically (additions on either side are always kept). The only
+    // thing that can't merge on its own is the same field being changed to two different things on
+    // two devices at once — for that, ask whoever is at this device which version to keep.
+    if(conflicts.length) merged = resolveSyncConflicts(merged, conflicts);
     DB = merged; baseStr = remote.str; cloudRev = remote.rev; dirty = true; editSeq++;
     migrateDB();
     await persistLocal();
