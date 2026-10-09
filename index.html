@@ -4073,6 +4073,7 @@ function renderAttendance(){
         ${classes.map(c=>`<option value="${c.id}" ${c.id===view.classId?'selected':''}>${c.name}</option>`).join('')}
       </select>` : ''}
       <input type="date" value="${view.date}" onchange="view.date=this.value; render()">
+      ${roster.length ? `<button class="btn-small brass" onclick="markAllPresent('${cls.id}','${view.date}')">&#10003; All present</button>` : ''}
     </div>
     <div class="panel"><div class="panel-body" style="padding-top:14px;">
       ${roster.map((s,i)=>{
@@ -4098,6 +4099,28 @@ async function markAttendance(classId, date, studentId, status){
   await saveDB();
   render();
   showAttendanceFeedback(studentId, status);
+}
+/* One click marks the whole class present for the chosen date (a single save). */
+async function markAllPresent(classId, date){
+  const roster = studentsOf(classId);
+  if(!roster.length) return;
+  const rec = (DB.attendance[classId] && DB.attendance[classId][date]) || {};
+  const others = roster.filter(s=>rec[s.id]==='late' || rec[s.id]==='absent').length;
+  if(others && !confirm(`${others} student${others===1?' is':'s are'} currently marked late or absent for this day. Mark all ${roster.length} present anyway?`)) return;
+  if(!DB.attendance[classId]) DB.attendance[classId] = {};
+  if(!DB.attendance[classId][date]) DB.attendance[classId][date] = {};
+  roster.forEach(s=>{ DB.attendance[classId][date][s.id] = 'present'; });
+  recordAttendanceMeta(classId, date);
+  await saveDB();
+  render();
+  let t = document.getElementById('att-toast');
+  if(!t){ t = document.createElement('div'); t.id = 'att-toast'; t.className = 'att-toast'; document.body.appendChild(t); }
+  t.textContent = '✓ All '+roster.length+' students marked Present';
+  void t.offsetWidth;
+  t.classList.add('show');
+  clearTimeout(attToastTimer);
+  attToastTimer = setTimeout(()=>t.classList.remove('show'), 1800);
+  document.querySelectorAll('.ledger-row[data-sid]').forEach(r=>r.classList.add('att-flash'));
 }
 /* Visible confirmation after a register button is clicked: the student's row flashes and a small
    toast confirms who was marked as what. */
@@ -5459,6 +5482,36 @@ function renderParentPortal(){
         <p style="margin:14px 0 0;font-size:12px;color:var(--slate);">Full subject-by-subject grades appear on the printed report card issued by the school.</p>
       </div>
     </div>
+
+    ${(()=>{
+      // Read-only weekly assessment marks, one row per subject, one column per week so far.
+      const gb = DB.gradebook[cls.id] || {};
+      const rows = cls.subjects.map(sj=>({ sj, sub: gb[sj.name] })).filter(r=>r.sub && r.sub.weeklyEnabled);
+      if(!rows.length) return '';
+      const cols = Array.from({length:curWeek},(_,i)=>i+1);
+      return `
+    <div class="panel"><div class="panel-head"><h3>Weekly assessment</h3></div>
+      <div class="panel-body" style="padding-top:12px;">
+        <div style="overflow-x:auto;">
+          <table class="reg" style="min-width:${120+curWeek*54}px;">
+            <thead><tr><th>Subject</th>${cols.map(w=>`<th style="text-align:center;">Wk ${w}</th>`).join('')}<th style="text-align:center;">Total</th></tr></thead>
+            <tbody>
+              ${rows.map(({sj,sub})=>{
+                const max = sub.weeklyMax||10;
+                const marks = cols.map(w=>((sub.weeklyScores[s.id]||{})['w'+w]));
+                const earned = marks.reduce((t,v)=>t+(v!==undefined?Number(v)||0:0),0);
+                const entered = marks.filter(v=>v!==undefined).length;
+                return `<tr><td style="font-weight:600;">${sj.name}<div style="font-weight:400;font-size:11px;color:var(--slate);">each week out of ${max}</div></td>
+                  ${marks.map(v=>`<td class="mono" style="text-align:center;">${v!==undefined?v:'—'}</td>`).join('')}
+                  <td class="mono" style="text-align:center;font-weight:700;">${entered?earned+'/'+(curWeek*max):'—'}</td></tr>`;
+              }).join('')}
+            </tbody>
+          </table>
+        </div>
+        <p style="margin:10px 0 0;font-size:12px;color:var(--slate);">A dash means the teacher hasn't entered that week's mark yet. Marks may still be added for earlier weeks.</p>
+      </div>
+    </div>`;
+    })()}
 
     <div class="panel"><div class="panel-head"><h3>Fees status</h3></div>
       <div class="panel-body" style="padding-top:14px;padding-bottom:18px;">
