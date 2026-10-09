@@ -2151,7 +2151,6 @@ function migrateDB(){
       if(sub.weeklyMax===undefined){ sub.weeklyMax = 10; changed = true; }
       if(!sub.weeklyScores){ sub.weeklyScores = {}; changed = true; }
       if(!sub.examScores){ sub.examScores = {}; changed = true; }
-      if(!sub.weeklyLocks){ sub.weeklyLocks = {}; changed = true; }
     });
   });
   DB.classes.forEach(c=>{
@@ -3856,6 +3855,12 @@ function renderGradebook(){
       ${isAdminUser ? `<button class="btn-ghost" style="margin-left:10px;" onclick="unlockWeeklyWeek('${cls.id}','${view.subject}',${gbWeek})">Unlock week</button>` : ''}
     </div>` : ''}
     <div class="panel-body" style="padding-top:0;">
+      ${canEdit && !weekIsLocked && roster.length ? `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:10px 0 12px;padding:10px 12px;background:var(--sage-soft);border-radius:8px;">
+        <span style="font-size:12.5px;font-weight:600;color:var(--ink);">Same mark for everyone:</span>
+        <input type="number" id="bulk-weekly" class="score-input" style="width:64px;" min="0" max="${sub.weeklyMax}" placeholder="/${sub.weeklyMax}">
+        <button class="btn-small brass" onclick="applySameWeekly('${cls.id}','${view.subject}',${gbWeek})">Apply to all ${roster.length}</button>
+        <span style="font-size:11.5px;color:var(--slate);">Fills Week ${gbWeek} for the whole class — you can still change any student after.</span>
+      </div>` : ''}
       <table class="reg"><thead><tr><th>Student</th><th>Week ${gbWeek} mark<br><span class="mono" style="font-weight:400;">/${sub.weeklyMax}</span></th></tr></thead>
       <tbody>
         ${roster.map(s=>{
@@ -3879,6 +3884,12 @@ function renderGradebook(){
     <div class="panel"><div class="panel-head"><h3>SBA — ${isAdminUser ? `4 categories (out of ${catMax}, scaled to 50%)` : sub.assessments[activeIdx].name+' (this week)'}</h3></div>
     <div class="panel-body" style="padding-top:10px;">
       ${!isAdminUser ? `<p style="margin:0 0 10px;font-size:12.5px;color:var(--slate);">You're on Week ${gbWeek} of the term, so only <b>${sub.assessments[activeIdx].name}</b> is open for entry right now. Other categories open in their own week.</p>` : ''}
+      ${canEdit && roster.length ? `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:10px 0 12px;padding:10px 12px;background:var(--sage-soft);border-radius:8px;">
+        <span style="font-size:12.5px;font-weight:600;color:var(--ink);">Same mark for everyone:</span>
+        ${visibleAssessments.length>1 ? `<select id="bulk-sba-cat">${visibleAssessments.map(a=>`<option value="${a.id}">${a.name} (/${a.max})</option>`).join('')}</select>` : `<span style="font-size:12.5px;color:var(--slate);">${visibleAssessments[0].name}</span><input type="hidden" id="bulk-sba-cat" value="${visibleAssessments[0].id}">`}
+        <input type="number" id="bulk-sba" class="score-input" style="width:64px;" min="0" placeholder="mark">
+        <button class="btn-small brass" onclick="applySameSba('${cls.id}','${view.subject}')">Apply to all ${roster.length}</button>
+      </div>` : ''}
       <table class="reg">
         <thead><tr><th>Student</th>${visibleAssessments.map(a=>`<th>${a.name}<br><span class="mono" style="font-weight:400;">/${a.max}</span></th>`).join('')}</tr></thead>
         <tbody>
@@ -3898,6 +3909,12 @@ function renderGradebook(){
     <div class="panel-body" style="padding-top:10px;">
       ${!DB.term?.examDeclared && !isAdminUser ? `<p style="margin:0 0 10px;font-size:12.5px;color:var(--slate);">Exam marks entry isn't open yet — the head teacher will declare exams week when it's time.</p>` : ''}
       ${sub.weeklyEnabled ? `<p style="margin:0 0 10px;font-size:12.5px;color:var(--slate);">All ${weeks} weeks' marks are added up and scaled to a mark out of 60 once every week has been entered. That /60 is converted to the Class Score (the 50% share of the final grade, shown /50) and added to the exam's 50%. A week with no mark yet counts as 0 until it is entered.</p>` : ''}
+      ${canEdit && (DB.term?.examDeclared || isAdminUser) && roster.length ? `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:10px 0 12px;padding:10px 12px;background:var(--sage-soft);border-radius:8px;">
+        <span style="font-size:12.5px;font-weight:600;color:var(--ink);">Same mark for everyone:</span>
+        <input type="number" id="bulk-exam" class="score-input" style="width:64px;" min="0" max="100" placeholder="/100">
+        <button class="btn-small brass" onclick="applySameExam('${cls.id}','${view.subject}')">Apply to all ${roster.length}</button>
+        <span style="font-size:11.5px;color:var(--slate);">Exam mark, out of 100.</span>
+      </div>` : ''}
       <table class="reg">
         <thead><tr><th>Student</th><th>Class Score<br><span class="mono" style="font-weight:400;">/50</span></th><th>Exam<br><span class="mono" style="font-weight:400;">/100</span></th><th>Exam Score<br><span class="mono" style="font-weight:400;">/50</span></th><th>Total<br><span class="mono" style="font-weight:400;">/100</span></th><th>Grade</th><th>Position</th></tr></thead>
         <tbody>
@@ -3945,6 +3962,57 @@ async function updateWeeklyScore(classId, subj, studentId, week, val){
   }
   sub.weeklyScores[studentId]['w'+week] = n;
   recordWeeklyMeta(classId, subj, week);
+  await saveDB();
+  render();
+}
+/* ---- "Same mark for everyone": one save for the whole class, only when the button is clicked ---- */
+function bulkMarkInput(id, max, label){
+  const raw = (document.getElementById(id)||{}).value;
+  if(raw===undefined || raw==='') { alert('Type the mark first, then click Apply.'); return null; }
+  const n = Number(raw);
+  if(!isFinite(n) || n<0){ alert('Please enter a mark of 0 or more.'); return null; }
+  if(n>max){ alert(`That mark is too high — ${label} is out of ${max}. Please enter ${max} or less.`); return null; }
+  return n;
+}
+function bulkConfirm(roster, hasMark, n, what){
+  const existing = roster.filter(hasMark).length;
+  const base = `Give all ${roster.length} students ${n} for ${what}?`;
+  return confirm(existing ? `${base}\n\n${existing} of them already ${existing===1?'has a mark':'have marks'} here, which will be replaced.` : base);
+}
+async function applySameWeekly(classId, subj, week){
+  const sub = DB.gradebook[classId][subj];
+  if(sub.weeklyLocks && sub.weeklyLocks[week]){ alert(`Week ${week} is locked.`); return; }
+  const n = bulkMarkInput('bulk-weekly', sub.weeklyMax, "this week's assessment");
+  if(n===null) return;
+  const roster = studentsOf(classId);
+  if(!bulkConfirm(roster, s=>((sub.weeklyScores[s.id]||{})['w'+week])!==undefined, n, `Week ${week}`)) return;
+  roster.forEach(s=>{ if(!sub.weeklyScores[s.id]) sub.weeklyScores[s.id] = {}; sub.weeklyScores[s.id]['w'+week] = n; });
+  recordWeeklyMeta(classId, subj, week);
+  await saveDB();
+  render();
+}
+async function applySameSba(classId, subj){
+  const sub = DB.gradebook[classId][subj];
+  const assessId = (document.getElementById('bulk-sba-cat')||{}).value;
+  const assess = sub.assessments.find(a=>a.id===assessId);
+  if(!assess) return;
+  if(session.role!=='Admin' && assess.id!==(sub.assessments[activeCatIndex()]||{}).id){ alert('That category is not open for entry yet.'); return; }
+  const n = bulkMarkInput('bulk-sba', assess.max, assess.name);
+  if(n===null) return;
+  const roster = studentsOf(classId);
+  if(!bulkConfirm(roster, s=>((sub.scores[s.id]||{})[assess.id])!==undefined, n, assess.name)) return;
+  roster.forEach(s=>{ if(!sub.scores[s.id]) sub.scores[s.id] = {}; sub.scores[s.id][assess.id] = n; });
+  await saveDB();
+  render();
+}
+async function applySameExam(classId, subj){
+  if(!(DB.term?.examDeclared || session.role==='Admin')){ alert('Exam marks entry is not open yet.'); return; }
+  const sub = DB.gradebook[classId][subj];
+  const n = bulkMarkInput('bulk-exam', 100, 'the exam');
+  if(n===null) return;
+  const roster = studentsOf(classId);
+  if(!bulkConfirm(roster, s=>sub.examScores[s.id]!==undefined, n, 'the exam')) return;
+  roster.forEach(s=>{ sub.examScores[s.id] = n; });
   await saveDB();
   render();
 }
