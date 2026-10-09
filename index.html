@@ -3265,6 +3265,7 @@ function renderDashboard(){
       <div><div class="eyebrow">${fmtDate(todayStr(0))}</div><h1>Welcome back, ${session.name.split(' ')[0]}</h1></div>
       <div class="date-badge">${session.role} ${session.role!=='Admin' ? '· '+(myClasses.length ? myClasses.map(c=>c.name).join(', ') : 'No classes yet') : '· All classes'}</div>
     </div>
+    ${session.role==='Admin' && pendingWardRequests().length ? `<div class="fee-alert"><div class="fee-alert-icon">&#128106;</div><div class="fee-alert-body"><div class="fee-alert-title">${pendingWardRequests().length} parent request${pendingWardRequests().length===1?'':'s'} to add a child</div><div class="fee-alert-sub">Review ${pendingWardRequests().length===1?'it':'them'} under Staff Accounts.</div></div><button class="btn-small brass" onclick="goTo('staff')">Review</button></div>` : ''}
     <div class="stat-grid">
       <div class="stat-card"><div class="label">Students</div><div class="value">${total}</div><div class="sub">${session.role==='Admin'?'Across '+numClasses+' classes':'In your classes'}</div></div>
       <div class="stat-card"><div class="label">Present today</div><div class="value">${attToday}${attToday!=='—'?'%':''}</div><div class="sub ${attToday!=='—' && attToday>=90?'up':(attToday!=='—'?'down':'')}">${attToday!=='—' ? (attToday>=90?'Strong turnout':'Needs follow-up') : 'Not yet recorded'}</div></div>
@@ -5350,13 +5351,122 @@ async function removeAnnouncement(id){
    written progress remark, and fees owing for the chosen ward.
    Deliberately does NOT show subject marks, grades, or position.
 ============================================================ */
+/* ---- Parents adding another child after registering: parent asks, admin approves ----
+   Requests live in DB.wardRequests, created only when the first request is made (nothing is
+   added to the database just by loading the site). */
+function pendingWardRequests(){ return (DB.wardRequests||[]).filter(r=>r.status==='pending'); }
+function renderAddWardPanel(me){
+  const mine = (DB.wardRequests||[]).filter(r=>r.parentUsername===me.username);
+  return `
+    <div class="panel"><div class="panel-head"><h3>Add another child</h3></div>
+      <div class="panel-body" style="padding-top:12px;padding-bottom:16px;">
+        <p style="margin:0 0 10px;font-size:12.5px;color:var(--slate);">Search for your child by name and send a request. The school administrator will check it and, once approved, the child appears on your account.</p>
+        ${mine.map(r=>{
+          const st = studentById(r.studentId);
+          const nm = st ? st.name : 'a student';
+          return r.status==='pending'
+            ? `<div class="fee-item-row"><span>${nm} <span style="color:var(--brass);font-size:11.5px;">&#8987; awaiting admin approval</span></span><button class="btn-ghost" onclick="cancelWardRequest('${r.id}')">Cancel</button></div>`
+            : `<div class="fee-item-row"><span>${nm} <span style="color:var(--brick);font-size:11.5px;">not approved — please contact the school</span></span><button class="btn-ghost" onclick="cancelWardRequest('${r.id}')">OK</button></div>`;
+        }).join('')}
+        <input type="text" id="ward-req-input" placeholder="Type your child's name…" oninput="searchWardRequests(this.value)" style="width:100%;margin-top:8px;">
+        <div id="ward-req-results"></div>
+      </div>
+    </div>`;
+}
+function searchWardRequests(query){
+  const q = query.trim().toLowerCase();
+  const el = document.getElementById('ward-req-results');
+  if(!el) return;
+  if(q.length<2){ el.innerHTML = ''; return; }
+  const me = userByUsername(session.username);
+  const linked = (me && me.wardIds) || [];
+  const matches = DB.students.filter(s=>!s.graduated && s.name.toLowerCase().includes(q)).slice(0,8);
+  el.innerHTML = matches.length ? matches.map(s=>{
+    const cls = classOf(s.classId);
+    const pending = (DB.wardRequests||[]).some(r=>r.parentUsername===session.username && r.studentId===s.id && r.status==='pending');
+    const action = linked.includes(s.id) ? '<span style="font-size:11.5px;color:var(--sage);">already on your account</span>'
+      : pending ? '<span style="font-size:11.5px;color:var(--brass);">request sent</span>'
+      : `<button class="btn-small brass" onclick="requestWard('${s.id}')">Request</button>`;
+    return `<div style="display:flex;align-items:center;gap:8px;padding:7px 2px;font-size:13px;border-bottom:1px solid var(--line);">
+      <span style="flex:1;">${s.name} <span style="color:var(--slate);font-size:11.5px;">— ${cls?cls.name:'—'}</span></span>${action}</div>`;
+  }).join('') : '<p style="font-size:12.5px;color:var(--slate);margin:8px 0 0;">No matching students found.</p>';
+}
+async function requestWard(studentId){
+  const me = userByUsername(session.username);
+  const st = studentById(studentId);
+  if(!me || me.role!=='Parent' || !st) return;
+  if((me.wardIds||[]).includes(studentId)) return;
+  if(!DB.wardRequests) DB.wardRequests = [];
+  if(DB.wardRequests.some(r=>r.parentUsername===me.username && r.studentId===studentId && r.status==='pending')) return;
+  if(!confirm(`Send a request to add ${st.name} to your account? The administrator must approve it first.`)) return;
+  DB.wardRequests.push({ id:'wr'+Date.now(), parentUsername:me.username, studentId, status:'pending', requestedAt:Date.now() });
+  await saveDB();
+  render();
+  alert('Request sent. The administrator will review it.');
+}
+async function cancelWardRequest(id){
+  const me = session.username;
+  DB.wardRequests = (DB.wardRequests||[]).filter(r=>!(r.id===id && r.parentUsername===me));
+  await saveDB();
+  render();
+}
+async function approveWardRequest(id){
+  if(session.role!=='Admin') return;
+  const r = (DB.wardRequests||[]).find(x=>x.id===id);
+  if(!r) return;
+  const parent = userByUsername(r.parentUsername);
+  const st = studentById(r.studentId);
+  if(!parent || !st){ DB.wardRequests = DB.wardRequests.filter(x=>x.id!==id); await saveDB(); render(); return; }
+  // Is anyone else already registered for this child? (decided before linking this parent)
+  const hadParent = DB.users.some(u=>u.role==='Parent' && u.username!==parent.username && (u.wardIds||[]).includes(st.id));
+  if(!parent.wardIds) parent.wardIds = [];
+  if(!parent.wardIds.includes(st.id)) parent.wardIds.push(st.id);
+  // Same rule as registration: the first parent's number stays as the guardian contact.
+  if(!hadParent && parent.contact) st.guardian = parent.contact;
+  DB.wardRequests = DB.wardRequests.filter(x=>x.id!==id);
+  await saveDB();
+  render();
+}
+async function rejectWardRequest(id){
+  if(session.role!=='Admin') return;
+  const r = (DB.wardRequests||[]).find(x=>x.id===id);
+  if(!r) return;
+  r.status = 'rejected';
+  await saveDB();
+  render();
+}
+function renderWardRequestsPanel(){
+  const list = pendingWardRequests();
+  if(!list.length) return '';
+  return `
+    <div class="panel" style="border-color:var(--brass);"><div class="panel-head"><h3>Ward requests (${list.length})</h3></div>
+      <div class="panel-body">
+        ${list.map(r=>{
+          const parent = userByUsername(r.parentUsername);
+          const st = studentById(r.studentId);
+          const cls = st ? classOf(st.classId) : null;
+          const others = st ? DB.users.filter(u=>u.role==='Parent' && u.username!==r.parentUsername && (u.wardIds||[]).includes(st.id)).map(u=>u.name) : [];
+          return `<div class="ledger-row">
+            <div style="flex:1;">
+              <div style="font-weight:600;">${parent?parent.name:r.parentUsername} wants to add ${st?st.name:'(student removed)'}${cls?' — '+cls.name:''}</div>
+              <div style="font-size:12px;color:var(--slate);">${parent&&parent.contact?'Parent phone: '+parent.contact:'No phone on file'} · requested ${fmtDateTime(new Date(r.requestedAt).toISOString())}${others.length?' · already linked to: '+others.join(', '):''}</div>
+              ${st && st.guardian && st.guardian!=='—' ? `<div style="font-size:12px;color:var(--slate);">Guardian contact on file: ${st.guardian}</div>` : ''}
+            </div>
+            <button class="btn-small brass" onclick="approveWardRequest('${r.id}')">Approve</button>
+            <button class="btn-ghost" style="color:var(--brick);border-color:var(--brick-soft);" onclick="rejectWardRequest('${r.id}')">Decline</button>
+          </div>`;
+        }).join('')}
+      </div>
+    </div>`;
+}
 function renderParentPortal(){
   const me = userByUsername(session.username);
   const wardIds = (me && me.wardIds) || [];
   if(!wardIds.length){
     return `
       <div class="topbar"><div><div class="eyebrow">Welcome</div><h1>My Ward(s)</h1></div></div>
-      <div class="empty">No children are linked to your account yet. Please contact the school administrator.</div>
+      <div class="empty">No children are linked to your account yet. Use the box below to request one, or contact the school administrator.</div>
+      ${me ? renderAddWardPanel(me) : ''}
     `;
   }
   if(!view.parentWardId || !wardIds.includes(view.parentWardId)) view.parentWardId = wardIds[0];
@@ -5536,6 +5646,8 @@ function renderParentPortal(){
         </div>` : ''}
       </div>
     </div>
+
+    ${me ? renderAddWardPanel(me) : ''}
   `;
 }
 
@@ -5547,6 +5659,7 @@ function renderStaff(){
   const staffAndAdmins = DB.users.filter(u=>u.role!=='Parent');
   return `
     <div class="topbar"><div><div class="eyebrow">Administration</div><h1>Staff Accounts</h1></div><button class="btn-ghost" onclick="manualSave()">Save</button></div>
+    ${renderWardRequestsPanel()}
 
     <div class="panel"><div class="panel-head"><h3>Term setup</h3></div>
       <div class="panel-body" style="padding-top:14px;padding-bottom:16px;">
