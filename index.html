@@ -1702,6 +1702,13 @@ async function dsRestoreCloud(id){
   catch(e){ alert('Could not read that backup: ' + (e && e.message ? e.message : e)); }
 }
 
+/* Attendance is Monday–Friday only. */
+function isWeekendDate(d){ const g = new Date(d+'T12:00:00').getDay(); return g===0 || g===6; }
+function lastWeekdayOnOrBefore(d){
+  let x = new Date(d+'T12:00:00');
+  while(x.getDay()===0 || x.getDay()===6) x.setDate(x.getDate()-1);
+  return x.toISOString().slice(0,10);
+}
 function todayStr(offsetDays){
   const d = new Date();
   d.setDate(d.getDate() + (offsetDays||0));
@@ -2495,7 +2502,7 @@ function overallAverage(studentId){
 }
 function attendanceRate(studentId, classId){
   const days = DB.attendance[classId] || {};
-  let keys = Object.keys(days);
+  let keys = Object.keys(days).filter(d=>!isWeekendDate(d));
   const sess = activeSession();
   if(sess.startDate){
     const start = sess.startDate;
@@ -2513,7 +2520,7 @@ function attendanceRate(studentId, classId){
 /* Raw "X out of Y" attendance count over the active session (term or vacation), for the report card. */
 function attendanceCounts(studentId, classId){
   const days = DB.attendance[classId] || {};
-  let keys = Object.keys(days);
+  let keys = Object.keys(days).filter(d=>!isWeekendDate(d));
   const sess = activeSession();
   if(sess.startDate){
     const start = sess.startDate;
@@ -2611,7 +2618,7 @@ function completeSignIn(user, restoredView){
   document.getElementById('user-role').textContent = session.role + (session.role!=='Admin' && myClasses.length ? ' · '+myClasses.map(c=>c.name).join(', ') : '');
   document.getElementById('user-avatar').textContent = user.name.split(' ').map(w=>w[0]).slice(0,2).join('').toUpperCase();
   const defaultClassId = (myClasses[0] || accessibleClasses()[0] || DB.classes[0])?.id || null;
-  view = { page: (session.role==='Parent' ? 'parent' : 'dashboard'), studentId:null, tab:'overview', classId: defaultClassId, subject:null, date: todayStr(0), parentWardId: null };
+  view = { page: (session.role==='Parent' ? 'parent' : 'dashboard'), studentId:null, tab:'overview', classId: defaultClassId, subject:null, date: lastWeekdayOnOrBefore(todayStr(0)), parentWardId: null };
   if(restoredView && typeof restoredView === 'object'){
     // merge the saved view back in, but drop anything that no longer points at something real
     // (a deleted student/class, etc.) so a stale refresh can't crash the page
@@ -3674,7 +3681,7 @@ function renderStudentDetail(id){
     }).join('');
   } else if(view.tab==='attendance'){
     const days = DB.attendance[s.classId] || {};
-    const keys = Object.keys(days).sort().reverse();
+    const keys = Object.keys(days).filter(d=>!isWeekendDate(d)).sort().reverse();
     body = `<div class="panel"><div class="panel-head"><h3>Attendance history</h3></div><div class="panel-body">
       ${keys.length ? keys.map((d,i)=>{
         const status = days[d][id] || 'present';
@@ -4061,6 +4068,12 @@ function renderAttendance(){
   }
   if(!view.classId || !classes.find(c=>c.id===view.classId)) view.classId = classes[0].id;
   if(!view.date) view.date = todayStr(0);
+  let weekendNote = '';
+  if(isWeekendDate(view.date)){
+    const was = view.date;
+    view.date = lastWeekdayOnOrBefore(view.date);
+    weekendNote = `<p style="margin:0 0 12px;font-size:12.5px;color:var(--brick);">${fmtDate(was)} is a weekend — attendance isn't taken on Saturdays or Sundays, so the register is showing ${fmtDate(view.date)}.</p>`;
+  }
   const cls = classOf(view.classId);
   const roster = studentsOf(cls.id);
   const rec = (DB.attendance[cls.id] && DB.attendance[cls.id][view.date]) || {};
@@ -4076,6 +4089,7 @@ function renderAttendance(){
       <input type="date" value="${view.date}" onchange="view.date=this.value; render()">
       ${roster.length ? `<button class="btn-small brass" onclick="markAllPresent('${cls.id}','${view.date}')">&#10003; All present</button>` : ''}
     </div>
+    ${weekendNote}
     <div class="panel"><div class="panel-body" style="padding-top:14px;">
       ${roster.map((s,i)=>{
         const status = rec[s.id] || 'present';
@@ -4093,6 +4107,7 @@ function renderAttendance(){
   `;
 }
 async function markAttendance(classId, date, studentId, status){
+  if(isWeekendDate(date)){ alert('Attendance is not taken on weekends.'); return; }
   if(!DB.attendance[classId]) DB.attendance[classId] = {};
   if(!DB.attendance[classId][date]) DB.attendance[classId][date] = {};
   DB.attendance[classId][date][studentId] = status;
@@ -4103,6 +4118,7 @@ async function markAttendance(classId, date, studentId, status){
 }
 /* One click marks the whole class present for the chosen date (a single save). */
 async function markAllPresent(classId, date){
+  if(isWeekendDate(date)){ alert('Attendance is not taken on weekends.'); return; }
   const roster = studentsOf(classId);
   if(!roster.length) return;
   const rec = (DB.attendance[classId] && DB.attendance[classId][date]) || {};
