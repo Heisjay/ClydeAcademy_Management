@@ -3072,7 +3072,8 @@ function myUpcomingLessons(limit=4){
     d.setDate(d.getDate()+offset);
     const dayName = dayIndexToName[d.getDay()];
     if(!dayName) continue;
-    [activeTimetableMode(), 'morning'].forEach(mode=>assignments.forEach(a=>{
+    const mode = activeTimetableMode();
+    assignments.forEach(a=>{
       const cls = classOf(a.classId);
       const slots = timetableSlotsFor(cls.level||'JHS', mode);
       const classTT = (ttRead(mode)[a.classId]||{})[dayName] || {};
@@ -3082,7 +3083,7 @@ function myUpcomingLessons(limit=4){
         if(offset===0 && s.end <= nowHM) return;
         out.push({ dayName, offset, start:s.start, end:s.end, subject:a.subject, className:a.className });
       });
-    }));
+    });
   }
   out.sort((x,y)=> x.offset-y.offset || x.start.localeCompare(y.start));
   return out.slice(0,limit);
@@ -4221,6 +4222,67 @@ let ttSelectedMode = 'term';
    its own periods and its own subjects. It is created only when the admin first edits it — until
    then every reader just sees "nothing set up", and loading the site writes nothing. */
 function ttRead(mode){ return (DB.timetable && DB.timetable[mode]) || {}; }
+/* JHS morning classes: no periods or times — just one subject per class for each day, Monday to
+   Friday, kept in its own DB.morningTimetable = { classId: { Monday: 'Maths', ... } }. It is created
+   only when the admin first sets a subject, so loading the site writes nothing. */
+function morningSubject(classId, day){ return ((DB.morningTimetable||{})[classId]||{})[day] || ''; }
+function hasMorningTimetable(classId){ return TIMETABLE_DAYS.some(d=>morningSubject(classId,d)); }
+function buildMorningGridHTML(classId){
+  return `<table class="reg tt-grid"><thead><tr>${TIMETABLE_DAYS.map(d=>`<th style="text-align:center;">${d}</th>`).join('')}</tr></thead>
+    <tbody><tr>${TIMETABLE_DAYS.map(d=>{ const v = morningSubject(classId,d); return `<td style="text-align:center;${v?timetableCellStyle(classId,v):''}">${v||'—'}</td>`; }).join('')}</tr></tbody></table>`;
+}
+function buildMorningCombinedHTML(){
+  const classes = DB.classes.filter(c=>c.level==='JHS' && hasMorningTimetable(c.id));
+  return `<div class="tt-page"><div class="rc-head">
+      <div class="crest">${DB.school.crest ? `<img src="${DB.school.crest}">` : `<span>${schoolInitials(DB.school.name)}</span>`}</div>
+      <div><h2>${DB.school.name}</h2><p>JHS Morning Classes Timetable</p></div></div>
+    ${classes.length ? `<table class="reg tt-grid"><thead><tr><th>Class</th>${TIMETABLE_DAYS.map(d=>`<th style="text-align:center;">${d}</th>`).join('')}</tr></thead>
+      <tbody>${classes.map(c=>`<tr><td style="white-space:nowrap;font-weight:600;">${c.name}</td>${TIMETABLE_DAYS.map(d=>{ const v=morningSubject(c.id,d); return `<td style="text-align:center;${v?timetableCellStyle(c.id,v):''}">${v||'—'}</td>`; }).join('')}</tr>`).join('')}</tbody></table>
+      ${timetableColorLegendHTML(classes.map(c=>c.id))}` : '<p style="font-size:13px;color:var(--slate);">No JHS morning classes have been set up yet.</p>'}
+  </div>`;
+}
+function printMorningAll(){ document.getElementById('print-area').innerHTML = buildMorningCombinedHTML(); window.print(); }
+async function setMorningCell(classId, day, subject){
+  if(!DB.morningTimetable) DB.morningTimetable = {};
+  if(!DB.morningTimetable[classId]) DB.morningTimetable[classId] = {};
+  if(subject) DB.morningTimetable[classId][day] = subject; else delete DB.morningTimetable[classId][day];
+  await saveDB();
+  render();
+}
+function renderMorningTimetableAdmin(){
+  const classes = DB.classes.filter(c=>c.level==='JHS');
+  if(!classes.find(c=>c.id===ttSelectedClass)) ttSelectedClass = classes[0] ? classes[0].id : null;
+  const cls = ttSelectedClass ? classOf(ttSelectedClass) : null;
+  return `
+    <div class="topbar"><div><div class="eyebrow">Administration</div><h1>Timetable</h1></div><button class="btn-ghost" onclick="manualSave()">Save</button></div>
+    <div class="ward-switch">
+      <button style="padding:6px 16px;" onclick="ttSelectedMode='term'; render()">Term</button>
+      <button style="padding:6px 16px;" onclick="ttSelectedMode='vacation'; render()">Vacation classes</button>
+      <button class="active" style="padding:6px 16px;" onclick="ttSelectedMode='morning'; render()">JHS morning classes</button>
+    </div>
+    <p style="margin:0 0 14px;font-size:12.5px;color:var(--slate);">A separate timetable for JHS morning classes. No periods or times — just pick the subject for each class on each day, Monday to Friday. It sits next to the normal timetable, and teachers and parents of JHS classes see it under their usual timetable.</p>
+    <div class="panel"><div class="panel-head"><h3>Morning classes — Monday to Friday</h3>
+      <div style="display:flex;gap:8px;"><button class="btn-ghost" onclick="printMorningAll()">Print all JHS</button>${cls?`<button class="btn-ghost" onclick="printTimetable('${cls.id}','morning')">Print this class</button>`:''}</div></div>
+      <div class="panel-body" style="padding-top:10px;padding-bottom:16px;">
+        ${!cls ? '<p style="color:var(--slate);font-size:13px;">Add a JHS class first, from the Classes page.</p>' : `
+        <div class="toolbar" style="margin-bottom:14px;">
+          <select onchange="ttSelectedClass=this.value; render()">${classes.map(c=>`<option value="${c.id}" ${c.id===cls.id?'selected':''}>${c.name}</option>`).join('')}</select>
+        </div>
+        <div style="overflow-x:auto;"><table class="reg tt-grid">
+          <thead><tr>${TIMETABLE_DAYS.map(d=>`<th style="text-align:center;">${d}</th>`).join('')}</tr></thead>
+          <tbody><tr>${TIMETABLE_DAYS.map(d=>{
+            const cur = morningSubject(cls.id,d);
+            return `<td style="${cur?timetableCellStyle(cls.id,cur):''}"><select style="background:transparent;" onchange="setMorningCell('${cls.id}','${d}',this.value)">
+              <option value="">—</option>
+              <option value="Free Period" ${cur==='Free Period'?'selected':''}>Free Period</option>
+              ${cls.subjects.map(sub=>`<option value="${sub.name}" ${cur===sub.name?'selected':''}>${sub.name}</option>`).join('')}
+            </select></td>`; }).join('')}</tr></tbody>
+        </table></div>
+        ${timetableColorLegendHTML(cls.id)}`}
+      </div>
+    </div>
+  `;
+}
 function ttWrite(mode){ if(!DB.timetable) DB.timetable = {}; if(!DB.timetable[mode]) DB.timetable[mode] = {}; return DB.timetable[mode]; }
 function ttSlotsWrite(mode, level){
   if(!DB.timetableSlots) DB.timetableSlots = {};
@@ -4234,12 +4296,10 @@ function ttModeLabel(mode, lower){
 }
 /* A read-only "Morning classes" panel under a JHS class's normal timetable (teachers and parents). */
 function morningTimetablePanelHTML(cls){
-  if(!cls || (cls.level||'JHS')!=='JHS') return '';
-  const slots = timetableSlotsFor('JHS','morning');
-  if(!slots.length || !Object.keys(ttRead('morning')[cls.id]||{}).length) return '';
+  if(!cls || (cls.level||'JHS')!=='JHS' || !hasMorningTimetable(cls.id)) return '';
   return `<div class="panel"><div class="panel-head"><h3>${cls.name} — Morning classes timetable</h3>
       <button class="btn-ghost" onclick="printTimetable('${cls.id}','morning')">Print</button></div>
-      <div class="panel-body" style="padding-top:10px;padding-bottom:16px;overflow-x:auto;">${buildTimetableGridHTML(cls.id,'morning')}</div></div>`;
+      <div class="panel-body" style="padding-top:10px;padding-bottom:16px;overflow-x:auto;">${buildMorningGridHTML(cls.id)}</div></div>`;
 }
 function timetableSlotsFor(level, mode){
   mode = mode || activeTimetableMode();
@@ -4325,8 +4385,7 @@ function renderTimetableParent(){
   `;
 }
 function renderTimetableAdmin(){
-  // The morning-classes timetable only exists for JHS.
-  if(ttSelectedMode==='morning') ttSelectedLevel = 'JHS';
+  if(ttSelectedMode==='morning') return renderMorningTimetableAdmin();
   if(!DB.classes.find(c=>c.id===ttSelectedClass && c.level===ttSelectedLevel)){
     ttSelectedClass = DB.classes.find(c=>c.level===ttSelectedLevel)?.id || null;
   }
@@ -4344,13 +4403,12 @@ function renderTimetableAdmin(){
       <button class="${ttSelectedMode==='vacation'?'active':''}" style="padding:6px 16px;" onclick="ttSelectedMode='vacation'; render()">Vacation classes</button>
       <button class="${ttSelectedMode==='morning'?'active':''}" style="padding:6px 16px;" onclick="ttSelectedMode='morning'; ttSelectedLevel='JHS'; ttSelectedClass=null; render()">JHS morning classes</button>
     </div>
-    ${ttSelectedMode==='morning' ? `<p style="margin:0 0 14px;font-size:12.5px;color:var(--slate);">This is a separate timetable from the normal one, for JHS morning classes only — its own periods and its own subjects. It sits next to the term timetable (it doesn't replace it), and teachers and parents of JHS classes see it under their normal timetable.</p>` : ''}
     ${ttSelectedMode==='vacation' ? `<p style="margin:0 0 14px;font-size:12.5px;color:var(--slate);">This is a completely separate schedule from the term timetable — its own periods, breaks, and subjects. It's what teachers and the dashboard follow whenever System status is set to "Vacation classes in session."</p>` : ''}
 
-    ${ttSelectedMode==='morning' ? '' : `<div class="ward-switch">
+    <div class="ward-switch">
       <button class="${ttSelectedLevel==='JHS'?'active':''}" style="padding:6px 16px;" onclick="ttSelectedLevel='JHS'; ttSelectedClass=null; render()">JHS</button>
       <button class="${ttSelectedLevel==='Primary'?'active':''}" style="padding:6px 16px;" onclick="ttSelectedLevel='Primary'; ttSelectedClass=null; render()">Primary</button>
-    </div>`}
+    </div>
 
     <div class="panel"><div class="panel-head"><h3>Step 1 — Daily periods &amp; break times (${ttSelectedLevel}, ${modeLabel})</h3></div>
       <div class="panel-body" style="padding-top:10px;padding-bottom:16px;">
@@ -4431,9 +4489,9 @@ function renderTimetableAdmin(){
       <div class="panel-body" style="padding-top:10px;padding-bottom:16px;">
         <p style="margin:0 0 12px;font-size:12.5px;color:var(--slate);">Lower Primary and Upper Primary each print as one combined sheet with every class in the group stacked under each day; JHS prints as its own combined sheet, separately. Use the single button below to print all three at once, or pick just one group.</p>
         <div class="inline-form" style="flex-wrap:wrap;gap:8px;">
-          ${ttSelectedMode==='morning' ? '' : `<button class="btn-small brass" onclick="printAllTimetables('${ttSelectedMode}')">Print all timetables</button>
+          <button class="btn-small brass" onclick="printAllTimetables('${ttSelectedMode}')">Print all timetables</button>
           <button class="btn-small" onclick="printCombinedTimetable('LowerPrimary','${ttSelectedMode}')">Print Lower Primary</button>
-          <button class="btn-small" onclick="printCombinedTimetable('UpperPrimary','${ttSelectedMode}')">Print Upper Primary</button>`}
+          <button class="btn-small" onclick="printCombinedTimetable('UpperPrimary','${ttSelectedMode}')">Print Upper Primary</button>
           <button class="btn-small" onclick="printCombinedTimetable('JHS','${ttSelectedMode}')">Print JHS</button>
         </div>
       </div>
@@ -4441,6 +4499,7 @@ function renderTimetableAdmin(){
   `;
 }
 function buildTimetableGridHTML(classId, mode){
+  if(mode==='morning') return buildMorningGridHTML(classId);
   mode = mode || activeTimetableMode();
   const slots = timetableSlotsFor(classOf(classId).level||'JHS', mode);
   const classTT = ttRead(mode)[classId] || {};
