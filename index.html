@@ -3072,18 +3072,17 @@ function myUpcomingLessons(limit=4){
     d.setDate(d.getDate()+offset);
     const dayName = dayIndexToName[d.getDay()];
     if(!dayName) continue;
-    const mode = activeTimetableMode();
-    assignments.forEach(a=>{
+    [activeTimetableMode(), 'morning'].forEach(mode=>assignments.forEach(a=>{
       const cls = classOf(a.classId);
       const slots = timetableSlotsFor(cls.level||'JHS', mode);
-      const classTT = (DB.timetable[mode][a.classId]||{})[dayName] || {};
+      const classTT = (ttRead(mode)[a.classId]||{})[dayName] || {};
       slots.forEach(s=>{
         if(s.isBreak) return;
         if(classTT[s.id] !== a.subject) return;
         if(offset===0 && s.end <= nowHM) return;
         out.push({ dayName, offset, start:s.start, end:s.end, subject:a.subject, className:a.className });
       });
-    });
+    }));
   }
   out.sort((x,y)=> x.offset-y.offset || x.start.localeCompare(y.start));
   return out.slice(0,limit);
@@ -4218,6 +4217,30 @@ let ttSelectedMode = 'term';
 /* Primary and JHS run on separate daily schedules, and term vs vacation run on separate
    schedules too, so every timetable lookup goes through this instead of touching
    DB.timetableSlots directly. mode defaults to whichever is actually in session right now. */
+/* The JHS morning classes are a third, separate schedule ('morning') kept next to term/vacation:
+   its own periods and its own subjects. It is created only when the admin first edits it — until
+   then every reader just sees "nothing set up", and loading the site writes nothing. */
+function ttRead(mode){ return (DB.timetable && DB.timetable[mode]) || {}; }
+function ttWrite(mode){ if(!DB.timetable) DB.timetable = {}; if(!DB.timetable[mode]) DB.timetable[mode] = {}; return DB.timetable[mode]; }
+function ttSlotsWrite(mode, level){
+  if(!DB.timetableSlots) DB.timetableSlots = {};
+  if(!DB.timetableSlots[mode]) DB.timetableSlots[mode] = {};
+  if(!DB.timetableSlots[mode][level]) DB.timetableSlots[mode][level] = [];
+  return DB.timetableSlots[mode][level];
+}
+function ttModeLabel(mode, lower){
+  const t = mode==='vacation' ? 'Vacation Classes' : (mode==='morning' ? 'JHS Morning Classes' : 'Term');
+  return lower ? t.toLowerCase() : t;
+}
+/* A read-only "Morning classes" panel under a JHS class's normal timetable (teachers and parents). */
+function morningTimetablePanelHTML(cls){
+  if(!cls || (cls.level||'JHS')!=='JHS') return '';
+  const slots = timetableSlotsFor('JHS','morning');
+  if(!slots.length || !Object.keys(ttRead('morning')[cls.id]||{}).length) return '';
+  return `<div class="panel"><div class="panel-head"><h3>${cls.name} — Morning classes timetable</h3>
+      <button class="btn-ghost" onclick="printTimetable('${cls.id}','morning')">Print</button></div>
+      <div class="panel-body" style="padding-top:10px;padding-bottom:16px;overflow-x:auto;">${buildTimetableGridHTML(cls.id,'morning')}</div></div>`;
+}
 function timetableSlotsFor(level, mode){
   mode = mode || activeTimetableMode();
   const forMode = (DB.timetableSlots && DB.timetableSlots[mode]) || {};
@@ -4246,7 +4269,7 @@ function renderTimetableTeacher(){
   if(!ttSelectedClass || !classes.find(c=>c.id===ttSelectedClass)) ttSelectedClass = classes[0].id;
   const cls = classOf(ttSelectedClass);
   const mode = activeTimetableMode();
-  const modeLabel = mode==='vacation' ? 'Vacation Classes' : 'Term';
+  const modeLabel = ttModeLabel(mode);
   const slots = timetableSlotsFor(cls.level||'JHS', mode);
   return `
     <div class="topbar">
@@ -4263,6 +4286,7 @@ function renderTimetableTeacher(){
         ${slots.length ? buildTimetableGridHTML(cls.id, mode) : `<p style="margin:0;font-size:13px;color:var(--slate);">The administrator hasn't set up this timetable yet.</p>`}
       </div>
     </div>
+    ${morningTimetablePanelHTML(cls)}
   `;
 }
 /* Read-only view for parents — their ward's class timetable, with a Print/Download button. */
@@ -4279,7 +4303,7 @@ function renderTimetableParent(){
   const s = studentById(view.parentWardId);
   const cls = classOf(s.classId);
   const mode = activeTimetableMode();
-  const modeLabel = mode==='vacation' ? 'Vacation Classes' : 'Term';
+  const modeLabel = ttModeLabel(mode);
   const slots = timetableSlotsFor(cls.level||'JHS', mode);
   return `
     <div class="topbar">
@@ -4297,17 +4321,20 @@ function renderTimetableParent(){
         ${slots.length ? buildTimetableGridHTML(cls.id, mode) : `<p style="margin:0;font-size:13px;color:var(--slate);">The administrator hasn't set up this timetable yet.</p>`}
       </div>
     </div>
+    ${morningTimetablePanelHTML(cls)}
   `;
 }
 function renderTimetableAdmin(){
+  // The morning-classes timetable only exists for JHS.
+  if(ttSelectedMode==='morning') ttSelectedLevel = 'JHS';
   if(!DB.classes.find(c=>c.id===ttSelectedClass && c.level===ttSelectedLevel)){
     ttSelectedClass = DB.classes.find(c=>c.level===ttSelectedLevel)?.id || null;
   }
   const slots = timetableSlotsFor(ttSelectedLevel, ttSelectedMode);
   const cls = ttSelectedClass ? classOf(ttSelectedClass) : null;
-  const classTT = cls ? (DB.timetable[ttSelectedMode][cls.id] || {}) : {};
+  const classTT = cls ? (ttRead(ttSelectedMode)[cls.id] || {}) : {};
   const levelClasses = DB.classes.filter(c=>c.level===ttSelectedLevel);
-  const modeLabel = ttSelectedMode==='vacation' ? 'vacation classes' : 'term';
+  const modeLabel = ttModeLabel(ttSelectedMode, true);
 
   return `
     <div class="topbar"><div><div class="eyebrow">Administration</div><h1>Timetable</h1></div><button class="btn-ghost" onclick="manualSave()">Save</button></div>
@@ -4315,13 +4342,15 @@ function renderTimetableAdmin(){
     <div class="ward-switch">
       <button class="${ttSelectedMode==='term'?'active':''}" style="padding:6px 16px;" onclick="ttSelectedMode='term'; render()">Term</button>
       <button class="${ttSelectedMode==='vacation'?'active':''}" style="padding:6px 16px;" onclick="ttSelectedMode='vacation'; render()">Vacation classes</button>
+      <button class="${ttSelectedMode==='morning'?'active':''}" style="padding:6px 16px;" onclick="ttSelectedMode='morning'; ttSelectedLevel='JHS'; ttSelectedClass=null; render()">JHS morning classes</button>
     </div>
+    ${ttSelectedMode==='morning' ? `<p style="margin:0 0 14px;font-size:12.5px;color:var(--slate);">This is a separate timetable from the normal one, for JHS morning classes only — its own periods and its own subjects. It sits next to the term timetable (it doesn't replace it), and teachers and parents of JHS classes see it under their normal timetable.</p>` : ''}
     ${ttSelectedMode==='vacation' ? `<p style="margin:0 0 14px;font-size:12.5px;color:var(--slate);">This is a completely separate schedule from the term timetable — its own periods, breaks, and subjects. It's what teachers and the dashboard follow whenever System status is set to "Vacation classes in session."</p>` : ''}
 
-    <div class="ward-switch">
+    ${ttSelectedMode==='morning' ? '' : `<div class="ward-switch">
       <button class="${ttSelectedLevel==='JHS'?'active':''}" style="padding:6px 16px;" onclick="ttSelectedLevel='JHS'; ttSelectedClass=null; render()">JHS</button>
       <button class="${ttSelectedLevel==='Primary'?'active':''}" style="padding:6px 16px;" onclick="ttSelectedLevel='Primary'; ttSelectedClass=null; render()">Primary</button>
-    </div>
+    </div>`}
 
     <div class="panel"><div class="panel-head"><h3>Step 1 — Daily periods &amp; break times (${ttSelectedLevel}, ${modeLabel})</h3></div>
       <div class="panel-body" style="padding-top:10px;padding-bottom:16px;">
@@ -4346,7 +4375,6 @@ function renderTimetableAdmin(){
           <label style="display:flex;align-items:center;gap:6px;font-size:12.5px;"><input type="checkbox" id="new-slot-break"> This is a break</label>
           <button class="btn-small brass" onclick="addTimetableSlot()">Add</button>
         </div>
-        ${ttSelectedLevel==='JHS' && !slots.some(sl=>/morning/i.test(sl.label)) ? `<p style="margin:10px 0 0;font-size:12.5px;color:var(--slate);">JHS has no morning-classes period yet. <button class="btn-ghost" onclick="prefillMorningSlot()">Fill in a "Morning classes" period</button> — it fills the boxes above (nothing is saved until you click Add), and it shows only for JHS, ahead of the first period.</p>` : ''}
       </div>
     </div>
 
@@ -4403,9 +4431,9 @@ function renderTimetableAdmin(){
       <div class="panel-body" style="padding-top:10px;padding-bottom:16px;">
         <p style="margin:0 0 12px;font-size:12.5px;color:var(--slate);">Lower Primary and Upper Primary each print as one combined sheet with every class in the group stacked under each day; JHS prints as its own combined sheet, separately. Use the single button below to print all three at once, or pick just one group.</p>
         <div class="inline-form" style="flex-wrap:wrap;gap:8px;">
-          <button class="btn-small brass" onclick="printAllTimetables('${ttSelectedMode}')">Print all timetables</button>
+          ${ttSelectedMode==='morning' ? '' : `<button class="btn-small brass" onclick="printAllTimetables('${ttSelectedMode}')">Print all timetables</button>
           <button class="btn-small" onclick="printCombinedTimetable('LowerPrimary','${ttSelectedMode}')">Print Lower Primary</button>
-          <button class="btn-small" onclick="printCombinedTimetable('UpperPrimary','${ttSelectedMode}')">Print Upper Primary</button>
+          <button class="btn-small" onclick="printCombinedTimetable('UpperPrimary','${ttSelectedMode}')">Print Upper Primary</button>`}
           <button class="btn-small" onclick="printCombinedTimetable('JHS','${ttSelectedMode}')">Print JHS</button>
         </div>
       </div>
@@ -4415,7 +4443,7 @@ function renderTimetableAdmin(){
 function buildTimetableGridHTML(classId, mode){
   mode = mode || activeTimetableMode();
   const slots = timetableSlotsFor(classOf(classId).level||'JHS', mode);
-  const classTT = DB.timetable[mode][classId] || {};
+  const classTT = ttRead(mode)[classId] || {};
   return `
     <table class="reg tt-grid">
       <thead><tr><th>Day</th>${slots.map(s=>`<th>${s.label}<br><span style="font-size:10px;font-weight:400;color:var(--slate);">${s.start}–${s.end}</span></th>`).join('')}</tr></thead>
@@ -4436,7 +4464,7 @@ function buildTimetableGridHTML(classId, mode){
 function buildTimetableHTML(classId, mode){
   mode = mode || activeTimetableMode();
   const cls = classOf(classId);
-  const modeLabel = mode==='vacation' ? 'Vacation Classes' : 'Term';
+  const modeLabel = ttModeLabel(mode);
   return `
     <div class="tt-page">
       <div class="rc-head">
@@ -4475,7 +4503,7 @@ function buildCombinedTimetableGridHTML(category, mode){
           <td style="white-space:nowrap;font-weight:600;">${c.name}</td>
           ${slots.map(s=>{
             if(s.isBreak) return `<td style="background:var(--paper);text-align:center;font-weight:600;">${s.label}</td>`;
-            const classTT = DB.timetable[mode][c.id] || {};
+            const classTT = ttRead(mode)[c.id] || {};
             const val = (classTT[d]||{})[s.id] || '—';
             return `<td style="text-align:center;${timetableCellStyle(c.id,val)}">${val}</td>`;
           }).join('')}
@@ -4487,7 +4515,7 @@ function buildCombinedTimetableGridHTML(category, mode){
 }
 function buildCombinedTimetableHTML(category, mode){
   mode = mode || activeTimetableMode();
-  const modeLabel = mode==='vacation' ? 'Vacation Classes' : 'Term';
+  const modeLabel = ttModeLabel(mode);
   return `
     <div class="tt-page">
       <div class="rc-head">
@@ -4509,26 +4537,18 @@ function printAllTimetables(mode){
   document.getElementById('print-area').innerHTML = BILL_CATEGORIES.map(cat=>buildCombinedTimetableHTML(cat, mode)).join('');
   window.print();
 }
-function prefillMorningSlot(){
-  const first = timetableSlotsFor('JHS', ttSelectedMode)[0];
-  const set = (id,v)=>{ const el=document.getElementById(id); if(el) el.value=v; };
-  set('new-slot-start','07:00');
-  set('new-slot-end', first && first.start>'07:00' ? first.start : '08:00');
-  set('new-slot-label','MORNING CLASSES');
-  const b=document.getElementById('new-slot-break'); if(b) b.checked=false;
-}
 async function addTimetableSlot(){
   const start = document.getElementById('new-slot-start').value;
   const end = document.getElementById('new-slot-end').value;
   const label = document.getElementById('new-slot-label').value.trim();
   const isBreak = document.getElementById('new-slot-break').checked;
   if(!start || !end || !label) return;
-  DB.timetableSlots[ttSelectedMode][ttSelectedLevel].push({ id:'slot'+Date.now(), start, end, label, isBreak });
+  ttSlotsWrite(ttSelectedMode, ttSelectedLevel).push({ id:'slot'+Date.now(), start, end, label, isBreak });
   await saveDB();
   render();
 }
 async function updateTimetableSlot(id, field, value){
-  const slot = DB.timetableSlots[ttSelectedMode][ttSelectedLevel].find(s=>s.id===id);
+  const slot = ttSlotsWrite(ttSelectedMode, ttSelectedLevel).find(s=>s.id===id);
   if(!slot) return;
   if(field==='label' && !value.trim()) return;
   slot[field] = field==='label' ? value.trim() : value;
@@ -4536,9 +4556,9 @@ async function updateTimetableSlot(id, field, value){
   render();
 }
 async function removeTimetableSlot(id){
-  DB.timetableSlots[ttSelectedMode][ttSelectedLevel] = DB.timetableSlots[ttSelectedMode][ttSelectedLevel].filter(s=>s.id!==id);
+  { const list = ttSlotsWrite(ttSelectedMode, ttSelectedLevel); DB.timetableSlots[ttSelectedMode][ttSelectedLevel] = list.filter(s=>s.id!==id); }
   const levelClassIds = new Set(DB.classes.filter(c=>c.level===ttSelectedLevel).map(c=>c.id));
-  Object.entries(DB.timetable[ttSelectedMode]).forEach(([classId,classTT])=>{
+  Object.entries(ttRead(ttSelectedMode)).forEach(([classId,classTT])=>{
     if(!levelClassIds.has(classId)) return;
     Object.values(classTT).forEach(dayObj=>{ delete dayObj[id]; });
   });
@@ -4546,10 +4566,11 @@ async function removeTimetableSlot(id){
   render();
 }
 async function setTimetableCell(mode, classId, day, slotId, subject){
-  if(!DB.timetable[mode][classId]) DB.timetable[mode][classId] = {};
-  if(!DB.timetable[mode][classId][day]) DB.timetable[mode][classId][day] = {};
-  if(subject) DB.timetable[mode][classId][day][slotId] = subject;
-  else delete DB.timetable[mode][classId][day][slotId];
+  const tt = ttWrite(mode);
+  if(!tt[classId]) tt[classId] = {};
+  if(!tt[classId][day]) tt[classId][day] = {};
+  if(subject) tt[classId][day][slotId] = subject;
+  else delete tt[classId][day][slotId];
   await saveDB();
   render();
 }
@@ -4571,14 +4592,15 @@ async function processTimetableRows(rows){
     if(slot.isBreak){ skipped.push(`Row ${i+1}: "${periodLabel}" is marked as a break, can't assign a subject to it`); return; }
     const isFreePeriod = /^free\s*period$/i.test(subject.trim());
     if(!isFreePeriod && !cls.subjects.some(sub=>sub.name.toLowerCase()===subject.trim().toLowerCase())){ skipped.push(`Row ${i+1}: "${subject}" isn't a subject in ${cls.name} (use "Free Period" for a non-lesson slot)`); return; }
-    if(!DB.timetable[mode][cls.id]) DB.timetable[mode][cls.id] = {};
-    if(!DB.timetable[mode][cls.id][dayMatch]) DB.timetable[mode][cls.id][dayMatch] = {};
-    DB.timetable[mode][cls.id][dayMatch][slot.id] = isFreePeriod ? 'Free Period' : subject.trim();
+    const tt = ttWrite(mode);
+    if(!tt[cls.id]) tt[cls.id] = {};
+    if(!tt[cls.id][dayMatch]) tt[cls.id][dayMatch] = {};
+    tt[cls.id][dayMatch][slot.id] = isFreePeriod ? 'Free Period' : subject.trim();
     added++;
   });
   await saveDB();
   render();
-  alert(`Added ${added} timetable entr${added===1?'y':'ies'} to the ${mode==='vacation'?'vacation classes':'term'} timetable.` + (skipped.length ? `\n\nNotes:\n`+skipped.join('\n') : ''));
+  alert(`Added ${added} timetable entr${added===1?'y':'ies'} to the ${ttModeLabel(mode,true)} timetable.` + (skipped.length ? `\n\nNotes:\n`+skipped.join('\n') : ''));
 }
 async function bulkAddTimetableFromText(){
   const text = document.getElementById('bulk-tt-text').value;
