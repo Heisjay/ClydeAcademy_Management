@@ -4346,6 +4346,7 @@ function renderTimetableAdmin(){
           <label style="display:flex;align-items:center;gap:6px;font-size:12.5px;"><input type="checkbox" id="new-slot-break"> This is a break</label>
           <button class="btn-small brass" onclick="addTimetableSlot()">Add</button>
         </div>
+        ${ttSelectedLevel==='JHS' && !slots.some(sl=>/morning/i.test(sl.label)) ? `<p style="margin:10px 0 0;font-size:12.5px;color:var(--slate);">JHS has no morning-classes period yet. <button class="btn-ghost" onclick="prefillMorningSlot()">Fill in a "Morning classes" period</button> — it fills the boxes above (nothing is saved until you click Add), and it shows only for JHS, ahead of the first period.</p>` : ''}
       </div>
     </div>
 
@@ -4507,6 +4508,14 @@ function printAllTimetables(mode){
   mode = mode || ttSelectedMode || activeTimetableMode();
   document.getElementById('print-area').innerHTML = BILL_CATEGORIES.map(cat=>buildCombinedTimetableHTML(cat, mode)).join('');
   window.print();
+}
+function prefillMorningSlot(){
+  const first = timetableSlotsFor('JHS', ttSelectedMode)[0];
+  const set = (id,v)=>{ const el=document.getElementById(id); if(el) el.value=v; };
+  set('new-slot-start','07:00');
+  set('new-slot-end', first && first.start>'07:00' ? first.start : '08:00');
+  set('new-slot-label','MORNING CLASSES');
+  const b=document.getElementById('new-slot-break'); if(b) b.checked=false;
 }
 async function addTimetableSlot(){
   const start = document.getElementById('new-slot-start').value;
