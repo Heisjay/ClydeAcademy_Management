@@ -4092,6 +4092,17 @@ function renderAttendance(){
       ${roster.length ? `<button class="btn-small brass" onclick="markAllPresent('${cls.id}','${view.date}')">&#10003; All present</button>` : ''}
     </div>
     ${weekendNote}
+    ${(()=>{
+      // Has a register already been entered for this class on this date, and by whom?
+      const taken = Object.keys(rec).length>0;
+      const meta = DB.attendanceMeta && DB.attendanceMeta[cls.id] && DB.attendanceMeta[cls.id][view.date];
+      if(taken){
+        const who = meta ? `by <b>${meta.byName||meta.by}</b>${meta.at ? ' on '+fmtDateTime(new Date(meta.at).toISOString()) : ''}` : '(who entered it was not recorded)';
+        return `<div class="crud-box" style="border-color:var(--sage);background:var(--sage-soft);"><span style="font-size:12.5px;color:var(--ink);">&#10003; Attendance for ${cls.name} on ${fmtDate(view.date)} has already been entered ${who}. Changing a mark below will update it.</span></div>`;
+      }
+      const past = view.date < todayStr(0);
+      return `<div class="crud-box" style="border-color:${past?'var(--brick)':'var(--line)'};background:${past?'#FBEAE8':'transparent'};"><span style="font-size:12.5px;color:${past?'var(--brick)':'var(--slate)'};">${past?'&#9873; No attendance has been entered for '+cls.name+' on '+fmtDate(view.date)+' yet.':'Attendance for '+fmtDate(view.date)+' has not been entered yet. Everyone shows as Present until you mark the register.'}</span></div>`;
+    })()}
     <div class="panel"><div class="panel-body" style="padding-top:14px;">
       ${roster.map((s,i)=>{
         const status = rec[s.id] || 'present';
