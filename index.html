@@ -2972,6 +2972,7 @@ const NAV_ITEMS = [
   { id:'attendance', label:'Attendance', ic:'&#10003;', visible: ()=> session.role==='Admin' || classTeacherClasses().length>0 },
   { id:'activity', label:'Staff Activity', ic:'&#9873;', visible: ()=> session.role==='Admin' || isHeadTeacher() },
   { id:'classes', label:'Classes', ic:'&#9776;', adminOnly:true },
+  { id:'mock', label:'Mock Exams', ic:'&#128196;', visible: ()=> session.role==='Admin' || accessibleClasses().some(c=>c.level==='JHS' && teachableSubjects(c).length>0) },
   { id:'timetable', label:'Timetable', ic:'&#128197;', visible: ()=> session.role==='Admin' || session.role==='Parent' || accessibleClasses().length>0 },
   { id:'staff', label:'Staff Accounts', ic:'&#128273;', adminOnly:true },
   { id:'bill', label:'Bill', ic:'&#128176;', visible: ()=>isBillAccess() },
@@ -3038,6 +3039,7 @@ function render(){
     case 'attendance': el.innerHTML = renderAttendance(); break;
     case 'activity': el.innerHTML = renderActivity(); break;
     case 'classes': el.innerHTML = renderClasses(); break;
+    case 'mock': el.innerHTML = renderMock(); break;
     case 'timetable': el.innerHTML = renderTimetable(); break;
     case 'staff': el.innerHTML = renderStaff(); break;
     case 'bill': el.innerHTML = renderBill(); break;
@@ -4327,6 +4329,173 @@ function activeTimetableMode(){
   return DB.systemStatus==='vacation' ? 'vacation' : 'term';
 }
 
+/* ---------- Mock exams: teachers scan & upload scripts, parents see the marks and scripts ----------
+   Small facts (mark + which scans belong to a child) live in DB.mock, created only when a teacher
+   first saves something. The scans themselves are separate cloud documents ("scr_…") in the same
+   collection, so they never make the main database heavier or slower to sync. */
+const MOCK_MAX_DOC_CHARS = 800000;   // Firestore's limit is ~1 MB per document
+function mockEntry(classId, subj, studentId){ return (((DB.mock||{})[classId]||{})[subj]||{})[studentId] || null; }
+function mockEntryWrite(classId, subj, studentId){
+  if(!DB.mock) DB.mock = {};
+  if(!DB.mock[classId]) DB.mock[classId] = {};
+  if(!DB.mock[classId][subj]) DB.mock[classId][subj] = {};
+  if(!DB.mock[classId][subj][studentId]) DB.mock[classId][subj][studentId] = { mark:null, scripts:[] };
+  return DB.mock[classId][subj][studentId];
+}
+function mockToast(text){
+  let t = document.getElementById('att-toast');
+  if(!t){ t = document.createElement('div'); t.id = 'att-toast'; t.className = 'att-toast'; document.body.appendChild(t); }
+  t.textContent = text; void t.offsetWidth; t.classList.add('show');
+  clearTimeout(attToastTimer); attToastTimer = setTimeout(()=>t.classList.remove('show'), 2200);
+}
+/* Shrinks a scanned page / phone photo until it fits comfortably inside one cloud document. */
+function scanToDataUrl(file){
+  return new Promise((resolve, reject)=>{
+    const reader = new FileReader();
+    reader.onerror = ()=>reject(new Error('read failed'));
+    reader.onload = ()=>{
+      const img = new Image();
+      img.onerror = ()=>reject(new Error('not an image'));
+      img.onload = ()=>{
+        let width = Math.min(1400, img.width), quality = 0.8;
+        for(let tries=0; tries<8; tries++){
+          const h = Math.round(img.height * width / img.width);
+          const c = document.createElement('canvas'); c.width = width; c.height = h;
+          const ctx = c.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0,0,width,h); ctx.drawImage(img,0,0,width,h);
+          const out = c.toDataURL('image/jpeg', quality);
+          if(out.length <= MOCK_MAX_DOC_CHARS) return resolve(out);
+          width = Math.round(width*0.82); quality = Math.max(0.55, quality-0.05);
+        }
+        reject(new Error('too large'));
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+async function setMockMark(classId, subj, studentId, val){
+  const raw = String(val).trim();
+  if(raw===''){ const e = mockEntry(classId, subj, studentId); if(e){ e.mark = null; await saveDB(); render(); } return; }
+  const n = Number(raw);
+  if(!isFinite(n) || n<0 || n>100){ alert('Please enter a mark from 0 to 100.'); render(); return; }
+  mockEntryWrite(classId, subj, studentId).mark = n;
+  await saveDB();
+  render();
+}
+async function uploadMockScripts(classId, subj, studentId, files){
+  if(!files || !files.length) return;
+  if(!cloudEnabled || !firestoreDB){ alert('Scripts are stored online. Please connect to the internet (cloud sync) and try again.'); return; }
+  const list = Array.from(files);
+  const added = []; let failed = 0;
+  for(let i=0;i<list.length;i++){
+    mockToast(`Uploading scan ${i+1} of ${list.length}…`);
+    try{
+      const data = await scanToDataUrl(list[i]);
+      const id = 'scr_' + Date.now() + '_' + Math.random().toString(36).slice(2,7);
+      await cloudCol().doc(id).set({ kind:'script', classId, subject:subj, studentId, data, at:Date.now(), by:session.username });
+      added.push(id);
+    }catch(e){ console.warn('script upload failed', e); failed++; }
+  }
+  if(added.length){
+    const e = mockEntryWrite(classId, subj, studentId);
+    e.scripts.push(...added);
+    await saveDB();
+    render();
+  }
+  mockToast(failed ? `${added.length} uploaded, ${failed} failed — use clear photos/images only.` : `✓ ${added.length} scan${added.length===1?'':'s'} uploaded`);
+}
+async function deleteMockScript(classId, subj, studentId, scriptId){
+  if(!confirm('Remove this scanned page? The parent will no longer see it.')) return;
+  const e = mockEntry(classId, subj, studentId);
+  if(!e) return;
+  e.scripts = e.scripts.filter(x=>x!==scriptId);
+  await saveDB();
+  try{ if(cloudEnabled && firestoreDB) await cloudCol().doc(scriptId).delete(); }catch(err){ console.warn('script delete failed', err); }
+  closeMockViewer();
+  render();
+}
+function closeMockViewer(){ const v = document.getElementById('mock-viewer'); if(v) v.remove(); }
+async function viewMockScripts(classId, subj, studentId, canDelete){
+  const e = mockEntry(classId, subj, studentId);
+  if(!e || !e.scripts.length) return;
+  if(!cloudEnabled || !firestoreDB){ alert('Scripts are stored online. Please connect to the internet and try again.'); return; }
+  closeMockViewer();
+  const st = studentById(studentId);
+  const box = document.createElement('div');
+  box.id = 'mock-viewer';
+  box.style.cssText = 'position:fixed;inset:0;background:rgba(10,15,30,.86);z-index:10000;overflow:auto;padding:16px;';
+  box.innerHTML = `<div style="max-width:900px;margin:0 auto;">
+    <div style="display:flex;align-items:center;gap:10px;color:#fff;margin-bottom:12px;">
+      <div style="flex:1;font-weight:700;">${st?st.name:''} — ${subj} mock script</div>
+      <button class="btn-small brass" onclick="closeMockViewer()">Close</button></div>
+    <div id="mock-viewer-body" style="color:#fff;font-size:13px;">Loading…</div></div>`;
+  document.body.appendChild(box);
+  try{
+    const docs = await Promise.all(e.scripts.map(id=>cloudCol().doc(id).get()));
+    const body = document.getElementById('mock-viewer-body');
+    if(!body) return;
+    body.innerHTML = docs.map((d,i)=> d.exists
+      ? `<div style="background:#fff;border-radius:8px;padding:8px;margin-bottom:14px;">
+          <div style="display:flex;align-items:center;color:var(--ink);font-size:12px;margin-bottom:6px;"><span style="flex:1;">Page ${i+1} of ${docs.length}</span>
+          ${canDelete ? `<button class="btn-ghost" style="color:var(--brick);" onclick="deleteMockScript('${classId}','${subj}','${studentId}','${e.scripts[i]}')">Remove page</button>` : ''}</div>
+          <img src="${d.data().data}" style="width:100%;height:auto;display:block;"></div>`
+      : `<div style="margin-bottom:14px;">Page ${i+1} is no longer available.</div>`).join('');
+  }catch(err){
+    const body = document.getElementById('mock-viewer-body');
+    if(body) body.textContent = 'Could not load the scripts right now. Please check your connection and try again.';
+  }
+}
+let mockSel = { classId:null, subject:null };
+function renderMock(){
+  const classes = accessibleClasses().filter(c=>c.level==='JHS' && teachableSubjects(c).length>0);
+  if(!classes.length) return `<div class="topbar"><div><div class="eyebrow">Assessment</div><h1>Mock Exams</h1></div></div><div class="empty">You don't teach a JHS subject yet.</div>`;
+  if(!classes.find(c=>c.id===mockSel.classId)) mockSel.classId = (classes.find(c=>/9/.test(c.name)) || classes[0]).id;
+  const cls = classOf(mockSel.classId);
+  const subs = teachableSubjects(cls);
+  if(!subs.includes(mockSel.subject)) mockSel.subject = subs[0];
+  const subj = mockSel.subject;
+  const roster = studentsOf(cls.id);
+  return `
+    <div class="topbar"><div><div class="eyebrow">Assessment</div><h1>Mock Exams</h1></div></div>
+    <p style="margin:0 0 12px;font-size:12.5px;color:var(--slate);">Scan each student's mock script (photos or scanned images) and upload it here. Parents of the student can then see the mark and the script on their page.</p>
+    <div class="toolbar">
+      ${classes.length>1 ? `<select onchange="mockSel.classId=this.value; mockSel.subject=null; render()">${classes.map(c=>`<option value="${c.id}" ${c.id===cls.id?'selected':''}>${c.name}</option>`).join('')}</select>` : `<b>${cls.name}</b>`}
+      <select onchange="mockSel.subject=this.value; render()">${subs.map(n=>`<option value="${n.replace(/"/g,'&quot;')}" ${n===subj?'selected':''}>${n}</option>`).join('')}</select>
+    </div>
+    <div class="panel"><div class="panel-body" style="padding-top:14px;">
+      ${roster.length ? roster.map((s,i)=>{
+        const e = mockEntry(cls.id, subj, s.id);
+        const n = e ? e.scripts.length : 0;
+        return `<div class="ledger-row">
+          <span class="idx mono">${String(i+1).padStart(2,'0')}</span>
+          <span style="flex:1;font-weight:600;">${s.name}</span>
+          <input class="score-input" type="number" min="0" max="100" placeholder="/100" value="${e && e.mark!==null && e.mark!==undefined ? e.mark : ''}" onchange="setMockMark('${cls.id}','${subj}','${s.id}',this.value)" title="Mock mark out of 100 (optional)">
+          ${n ? `<button class="btn-ghost" onclick="viewMockScripts('${cls.id}','${subj}','${s.id}',true)">View (${n})</button>` : ''}
+          <button class="btn-small brass" onclick="document.getElementById('mock-file-${s.id}').click()">${n?'Add scans':'Upload script'}</button>
+          <input type="file" id="mock-file-${s.id}" accept="image/*" multiple style="display:none" onchange="uploadMockScripts('${cls.id}','${subj}','${s.id}',this.files); this.value=''">
+        </div>`;
+      }).join('') : '<div class="empty">No students in this class.</div>'}
+    </div></div>`;
+}
+/* Parent view: one row per subject that has a mock mark or scanned script for this child. */
+function mockPanelForParent(s){
+  const bySubject = (DB.mock||{})[s.classId] || {};
+  const rows = Object.keys(bySubject).map(subj=>({ subj, e: bySubject[subj][s.id] })).filter(r=>r.e && ((r.e.mark!==null && r.e.mark!==undefined) || (r.e.scripts||[]).length));
+  if(!rows.length) return '';
+  const marks = rows.filter(r=>r.e.mark!==null && r.e.mark!==undefined).map(r=>Number(r.e.mark));
+  const avg = marks.length ? Math.round(marks.reduce((a,b)=>a+b,0)/marks.length) : null;
+  return `
+    <div class="panel"><div class="panel-head"><h3>Mock exam</h3></div>
+      <div class="panel-body" style="padding-top:12px;">
+        <table class="reg"><thead><tr><th>Subject</th><th style="text-align:center;">Mock mark</th><th>Script</th></tr></thead><tbody>
+          ${rows.map(r=>`<tr><td style="font-weight:600;">${r.subj}</td>
+            <td class="mono" style="text-align:center;">${r.e.mark!==null && r.e.mark!==undefined ? r.e.mark+'/100' : '—'}</td>
+            <td>${(r.e.scripts||[]).length ? `<button class="btn-small" onclick="viewMockScripts('${s.classId}','${r.subj}','${s.id}',false)">View script (${r.e.scripts.length} page${r.e.scripts.length===1?'':'s'})</button>` : '<span style="font-size:12px;color:var(--slate);">not uploaded yet</span>'}</td></tr>`).join('')}
+        </tbody></table>
+        ${avg!==null ? `<p style="margin:10px 0 0;font-size:13px;">Mock average so far: <b class="mono">${avg}%</b> across ${marks.length} subject${marks.length===1?'':'s'}.</p>` : ''}
+      </div>
+    </div>`;
+}
 function renderTimetable(){
   if(session.role==='Admin') return renderTimetableAdmin();
   if(session.role==='Parent') return renderTimetableParent();
@@ -4929,6 +5098,16 @@ async function assignSubjectTeacher(classId, subjectName, username){
    Staff Activity — admin oversight of weekly SBA entry and
    daily attendance-taking, with redflags for missed deadlines.
 ============================================================ */
+/* Staff Activity can be shown short (the most important rows first — missed ones are sorted to the
+   top) or expanded to the full list. This is only how the page is displayed; nothing is saved. */
+const ACTIVITY_COMPACT_ROWS = 8;
+let activityExpanded = { sba:false, att:false };
+function toggleActivity(key){ activityExpanded[key] = !activityExpanded[key]; render(); }
+function setAllActivity(open){ activityExpanded.sba = open; activityExpanded.att = open; render(); }
+function activityToggleBtn(key, total){
+  if(total<=ACTIVITY_COMPACT_ROWS) return '';
+  return `<button class="btn-ghost" onclick="toggleActivity('${key}')">${activityExpanded[key] ? 'Show less' : `Show all (${total})`}</button>`;
+}
 function renderActivity(){
   const curWeek = currentTermWeek();
 
@@ -4980,7 +5159,8 @@ function renderActivity(){
     .sort((a,b)=>b.lastSeen-a.lastSeen);
 
   return `
-    <div class="topbar"><div><div class="eyebrow">Oversight</div><h1>Staff Activity</h1></div></div>
+    <div class="topbar"><div><div class="eyebrow">Oversight</div><h1>Staff Activity</h1></div>
+      <div style="display:flex;gap:8px;"><button class="btn-ghost" onclick="setAllActivity(false)">Show less</button><button class="btn-ghost" onclick="setAllActivity(true)">Expand all</button></div></div>
 
     <div class="panel"><div class="panel-head"><h3>Online now</h3><span class="mono" style="font-size:12px;color:var(--slate);">${onlineUsers.length} active</span></div>
       <div class="panel-body" style="padding-top:10px;">
@@ -5002,13 +5182,13 @@ function renderActivity(){
       <div class="stat-card"><div class="label">Days without attendance taken</div><div class="value" style="${attFlags?'color:var(--brick);':''}">${attFlags}</div><div class="sub">Since term start</div></div>
     </div>
 
-    <div class="panel"><div class="panel-head"><h3>Weekly SBA activity — subject teachers</h3></div>
+    <div class="panel"><div class="panel-head"><h3>Weekly SBA activity — subject teachers</h3>${activityToggleBtn('sba', sbaRows.length)}</div>
       <div class="panel-body" style="padding-top:10px;">
         ${!sbaRows.length ? '<p style="margin:0;font-size:13px;color:var(--slate);">No subjects have weekly assessment switched on yet.</p>' : `
         <table class="reg">
           <thead><tr><th>Class</th><th>Subject</th><th>Teacher</th><th>Week</th><th>Status</th></tr></thead>
           <tbody>
-            ${sbaRows.map(r=>`<tr>
+            ${(activityExpanded.sba ? sbaRows : sbaRows.slice(0,ACTIVITY_COMPACT_ROWS)).map(r=>`<tr>
               <td>${r.className}</td><td>${r.subject}</td><td>${r.teacher}</td><td class="mono">Wk ${r.week}</td>
               <td>${r.done
                 ? `<span style="color:var(--green,#2E7D32);font-weight:600;">✓ Entered${r.meta?' by '+r.meta.byName:''}</span>`
@@ -5018,16 +5198,17 @@ function renderActivity(){
               </td>
             </tr>`).join('')}
           </tbody>
-        </table>`}
+        </table>
+        ${!activityExpanded.sba && sbaRows.length>ACTIVITY_COMPACT_ROWS ? `<p style="margin:10px 0 0;font-size:12px;color:var(--slate);">Showing the ${ACTIVITY_COMPACT_ROWS} most important of ${sbaRows.length} (missed ones first). Use "Show all" to see everything.</p>` : ''}`}
       </div>
     </div>
 
-    <div class="panel"><div class="panel-head"><h3>Attendance activity — class teachers</h3>${attFlags ? `<button class="btn-small brass" onclick="bulkMarkAllMissedAttendancePresent()">Mark all "Not taken" as Present (${attFlags})</button>` : ''}</div>
+    <div class="panel"><div class="panel-head"><h3>Attendance activity — class teachers</h3><div style="display:flex;gap:8px;flex-wrap:wrap;">${activityToggleBtn('att', Math.min(attRows.length,60))}${attFlags ? `<button class="btn-small brass" onclick="bulkMarkAllMissedAttendancePresent()">Mark all "Not taken" as Present (${attFlags})</button>` : ''}</div></div>
       <div class="panel-body" style="padding-top:10px;">
         <table class="reg">
           <thead><tr><th>Class</th><th>Class teacher</th><th>Date</th><th>Status</th></tr></thead>
           <tbody>
-            ${attRows.slice(0,60).map(r=>`<tr>
+            ${attRows.slice(0, activityExpanded.att ? 60 : ACTIVITY_COMPACT_ROWS).map(r=>`<tr>
               <td>${r.className}</td><td>${r.classTeacher}</td><td class="mono">${fmtDate(r.date)}</td>
               <td>${r.taken
                 ? `<span style="color:var(--green,#2E7D32);font-weight:600;">✓ Taken${r.meta?' by '+r.meta.byName:''}</span>`
@@ -5038,7 +5219,8 @@ function renderActivity(){
             </tr>`).join('')}
           </tbody>
         </table>
-        ${attRows.length>60 ? `<p style="margin:10px 0 0;font-size:12px;color:var(--slate);">Showing the most recent 60 of ${attRows.length} school days.</p>` : ''}
+        ${activityExpanded.att && attRows.length>60 ? `<p style="margin:10px 0 0;font-size:12px;color:var(--slate);">Showing the most recent 60 of ${attRows.length} school days.</p>` : ''}
+        ${!activityExpanded.att && attRows.length>ACTIVITY_COMPACT_ROWS ? `<p style="margin:10px 0 0;font-size:12px;color:var(--slate);">Showing the ${ACTIVITY_COMPACT_ROWS} most important of ${attRows.length} (days not taken first). Use "Show all" to see more.</p>` : ''}
       </div>
     </div>
   `;
@@ -5682,6 +5864,8 @@ function renderParentPortal(){
         ${ringStat(statusPct, status.color, `<span style="font-size:22px;">${status.icon}</span>`, status.label)}
       </div>
     </div>
+
+    ${mockPanelForParent(s)}
 
     <div class="panel"><div class="panel-head"><h3>Progress report</h3></div>
       <div class="panel-body" style="padding-top:14px;">
