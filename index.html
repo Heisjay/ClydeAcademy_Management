@@ -933,6 +933,7 @@ function normalizeGhanaPhone(raw){
   return digits;
 }
 async function sendFeePaymentSMS(studentId, paymentId){
+  if(TEST_MODE) return { ok:false, error:'Test mode — no SMS is sent.' };
   const s = studentById(studentId);
   const payment = s && (s.payments||[]).find(p=>p.id===paymentId);
   if(!s || !payment) return { ok:false, error:'Payment not found.' };
@@ -1171,7 +1172,22 @@ async function idbSet(key,val){
   });
 }
 let persistChain = Promise.resolve();
+/* TEST MODE — open the site with ?test=1 on the end of the address. It loads your real data so you can
+   try anything, but NOTHING is saved: no cloud writes, no on-device copy, no SMS, no script uploads.
+   Refresh the page and everything goes back to how it was. */
+const TEST_MODE = new URLSearchParams(location.search).get('test')==='1';
+if(TEST_MODE){
+  document.addEventListener('DOMContentLoaded', ()=>{
+    document.title = '[TEST] ' + document.title;
+    const b = document.createElement('div');
+    b.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:100000;background:#b5473c;color:#fff;text-align:center;font:600 12.5px sans-serif;padding:5px 8px;';
+    b.innerHTML = 'TEST MODE — you are working on a safe copy. Nothing you do here is saved or texted. <a href="'+location.pathname+'" style="color:#fff;text-decoration:underline;margin-left:8px;">Leave test mode</a>';
+    document.body.appendChild(b);
+    document.body.style.paddingTop = '28px';
+  });
+}
 function persistLocal(){
+  if(TEST_MODE) return persistChain;
   if(placeholder || !DB) return persistChain;
   const rec = { payload: DB, base: baseStr, cloudRev, dirty, updatedAt: Date.now(), lastBackupAt };
   persistChain = persistChain.then(async ()=>{
@@ -1333,6 +1349,7 @@ async function fetchRemote(){
   throw new Error('Could not read a consistent copy of the cloud data');
 }
 async function pushToCloud(str, expectedRev, force){
+  if(TEST_MODE) return expectedRev || newRev();
   const col = cloudCol();
   const parts = chunkString(str);
   const rev = newRev();
@@ -1352,6 +1369,7 @@ async function pushToCloud(str, expectedRev, force){
 
 /* ---------- Cloud backups ---------- */
 async function writeBackup(str, reason){
+  if(TEST_MODE) return null;
   if(!cloudEnabled || !firestoreDB) return null;
   const col = cloudCol(), id = 'bk_' + Date.now(), parts = chunkString(str);
   for(let i=0;i<parts.length;i+=20){
@@ -1423,6 +1441,7 @@ function requestSync(delay){
 }
 async function syncNow(){
   if(!cloudEnabled || !firestoreDB || !syncReady) return 'local';
+  if(TEST_MODE && !placeholder) return 'local';   // test mode: load once, then never sync again
   if(syncPromise){ syncQueued = true; return syncPromise; }
   syncPromise = (async()=>{
     let result = 'synced';
@@ -2972,9 +2991,11 @@ const NAV_ITEMS = [
   { id:'attendance', label:'Attendance', ic:'&#10003;', visible: ()=> session.role==='Admin' || classTeacherClasses().length>0 },
   { id:'activity', label:'Staff Activity', ic:'&#9873;', visible: ()=> session.role==='Admin' || isHeadTeacher() },
   { id:'classes', label:'Classes', ic:'&#9776;', adminOnly:true },
+  { id:'ready', label:'Report Check', ic:'&#10003;', visible: ()=> session.role==='Admin' || classTeacherClasses().length>0 },
   { id:'mock', label:'Mock Exams', ic:'&#128196;', visible: ()=> session.role==='Admin' || accessibleClasses().some(c=>c.level==='JHS' && teachableSubjects(c).length>0) },
   { id:'timetable', label:'Timetable', ic:'&#128197;', visible: ()=> session.role==='Admin' || session.role==='Parent' || accessibleClasses().length>0 },
   { id:'staff', label:'Staff Accounts', ic:'&#128273;', adminOnly:true },
+  { id:'audit', label:'Activity Log', ic:'&#128220;', adminOnly:true },
   { id:'bill', label:'Bill', ic:'&#128176;', visible: ()=>isBillAccess() },
   { id:'announcements', label:'Announcements', ic:'&#128227;', visible: ()=>isBillAccess() },
   { id:'parent', label:'My Ward(s)', ic:'&#128118;' },
@@ -3040,6 +3061,8 @@ function render(){
     case 'activity': el.innerHTML = renderActivity(); break;
     case 'classes': el.innerHTML = renderClasses(); break;
     case 'mock': el.innerHTML = renderMock(); break;
+    case 'audit': el.innerHTML = renderAudit(); break;
+    case 'ready': el.innerHTML = renderReadiness(); break;
     case 'timetable': el.innerHTML = renderTimetable(); break;
     case 'staff': el.innerHTML = renderStaff(); break;
     case 'bill': el.innerHTML = renderBill(); break;
@@ -3443,7 +3466,9 @@ async function bulkAddStudentsFromFile(){
 }
 async function removeStudent(id){
   const s = studentById(id);
-  if(!confirm(`Remove ${s.name} and all of their grade/attendance records? This cannot be undone.`)) return;
+  if(!confirm(`Remove ${s.name} and all of their grade/attendance records? You can restore them afterwards from the Activity Log (admin).`)) return;
+  const snap = snapshotStudent(id);
+  logAudit('Student removed', `${s.name} (${classOf(s.classId)?classOf(s.classId).name:'—'}) was removed.`, snap);
   DB.students = DB.students.filter(x=>x.id!==id);
   Object.values(DB.gradebook).forEach(subjMap=>{
     Object.values(subjMap).forEach(sub=>{ delete sub.scores[id]; });
@@ -3881,6 +3906,7 @@ function renderGradebook(){
         }).join('')}
       </tbody></table>
       ${(()=>{ const meta = DB.weeklyMeta[cls.id]?.[view.subject]?.[gbWeek]; return meta ? `<p style="margin:10px 0 0;font-size:12px;color:var(--slate);">Last recorded by <b>${meta.byName}</b> on ${fmtDate(new Date(meta.at).toISOString().slice(0,10))}.</p>` : ''; })()}
+      ${canEdit && roster.some(s=>(sub.weeklyScores[s.id]||{})['w'+gbWeek]!==undefined) ? `<div style="margin-top:12px;"><button class="btn-small" onclick="textWeeklyMarks('${cls.id}','${view.subject}',${gbWeek})">Text parents Week ${gbWeek} marks</button></div>` : ''}
       ${canEdit && gbWeek<curWeek && !weekIsLocked ? `
       <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line);">
         <button class="btn-small brass" onclick="lockWeeklyWeek('${cls.id}','${view.subject}',${gbWeek})">${isAdminUser ? `Lock Week ${gbWeek}` : `Submit &amp; lock Week ${gbWeek}`}</button>
@@ -4032,6 +4058,7 @@ async function lockWeeklyWeek(classId, subj, week){
   if(!confirm(`Lock Week ${week}? Once locked, you won't be able to change these marks yourself again — only the administrator can.`)) return;
   if(!sub.weeklyLocks) sub.weeklyLocks = {};
   sub.weeklyLocks[week] = { by: session.username, byName: session.name, at: Date.now() };
+  logAudit('Week locked', `${subj}, Week ${week} (${classOf(classId)?classOf(classId).name:''}).`);
   await saveDB();
   render();
 }
@@ -4040,6 +4067,7 @@ async function unlockWeeklyWeek(classId, subj, week){
   const sub = DB.gradebook[classId][subj];
   if(!sub || !sub.weeklyLocks) return;
   delete sub.weeklyLocks[week];
+  logAudit('Week unlocked', `${subj}, Week ${week} (${classOf(classId)?classOf(classId).name:''}).`);
   await saveDB();
   render();
 }
@@ -4090,6 +4118,7 @@ function renderAttendance(){
       </select>` : ''}
       <input type="date" value="${view.date}" onchange="view.date=this.value; render()">
       ${roster.length ? `<button class="btn-small brass" onclick="markAllPresent('${cls.id}','${view.date}')">&#10003; All present</button>` : ''}
+      ${roster.some(s=>rec[s.id]==='absent') ? `<button class="btn-small" onclick="textAbsentParents('${cls.id}','${view.date}')">Text parents of absent (${roster.filter(s=>rec[s.id]==='absent').length})</button>` : ''}
     </div>
     ${weekendNote}
     ${(()=>{
@@ -4340,10 +4369,247 @@ function activeTimetableMode(){
   return DB.systemStatus==='vacation' ? 'vacation' : 'term';
 }
 
+/* ---------- Texts to parents: previewed first, never automatic, never sent twice ----------
+   Every send here is a deliberate button click that first shows how many texts will go and an
+   example. What has been sent is remembered in DB.alertsSent (created on the first send) so the
+   same text isn't sent again. Nothing is texted when the site loads. */
+async function smsSendRaw(rawPhone, message){
+  if(TEST_MODE) return { ok:false, error:'Test mode — no SMS is sent.' };
+  if(!smsIsConfigured()) return { ok:false, error:'SMS is not set up.' };
+  const phone = normalizeGhanaPhone(rawPhone);
+  if(!phone) return { ok:false, error:'No valid phone number.' };
+  try{
+    const resp = await fetch(`https://api.mnotify.com/api/sms/quick?key=${encodeURIComponent(SMS_CONFIG.apiKey)}`, {
+      method:'POST', headers:{ 'Content-Type':'application/json' },
+      body: JSON.stringify({ recipient:[phone], sender:SMS_CONFIG.senderId, message, is_schedule:false, schedule_date:'' })
+    });
+    const raw = await resp.text().catch(()=>'');
+    let data = null; try{ data = raw ? JSON.parse(raw) : null; }catch(e){}
+    const ok = resp.ok && data && (String(data.code)==='2000' || String(data.status).toLowerCase()==='success');
+    return ok ? { ok:true } : { ok:false, error:(data && (data.message||data.status)) || raw.slice(0,160) || ('HTTP '+resp.status) };
+  }catch(e){ return { ok:false, error:'Could not reach the SMS service (network).' }; }
+}
+function portalLinkForSMS(){ return SMS_CONFIG.portalUrl || (location.origin + location.pathname); }
+function alertAlreadySent(key, ttlMs){
+  const ts = DB.alertsSent && DB.alertsSent[key];
+  return !!ts && (!ttlMs || (Date.now()-ts) < ttlMs);
+}
+/* items: [{ studentId, key, message, ttlDays? }] */
+async function sendParentAlerts(title, items){
+  if(!smsIsConfigured()){ alert('SMS is not set up yet (see SMS_CONFIG in the site file).'); return; }
+  const fresh = items.filter(it=>!alertAlreadySent(it.key, (it.ttlDays||0)*86400000));
+  const already = items.length - fresh.length;
+  const withPhone = fresh.filter(it=>normalizeGhanaPhone((studentById(it.studentId)||{}).guardian));
+  const noPhone = fresh.length - withPhone.length;
+  if(!withPhone.length){
+    alert('Nothing to send.' + (already?` ${already} parent${already===1?' was':'s were'} already texted.`:'') + (noPhone?` ${noPhone} student${noPhone===1?' has':'s have'} no valid guardian number.`:''));
+    return;
+  }
+  const summary = `${title}\n\nSend ${withPhone.length} text${withPhone.length===1?'':'s'}?` + (already?`\n(${already} already sent — skipped)`:'') + (noPhone?`\n(${noPhone} with no valid number — skipped)`:'') + `\n\nExample:\n"${withPhone[0].message}"`;
+  if(!confirm(summary)) return;
+  if(TEST_MODE){ alert(`Test mode — ${withPhone.length} text${withPhone.length===1?'':'s'} would have been sent here.`); return; }
+  let sent = 0, failed = 0, firstErr = '';
+  for(let i=0;i<withPhone.length;i++){
+    mockToast(`Sending ${i+1} of ${withPhone.length}…`);
+    const r = await smsSendRaw(studentById(withPhone[i].studentId).guardian, withPhone[i].message);
+    if(r.ok){ sent++; if(!DB.alertsSent) DB.alertsSent = {}; DB.alertsSent[withPhone[i].key] = Date.now(); }
+    else { failed++; if(!firstErr) firstErr = r.error; }
+  }
+  if(DB.alertsSent){
+    const ks = Object.keys(DB.alertsSent);
+    if(ks.length>800) ks.sort((a,b)=>DB.alertsSent[a]-DB.alertsSent[b]).slice(0,ks.length-800).forEach(k=>delete DB.alertsSent[k]);
+  }
+  logAudit('Parent texts sent', `${title}: ${sent} sent${failed?`, ${failed} failed`:''}.`);
+  await saveDB(); render();
+  alert(`${sent} text${sent===1?'':'s'} sent.` + (failed?`\n${failed} failed${firstErr?' ('+firstErr+')':''}.`:''));
+}
+function textAbsentParents(classId, date){
+  const cls = classOf(classId);
+  const rec = (DB.attendance[classId] && DB.attendance[classId][date]) || {};
+  const items = studentsOf(classId).filter(s=>rec[s.id]==='absent').map(s=>({
+    studentId:s.id, key:`abs|${date}|${s.id}`,
+    message:`${DB.school.name}: ${s.name} was marked absent from school on ${fmtDate(date)}. If this is unexpected, please contact the class teacher.` }));
+  if(!items.length){ alert('Nobody is marked absent for this date.'); return; }
+  sendParentAlerts(`Absence texts — ${cls.name}, ${fmtDate(date)}`, items);
+}
+function textWeeklyMarks(classId, subj, week){
+  const sub = DB.gradebook[classId][subj];
+  const items = studentsOf(classId).filter(s=>{ const v=(sub.weeklyScores[s.id]||{})['w'+week]; return v!==undefined && v!==null; }).map(s=>{
+    const v = sub.weeklyScores[s.id]['w'+week];
+    return { studentId:s.id, key:`wk|${classId}|${subj}|${week}|${s.id}|${v}`,
+      message:`${DB.school.name}: ${s.name} scored ${v}/${sub.weeklyMax} in ${subj} (Week ${week}). See all marks on the portal: ${portalLinkForSMS()}` };
+  });
+  if(!items.length){ alert('No marks have been entered for this week yet.'); return; }
+  sendParentAlerts(`Weekly marks — ${subj}, Week ${week}`, items);
+}
+function textMockParents(classId, subj){
+  const items = studentsOf(classId).map(s=>({ s, e: mockEntry(classId, subj, s.id) })).filter(r=>r.e && ((r.e.mark!==null && r.e.mark!==undefined) || (r.e.scripts||[]).length)).map(({s,e})=>{
+    const hasMark = e.mark!==null && e.mark!==undefined, hasScript = (e.scripts||[]).length>0;
+    const what = hasMark && hasScript ? `mock result (${e.mark}/100) and script` : (hasMark ? `mock result (${e.mark}/100)` : 'mock script');
+    return { studentId:s.id, key:`mock|${classId}|${subj}|${s.id}|${e.mark}|${(e.scripts||[]).length}`,
+      message:`${DB.school.name}: ${s.name}'s ${subj} ${what} is now on the portal: ${portalLinkForSMS()}` };
+  });
+  if(!items.length){ alert('No mock marks or scripts have been added yet.'); return; }
+  sendParentAlerts(`Mock exam — ${subj}`, items);
+}
+/* Fee balance reminders (assistant head teacher / admin) */
+function feeBalanceOf(s){
+  const cls = classOf(s.classId);
+  const payable = (cls ? billTotalForClass(cls) : 0) + (Number(s.arrears)||0);
+  const paid = (s.payments||[]).reduce((t,p)=>t+(Number(p.amount)||0), 0);
+  return Math.max(0, payable - paid);
+}
+function textFeeReminders(category){
+  if(!isBillAccess() && session.role!=='Admin') return;
+  const students = DB.classes.filter(c=>billCategoryForClass(c)===category).flatMap(c=>studentsOf(c.id));
+  const items = students.map(s=>({ s, bal: feeBalanceOf(s) })).filter(r=>r.bal>0.009).map(({s,bal})=>({
+    studentId:s.id, key:`fee|${s.id}|${Math.round(bal)}`, ttlDays:7,
+    message:`${DB.school.name}: Fee reminder — ${s.name}'s outstanding balance is GHS ${bal.toFixed(2)}. Please settle it at the school, or see details on the portal: ${portalLinkForSMS()}. Thank you.` }));
+  if(!items.length){ alert('Nobody in this group has an outstanding balance.'); return; }
+  sendParentAlerts(`Fee balance reminders — ${BILL_CATEGORY_LABELS[category]}`, items);
+}
+/* ---------- Report check: what is still missing before report cards are printed ---------- */
+function readinessFor(cls){
+  const subjects = cls.subjects.filter(x=>x.type!=='nonacademic');
+  return studentsOf(cls.id).map(s=>{
+    const issues = [];
+    const missing = missingProfileFields(s);
+    if(missing.length) issues.push('Profile: no '+missing.join(' / no '));
+    const noClass = [], partial = [], noExam = [];
+    subjects.forEach(sub=>{
+      const b = subjectBreakdown(cls.id, sub.name, s.id);
+      if(!b || b.sba50===null) noClass.push(sub.name);
+      else if(b.weeksTotal && b.weeksEntered<b.weeksTotal) partial.push(`${sub.name} (${b.weeksEntered}/${b.weeksTotal} weeks)`);
+      if(!b || b.examScore===null) noExam.push(sub.name);
+    });
+    if(noClass.length) issues.push('No class score: '+noClass.join(', '));
+    if(partial.length) issues.push('Weeks missing: '+partial.join(', '));
+    if(noExam.length) issues.push('No exam mark: '+noExam.join(', '));
+    return { s, issues, ready: issues.length===0 };
+  });
+}
+let readySel = { classId:null, onlyIssues:false };
+function renderReadiness(){
+  const classes = session.role==='Admin' ? DB.classes : classTeacherClasses();
+  if(!classes.length) return `<div class="topbar"><div><div class="eyebrow">Reports</div><h1>Report Check</h1></div></div><div class="empty">You are not the class teacher of any class.</div>`;
+  if(!classes.find(c=>c.id===readySel.classId)) readySel.classId = classes[0].id;
+  const cls = classOf(readySel.classId);
+  const rows = readinessFor(cls);
+  const ready = rows.filter(r=>r.ready);
+  const shown = readySel.onlyIssues ? rows.filter(r=>!r.ready) : rows;
+  return `
+    <div class="topbar"><div><div class="eyebrow">Reports</div><h1>Report Check</h1></div></div>
+    <p style="margin:0 0 12px;font-size:12.5px;color:var(--slate);">Before printing report cards, see which students still have something missing: profile details, class scores, or exam marks.</p>
+    <div class="toolbar">
+      ${classes.length>1 ? `<select onchange="readySel.classId=this.value; render()">${classes.map(c=>`<option value="${c.id}" ${c.id===cls.id?'selected':''}>${c.name}</option>`).join('')}</select>` : `<b>${cls.name}</b>`}
+      <label style="display:flex;align-items:center;gap:5px;font-size:12.5px;color:var(--slate);"><input type="checkbox" ${readySel.onlyIssues?'checked':''} onchange="readySel.onlyIssues=this.checked; render()"> Only students with something missing</label>
+      ${ready.length ? `<button class="btn-small brass" onclick='printClassReportCards(${JSON.stringify(ready.map(r=>r.s.id))})'>Print ${ready.length} ready report card${ready.length===1?'':'s'}</button>` : ''}
+    </div>
+    <p style="margin:0 0 12px;font-size:13px;"><b>${ready.length}</b> of <b>${rows.length}</b> students are ready${rows.length-ready.length?` — <span style="color:var(--brick);">${rows.length-ready.length} need attention</span>`:' &#10003;'}.</p>
+    <div class="panel"><div class="panel-body" style="padding-top:12px;">
+      ${shown.length ? shown.map((r,i)=>`<div class="ledger-row" style="align-items:flex-start;">
+        <span class="idx mono">${String(i+1).padStart(2,'0')}</span>
+        <div style="flex:1;"><div style="font-weight:600;">${r.s.name}</div>
+          ${r.ready ? '<div style="font-size:12px;color:var(--sage);">&#10003; Ready</div>' : r.issues.map(t=>`<div style="font-size:12px;color:var(--brick);">&#9888; ${t}</div>`).join('')}</div>
+        <button class="btn-ghost" onclick="openStudent('${r.s.id}')">Open</button></div>`).join('') : '<div class="empty">Everyone in this class is ready.</div>'}
+    </div></div>`;
+}
 /* ---------- Mock exams: teachers scan & upload scripts, parents see the marks and scripts ----------
    Small facts (mark + which scans belong to a child) live in DB.mock, created only when a teacher
    first saves something. The scans themselves are separate cloud documents ("scr_…") in the same
    collection, so they never make the main database heavier or slower to sync. */
+/* ---------- Activity log: who did what, plus "Restore" for removed staff and students ----------
+   Created only when something is actually done (nothing is written when the site loads). Keeps the
+   newest 300 entries; only the newest 25 removals keep the snapshot needed to restore them. */
+function logAudit(action, detail, undo){
+  if(!DB.auditLog) DB.auditLog = [];
+  DB.auditLog.push({ id:'au'+Date.now()+Math.random().toString(36).slice(2,5), at:Date.now(),
+    by: session ? session.username : '', byName: session ? session.name : '', action, detail, undo: undo||null });
+  if(DB.auditLog.length>300) DB.auditLog = DB.auditLog.slice(-300);
+  let keep = 0;
+  for(let i=DB.auditLog.length-1;i>=0;i--){ if(DB.auditLog[i].undo){ keep++; if(keep>25) DB.auditLog[i].undo = null; } }
+}
+function snapshotStaff(username){
+  const u = DB.users.find(x=>x.username===username);
+  if(!u) return null;
+  const assignments = [];
+  DB.classes.forEach(c=>{
+    if(c.classTeacher===username) assignments.push({ classId:c.id, role:'classTeacher' });
+    c.subjects.forEach(sub=>{ if(sub.teacher===username) assignments.push({ classId:c.id, subject:sub.name }); });
+  });
+  return { type:'staff', record: JSON.parse(JSON.stringify(u)), assignments };
+}
+function snapshotStudent(id){
+  const st = studentById(id);
+  if(!st) return null;
+  const marks = [], attendance = [];
+  Object.entries(DB.gradebook).forEach(([cid,subjMap])=>Object.entries(subjMap).forEach(([subj,sub])=>{
+    const e = { cid, subj, scores: sub.scores[id], weekly: sub.weeklyScores && sub.weeklyScores[id], exam: sub.examScores && sub.examScores[id] };
+    if(e.scores!==undefined || e.weekly!==undefined || e.exam!==undefined) marks.push(JSON.parse(JSON.stringify(e)));
+  }));
+  Object.entries(DB.attendance).forEach(([cid,dateMap])=>Object.entries(dateMap).forEach(([date,rec])=>{
+    if(rec[id]!==undefined) attendance.push({ cid, date, status: rec[id] });
+  }));
+  return { type:'student', record: JSON.parse(JSON.stringify(st)), marks, attendance };
+}
+function applyStaffRestore(snap){
+  if(DB.users.some(u=>u.username===snap.record.username)) return { ok:false, msg:`The username "${snap.record.username}" already exists again — nothing was restored.` };
+  DB.users.push(JSON.parse(JSON.stringify(snap.record)));
+  let back = 0;
+  (snap.assignments||[]).forEach(a=>{
+    const c = DB.classes.find(x=>x.id===a.classId);
+    if(!c) return;
+    if(a.role==='classTeacher'){ if(!c.classTeacher){ c.classTeacher = snap.record.username; back++; } }
+    else { const sub = c.subjects.find(x=>x.name===a.subject); if(sub && !sub.teacher){ sub.teacher = snap.record.username; back++; } }
+  });
+  return { ok:true, msg:`${snap.record.name}'s account is back${back?` with ${back} class/subject assignment${back===1?'':'s'}`:''}.` };
+}
+function applyStudentRestore(snap){
+  const id = snap.record.id;
+  if(studentById(id)) return { ok:false, msg:'This student is already on the list.' };
+  if(!DB.classes.find(c=>c.id===snap.record.classId)) return { ok:false, msg:"The student's old class no longer exists, so they can't be restored there." };
+  DB.students.push(JSON.parse(JSON.stringify(snap.record)));
+  (snap.marks||[]).forEach(m=>{
+    const sub = DB.gradebook[m.cid] && DB.gradebook[m.cid][m.subj];
+    if(!sub) return;
+    if(m.scores!==undefined) sub.scores[id] = m.scores;
+    if(m.weekly!==undefined){ if(!sub.weeklyScores) sub.weeklyScores = {}; sub.weeklyScores[id] = m.weekly; }
+    if(m.exam!==undefined){ if(!sub.examScores) sub.examScores = {}; sub.examScores[id] = m.exam; }
+  });
+  (snap.attendance||[]).forEach(a=>{
+    const rec = DB.attendance[a.cid] && DB.attendance[a.cid][a.date];
+    if(rec) rec[id] = a.status;
+  });
+  return { ok:true, msg:`${snap.record.name} is back, with their marks and attendance.` };
+}
+async function restoreFromLog(entryId){
+  if(session.role!=='Admin') return;
+  const e = (DB.auditLog||[]).find(x=>x.id===entryId);
+  if(!e || !e.undo) return;
+  if(!confirm('Restore this? '+e.detail)) return;
+  const r = e.undo.type==='staff' ? applyStaffRestore(e.undo) : applyStudentRestore(e.undo);
+  if(!r.ok){ alert(r.msg); return; }
+  e.undo = null; e.restored = true;
+  logAudit('Restored', r.msg);
+  await saveDB();
+  render();
+  alert(r.msg);
+}
+function renderAudit(){
+  const list = (DB.auditLog||[]).slice().reverse().slice(0,150);
+  return `
+    <div class="topbar"><div><div class="eyebrow">Oversight</div><h1>Activity Log</h1></div></div>
+    <p style="margin:0 0 12px;font-size:12.5px;color:var(--slate);">A record of important actions — removals, payments, locked weeks, approvals. Removed staff and students can be restored from here (the most recent 25 removals).</p>
+    <div class="panel"><div class="panel-body" style="padding-top:12px;">
+      ${list.length ? `<table class="reg"><thead><tr><th>When</th><th>Who</th><th>What</th><th></th></tr></thead><tbody>
+        ${list.map(e=>`<tr>
+          <td style="white-space:nowrap;font-size:12px;">${fmtDateTime(new Date(e.at).toISOString())}</td>
+          <td style="font-size:12.5px;">${e.byName||e.by||'—'}</td>
+          <td><b style="font-size:12.5px;">${e.action}</b><div style="font-size:12px;color:var(--slate);">${e.detail||''}</div></td>
+          <td>${e.undo ? `<button class="btn-small brass" onclick="restoreFromLog('${e.id}')">Restore</button>` : (e.restored ? '<span style="font-size:11.5px;color:var(--sage);">restored</span>' : '')}</td></tr>`).join('')}
+      </tbody></table>` : '<div class="empty">Nothing has been logged yet. Actions from now on will appear here.</div>'}
+    </div></div>`;
+}
 const MOCK_MAX_DOC_CHARS = 800000;   // Firestore's limit is ~1 MB per document
 function mockEntry(classId, subj, studentId){ return (((DB.mock||{})[classId]||{})[subj]||{})[studentId] || null; }
 function mockEntryWrite(classId, subj, studentId){
@@ -4360,6 +4626,18 @@ function mockToast(text){
   clearTimeout(attToastTimer); attToastTimer = setTimeout(()=>t.classList.remove('show'), 2200);
 }
 /* Shrinks a scanned page / phone photo until it fits comfortably inside one cloud document. */
+function shrinkToDataUrl(src, srcW, srcH){
+  let width = Math.min(1400, srcW), quality = 0.8;
+  for(let tries=0; tries<8; tries++){
+    const h = Math.round(srcH * width / srcW);
+    const c = document.createElement('canvas'); c.width = width; c.height = h;
+    const ctx = c.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0,0,width,h); ctx.drawImage(src,0,0,width,h);
+    const out = c.toDataURL('image/jpeg', quality);
+    if(out.length <= MOCK_MAX_DOC_CHARS) return out;
+    width = Math.round(width*0.82); quality = Math.max(0.55, quality-0.05);
+  }
+  return null;
+}
 function scanToDataUrl(file){
   return new Promise((resolve, reject)=>{
     const reader = new FileReader();
@@ -4367,22 +4645,43 @@ function scanToDataUrl(file){
     reader.onload = ()=>{
       const img = new Image();
       img.onerror = ()=>reject(new Error('not an image'));
-      img.onload = ()=>{
-        let width = Math.min(1400, img.width), quality = 0.8;
-        for(let tries=0; tries<8; tries++){
-          const h = Math.round(img.height * width / img.width);
-          const c = document.createElement('canvas'); c.width = width; c.height = h;
-          const ctx = c.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0,0,width,h); ctx.drawImage(img,0,0,width,h);
-          const out = c.toDataURL('image/jpeg', quality);
-          if(out.length <= MOCK_MAX_DOC_CHARS) return resolve(out);
-          width = Math.round(width*0.82); quality = Math.max(0.55, quality-0.05);
-        }
-        reject(new Error('too large'));
-      };
+      img.onload = ()=>{ const out = shrinkToDataUrl(img, img.width, img.height); out ? resolve(out) : reject(new Error('too large')); };
       img.src = reader.result;
     };
     reader.readAsDataURL(file);
   });
+}
+/* PDF scans: the PDF reader is only downloaded the first time someone uploads a PDF. Each page
+   (up to 20) becomes one picture, handled exactly like a photographed page. */
+let pdfjsPromise = null;
+function loadPdfJs(){
+  if(window.pdfjsLib) return Promise.resolve(window.pdfjsLib);
+  if(pdfjsPromise) return pdfjsPromise;
+  pdfjsPromise = new Promise((resolve, reject)=>{
+    const sc = document.createElement('script');
+    sc.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+    sc.onload = ()=>{ try{ window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'; resolve(window.pdfjsLib); }catch(e){ reject(e); } };
+    sc.onerror = ()=>{ pdfjsPromise = null; reject(new Error('Could not load the PDF reader — check your internet connection.')); };
+    document.head.appendChild(sc);
+  });
+  return pdfjsPromise;
+}
+async function pdfToDataUrls(file){
+  const lib = await loadPdfJs();
+  const pdf = await lib.getDocument({ data: await file.arrayBuffer() }).promise;
+  const out = [];
+  for(let p=1; p<=Math.min(pdf.numPages, 20); p++){
+    const page = await pdf.getPage(p);
+    const base = page.getViewport({ scale:1 });
+    const vp = page.getViewport({ scale: Math.min(2, 1400/base.width) });
+    const c = document.createElement('canvas'); c.width = Math.round(vp.width); c.height = Math.round(vp.height);
+    const ctx = c.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0,0,c.width,c.height);
+    await page.render({ canvasContext: ctx, viewport: vp }).promise;
+    const url = shrinkToDataUrl(c, c.width, c.height);
+    if(!url) throw new Error('page too large');
+    out.push(url);
+  }
+  return out;
 }
 async function setMockMark(classId, subj, studentId, val){
   const raw = String(val).trim();
@@ -4395,17 +4694,25 @@ async function setMockMark(classId, subj, studentId, val){
 }
 async function uploadMockScripts(classId, subj, studentId, files){
   if(!files || !files.length) return;
+  if(TEST_MODE){ alert('Test mode — scripts are not uploaded.'); return; }
   if(!cloudEnabled || !firestoreDB){ alert('Scripts are stored online. Please connect to the internet (cloud sync) and try again.'); return; }
   const list = Array.from(files);
   const added = []; let failed = 0;
   for(let i=0;i<list.length;i++){
-    mockToast(`Uploading scan ${i+1} of ${list.length}…`);
+    mockToast(`Preparing file ${i+1} of ${list.length}…`);
+    let pages = [];
     try{
-      const data = await scanToDataUrl(list[i]);
-      const id = 'scr_' + Date.now() + '_' + Math.random().toString(36).slice(2,7);
-      await cloudCol().doc(id).set({ kind:'script', classId, subject:subj, studentId, data, at:Date.now(), by:session.username });
-      added.push(id);
-    }catch(e){ console.warn('script upload failed', e); failed++; }
+      const isPdf = list[i].type==='application/pdf' || /\.pdf$/i.test(list[i].name);
+      pages = isPdf ? await pdfToDataUrls(list[i]) : [await scanToDataUrl(list[i])];
+    }catch(e){ console.warn('script prepare failed', e); failed++; continue; }
+    for(let k=0;k<pages.length;k++){
+      mockToast(`Uploading page ${k+1} of ${pages.length} (file ${i+1}/${list.length})…`);
+      try{
+        const id = 'scr_' + Date.now() + '_' + Math.random().toString(36).slice(2,7);
+        await cloudCol().doc(id).set({ kind:'script', classId, subject:subj, studentId, data:pages[k], at:Date.now(), by:session.username });
+        added.push(id);
+      }catch(e){ console.warn('script upload failed', e); failed++; }
+    }
   }
   if(added.length){
     const e = mockEntryWrite(classId, subj, studentId);
@@ -4413,7 +4720,7 @@ async function uploadMockScripts(classId, subj, studentId, files){
     await saveDB();
     render();
   }
-  mockToast(failed ? `${added.length} uploaded, ${failed} failed — use clear photos/images only.` : `✓ ${added.length} scan${added.length===1?'':'s'} uploaded`);
+  mockToast(failed ? `${added.length} page${added.length===1?'':'s'} uploaded, ${failed} failed — use clear photos, images or PDFs.` : `✓ ${added.length} page${added.length===1?'':'s'} uploaded`);
 }
 async function deleteMockScript(classId, subj, studentId, scriptId){
   if(!confirm('Remove this scanned page? The parent will no longer see it.')) return;
@@ -4421,7 +4728,7 @@ async function deleteMockScript(classId, subj, studentId, scriptId){
   if(!e) return;
   e.scripts = e.scripts.filter(x=>x!==scriptId);
   await saveDB();
-  try{ if(cloudEnabled && firestoreDB) await cloudCol().doc(scriptId).delete(); }catch(err){ console.warn('script delete failed', err); }
+  try{ if(!TEST_MODE && cloudEnabled && firestoreDB) await cloudCol().doc(scriptId).delete(); }catch(err){ console.warn('script delete failed', err); }
   closeMockViewer();
   render();
 }
@@ -4466,12 +4773,15 @@ function renderMock(){
   if(!subs.includes(mockSel.subject)) mockSel.subject = subs[0];
   const subj = mockSel.subject;
   const roster = studentsOf(cls.id);
+  const subjMarks = roster.map(s=>{ const e = mockEntry(cls.id, subj, s.id); return e && e.mark!==null && e.mark!==undefined ? Number(e.mark) : null; });
+  const posOf = m => m===null ? '' : ordinal(1 + subjMarks.filter(x=>x!==null && x>m).length);
   return `
     <div class="topbar"><div><div class="eyebrow">Assessment</div><h1>Mock Exams</h1></div></div>
     <p style="margin:0 0 12px;font-size:12.5px;color:var(--slate);">Scan each student's mock script (photos or scanned images) and upload it here. Parents of the student can then see the mark and the script on their page.</p>
     <div class="toolbar">
       ${classes.length>1 ? `<select onchange="mockSel.classId=this.value; mockSel.subject=null; render()">${classes.map(c=>`<option value="${c.id}" ${c.id===cls.id?'selected':''}>${c.name}</option>`).join('')}</select>` : `<b>${cls.name}</b>`}
       <select onchange="mockSel.subject=this.value; render()">${subs.map(n=>`<option value="${n.replace(/"/g,'&quot;')}" ${n===subj?'selected':''}>${n}</option>`).join('')}</select>
+      <button class="btn-small" onclick="textMockParents('${cls.id}','${subj}')">Text parents</button>
     </div>
     <div class="panel"><div class="panel-body" style="padding-top:14px;">
       ${roster.length ? roster.map((s,i)=>{
@@ -4480,12 +4790,41 @@ function renderMock(){
         return `<div class="ledger-row">
           <span class="idx mono">${String(i+1).padStart(2,'0')}</span>
           <span style="flex:1;font-weight:600;">${s.name}</span>
+          <span class="mono" style="font-size:12px;color:var(--slate);min-width:34px;text-align:right;" title="Position in this subject">${posOf(subjMarks[i])}</span>
           <input class="score-input" type="number" min="0" max="100" placeholder="/100" value="${e && e.mark!==null && e.mark!==undefined ? e.mark : ''}" onchange="setMockMark('${cls.id}','${subj}','${s.id}',this.value)" title="Mock mark out of 100 (optional)">
           ${n ? `<button class="btn-ghost" onclick="viewMockScripts('${cls.id}','${subj}','${s.id}',true)">View (${n})</button>` : ''}
           <button class="btn-small brass" onclick="document.getElementById('mock-file-${s.id}').click()">${n?'Add scans':'Upload script'}</button>
-          <input type="file" id="mock-file-${s.id}" accept="image/*" multiple style="display:none" onchange="uploadMockScripts('${cls.id}','${subj}','${s.id}',this.files); this.value=''">
+          <input type="file" id="mock-file-${s.id}" accept="image/*,application/pdf" multiple style="display:none" onchange="uploadMockScripts('${cls.id}','${subj}','${s.id}',this.files); this.value=''">
         </div>`;
       }).join('') : '<div class="empty">No students in this class.</div>'}
+    </div></div>
+    ${mockSummaryPanel(cls)}`;
+}
+/* Whole-class mock summary (admin and the class teacher): every subject's mark, the average and the position. */
+function mockSummaryRows(cls){
+  const subjects = cls.subjects.filter(x=>x.type!=='nonacademic' && studentsOf(cls.id).some(s=>{ const e=mockEntry(cls.id,x.name,s.id); return e && e.mark!==null && e.mark!==undefined; }));
+  const rows = studentsOf(cls.id).map(s=>{
+    const marks = subjects.map(x=>{ const e = mockEntry(cls.id, x.name, s.id); return e && e.mark!==null && e.mark!==undefined ? Number(e.mark) : null; });
+    const got = marks.filter(m=>m!==null);
+    return { s, marks, avg: got.length ? Math.round(got.reduce((a,b)=>a+b,0)/got.length) : null, count: got.length };
+  });
+  const avgs = rows.filter(r=>r.avg!==null).map(r=>r.avg);
+  rows.forEach(r=>{ r.pos = r.avg===null ? null : 1 + avgs.filter(a=>a>r.avg).length; });
+  return { subjects, rows };
+}
+function mockSummaryPanel(cls){
+  if(session.role!=='Admin' && cls.classTeacher!==session.username) return '';
+  const { subjects, rows } = mockSummaryRows(cls);
+  if(!subjects.length) return '';
+  const ranked = rows.slice().sort((a,b)=>(a.pos===null)-(b.pos===null) || a.pos-b.pos || a.s.name.localeCompare(b.s.name));
+  return `<div class="panel"><div class="panel-head"><h3>${cls.name} — mock summary</h3></div>
+    <div class="panel-body" style="padding-top:12px;overflow-x:auto;">
+      <table class="reg"><thead><tr><th>Pos</th><th>Student</th>${subjects.map(x=>`<th style="text-align:center;">${x.name}</th>`).join('')}<th style="text-align:center;">Average</th></tr></thead><tbody>
+        ${ranked.map(r=>`<tr><td class="mono">${r.pos!==null?ordinal(r.pos):'—'}</td><td style="font-weight:600;white-space:nowrap;">${r.s.name}</td>
+          ${r.marks.map(m=>`<td class="mono" style="text-align:center;">${m!==null?m:'—'}</td>`).join('')}
+          <td class="mono" style="text-align:center;font-weight:700;">${r.avg!==null?r.avg+'%':'—'}</td></tr>`).join('')}
+      </tbody></table>
+      <p style="margin:10px 0 0;font-size:12px;color:var(--slate);">Average is across the subjects each student has a mock mark for so far; position is by that average.</p>
     </div></div>`;
 }
 /* Parent view: one row per subject that has a mock mark or scanned script for this child. */
@@ -5266,6 +5605,10 @@ function renderBill(){
       ${BILL_CATEGORIES.map(c=>`<button class="${c===cat?'active':''}" style="padding:8px 18px;border-radius:24px;border:1.5px solid var(--line);background:${c===cat?'var(--brass-soft)':'var(--white)'};border-color:${c===cat?'var(--brass)':'var(--line)'};font-size:13px;font-weight:600;color:var(--ink);" onclick="billSelectedCategory='${c}'; render()">${BILL_CATEGORY_LABELS[c]}</button>`).join('')}
     </div>
 
+    <div class="panel"><div class="panel-head"><h3>Balance reminders</h3>
+      <button class="btn-small brass" onclick="textFeeReminders('${cat}')">Text ${BILL_CATEGORY_LABELS[cat]} parents who owe (${categoryStudents.filter(s=>feeBalanceOf(s)>0.009).length})</button></div>
+      <div class="panel-body" style="padding-top:8px;"><p style="margin:0;font-size:12.5px;color:var(--slate);">You'll see how many texts will go, and an example, before anything is sent. A parent isn't texted again about the same balance within 7 days.</p></div></div>
+
     <div class="panel"><div class="panel-head"><h3>${BILL_CATEGORY_LABELS[cat]} bill items (this term)</h3></div>
       <div class="panel-body" style="padding-top:10px;">
         ${!items.length ? `<p style="margin:0 0 12px;font-size:13px;color:var(--slate);">No ${BILL_CATEGORY_LABELS[cat]} bill items yet — add the first one below.</p>` : `
@@ -5470,6 +5813,7 @@ async function recordFeePayment(studentId){
     smsError: null
   };
   s.payments.push(payment);
+  logAudit('Payment recorded', `GHS ${amount.toFixed(2)} for ${s.name}.`);
   await saveDB();
   input.value = '';
   render();
@@ -5723,6 +6067,7 @@ async function approveWardRequest(id){
   // Same rule as registration: the first parent's number stays as the guardian contact.
   if(!hadParent && parent.contact) st.guardian = parent.contact;
   DB.wardRequests = DB.wardRequests.filter(x=>x.id!==id);
+  logAudit('Child added to parent', `${st.name} was linked to ${parent.name}'s account.`);
   await saveDB();
   render();
 }
@@ -6010,6 +6355,7 @@ function renderStaff(){
     <div class="panel"><div class="panel-head"><h3>Data safety &amp; backups</h3></div>
       <div class="panel-body" style="padding-top:14px;padding-bottom:16px;">
         <p style="margin:0 0 10px;font-size:13px;color:var(--slate);">Every change is saved on this device first, then uploaded to the cloud automatically. If two devices edit at the same time their changes are merged. Copies of the whole database are also kept in the cloud, and you can download one to keep.</p>
+        <p style="margin:0 0 10px;font-size:13px;color:var(--slate);"><b>Try things safely:</b> <a href="${location.pathname}?test=1" target="_blank" style="color:var(--brass);font-weight:600;">open the test copy</a>. It uses your real data but nothing is saved, texted or uploaded, and a red banner shows at the top. Refresh to start over.</p>
         <div style="display:flex;gap:8px;flex-wrap:wrap;">
           <button class="btn-small brass" onclick="dsSyncNow()">Sync now</button>
           <button class="btn-small" onclick="dsVerifyCloudCopy()">Verify cloud copy now</button>
@@ -6434,7 +6780,10 @@ async function removeStaffSignature(username){
   render();
 }
 async function removeStaff(username){
-  if(!confirm('Remove @'+username+'\'s account?')) return;
+  if(!confirm('Remove @'+username+'\'s account? You can restore it afterwards from the Activity Log.')) return;
+  const snap = snapshotStaff(username);
+  const who = DB.users.find(u=>u.username===username);
+  logAudit('Account removed', `${who?who.name:username} (@${username}, ${who?who.role:''}) was removed.`, snap);
   DB.users = DB.users.filter(u=>u.username!==username);
   DB.classes.forEach(c=>{
     if(c.classTeacher===username) c.classTeacher = null;
