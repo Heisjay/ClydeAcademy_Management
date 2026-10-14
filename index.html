@@ -2328,6 +2328,9 @@ function teachableSubjects(cls){
    sba50 = sbaRaw scaled to a mark out of 50.
    examScore = raw exam mark out of 100. exam50 = that scaled to a mark out of 50.
    grand = sba50 + exam50, i.e. the mark out of 100 used everywhere else in the app. */
+/* A mark only counts as "entered" if it is a real number. A blank, empty-text or invalid value that
+   got stored by mistake must not be treated as a score of 0 (which made empty subjects count). */
+function hasMark(v){ return v!==undefined && v!==null && String(v).trim()!=='' && isFinite(Number(v)); }
 function subjectBreakdown(classId, subj, studentId){
   const sub = DB.gradebook[classId]?.[subj];
   if(!sub) return null;
@@ -2338,7 +2341,7 @@ function subjectBreakdown(classId, subj, studentId){
     const weeklyRec = sub.weeklyScores[studentId] || {};
     for(let w=1; w<=weeks; w++){
       const v = weeklyRec['w'+w];
-      if(v!==undefined && v!==null){ earned += Number(v)||0; weeksEntered++; }
+      if(hasMark(v)){ earned += Number(v)||0; weeksEntered++; }
     }
     // Fixed base: every week of the session counts, so a full set of weekly marks = 60.
     // A week with no mark entered simply counts as 0 until it is filled in.
@@ -2349,7 +2352,7 @@ function subjectBreakdown(classId, subj, studentId){
     if(sc && Object.keys(sc).length){
       let earned=0, total=0, anyEntered=false;
       sub.assessments.forEach(a=>{
-        if(sc[a.id]!==undefined && sc[a.id]!==null){ earned += Number(sc[a.id])||0; anyEntered = true; }
+        if(hasMark(sc[a.id])){ earned += Number(sc[a.id])||0; anyEntered = true; }
         total += a.max;
       });
       if(anyEntered){ sbaRaw = earned; sbaMax = total; }
@@ -2360,7 +2363,7 @@ function subjectBreakdown(classId, subj, studentId){
   const sba60 = (sbaRaw!==null && sbaMax) ? (sbaRaw/sbaMax)*60 : null;
   const sba50 = sba60!==null ? sba60*50/60 : null;
   const examRaw = sub.examScores ? sub.examScores[studentId] : null;
-  const examScore = (examRaw!==undefined && examRaw!==null) ? Number(examRaw) : null;
+  const examScore = hasMark(examRaw) ? Number(examRaw) : null;
   const exam50 = examScore!==null ? (examScore/100)*50 : null;
   let grand = null;
   if(sba50!==null || exam50!==null) grand = Math.round((sba50||0) + (exam50||0));
