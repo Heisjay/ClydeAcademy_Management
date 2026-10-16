@@ -3000,7 +3000,7 @@ const NAV_ITEMS = [
   { id:'staff', label:'Staff Accounts', ic:'&#128273;', adminOnly:true },
   { id:'audit', label:'Activity Log', ic:'&#128220;', adminOnly:true },
   { id:'bill', label:'Bill', ic:'&#128176;', visible: ()=>isBillAccess() },
-  { id:'announcements', label:'Announcements', ic:'&#128227;', visible: ()=>isBillAccess() },
+  { id:'announcements', label:'Announcements', ic:'&#128227;', visible: ()=>canAnnounce() },
   { id:'parent', label:'My Ward(s)', ic:'&#128118;' },
 ];
 /* Head teacher can view Staff Activity for oversight (no edit controls exist on that page anyway,
@@ -3011,6 +3011,8 @@ function isHeadTeacher(){
 /* Only the assistant head teacher (academics) can see/use the Bill and Announcements tabs —
    checked by account, not by role, so even Admin and the head teacher are excluded unless
    specifically assigned as assistant head via Staff Accounts. */
+/* Who may send announcements to parents: the assistant head teacher (academics) and the admin (IT admin). */
+function canAnnounce(){ return !!session && (session.role==='Admin' || isBillAccess()); }
 function isBillAccess(){
   return !!session && session.username===DB.assistantHeadTeacherUsername;
 }
@@ -3351,6 +3353,7 @@ function renderDashboard(){
       <div><div class="eyebrow">${fmtDate(todayStr(0))}</div><h1>Welcome back, ${session.name.split(' ')[0]}</h1></div>
       <div class="date-badge">${session.role} ${session.role!=='Admin' ? '· '+(myClasses.length ? myClasses.map(c=>c.name).join(', ') : 'No classes yet') : '· All classes'}</div>
     </div>
+    ${session.role==='Teacher' ? teacherAnnouncementsPanel() : ''}
     ${session.role==='Admin' && pendingWardRequests().length ? `<div class="fee-alert"><div class="fee-alert-icon">&#128106;</div><div class="fee-alert-body"><div class="fee-alert-title">${pendingWardRequests().length} parent request${pendingWardRequests().length===1?'':'s'} to add a child</div><div class="fee-alert-sub">Review ${pendingWardRequests().length===1?'it':'them'} under Staff Accounts.</div></div><button class="btn-small brass" onclick="goTo('staff')">Review</button></div>` : ''}
     <div class="stat-grid">
       <div class="stat-card"><div class="label">Students</div><div class="value">${total}</div><div class="sub">${session.role==='Admin'?'Across '+numClasses+' classes':'In your classes'}</div></div>
@@ -5963,20 +5966,44 @@ async function dismissBillNotice(studentId, noticeKey){
    and it shows up in a feed at the top of the Parent Portal.
 ============================================================ */
 let announceAudience = 'all';
+/* Audiences: 'all' = all parents, a class id = that class's parents, 'teachers' = all teachers,
+   'everyone' = all parents and all teachers. */
+function annAudienceLabel(a){
+  if(a.audience==='all') return 'All parents';
+  if(a.audience==='teachers') return 'All teachers';
+  if(a.audience==='everyone') return 'All parents and teachers';
+  const c = classOf(a.audience);
+  return c ? c.name+' parents' : 'A class';
+}
+function teacherAnnouncementsPanel(){
+  const feed = (DB.announcements||[]).filter(a=>a.audience==='teachers' || a.audience==='everyone')
+    .sort((a,b)=> new Date(b.date) - new Date(a.date)).slice(0,5);
+  if(!feed.length) return '';
+  return `<div class="panel"><div class="panel-head"><h3>School announcements</h3></div>
+    <div class="panel-body" style="padding-top:10px;">
+      ${feed.map(a=>`<div class="fee-alert" style="align-items:flex-start;">
+        <div class="fee-alert-icon">&#128227;</div>
+        <div class="fee-alert-body">
+          <div class="fee-alert-title">${a.title}</div>
+          <div class="fee-alert-sub" style="white-space:pre-wrap;">${a.message}</div>
+          <div class="fee-alert-sub" style="margin-top:6px;font-size:11px;color:var(--brass);font-weight:600;">${fmtDateTime(a.date)}${a.author?' · '+a.author:''}</div>
+        </div></div>`).join('')}
+    </div></div>`;
+}
 function renderAnnouncements(){
-  if(!isBillAccess()){
+  if(!canAnnounce()){
     return `
       <div class="topbar"><div><div class="eyebrow">Restricted</div><h1>Announcements</h1></div></div>
-      <div class="empty">Only the assistant head teacher (academics) can send announcements.</div>
+      <div class="empty">Only the admin and the assistant head teacher (academics) can send announcements.</div>
     `;
   }
   const list = (DB.announcements||[]).slice().sort((a,b)=> new Date(b.date) - new Date(a.date));
   return `
-    <div class="topbar"><div><div class="eyebrow">Assistant head teacher (academics) only</div><h1>Announcements</h1></div></div>
+    <div class="topbar"><div><div class="eyebrow">Admin &amp; assistant head teacher</div><h1>Announcements</h1></div></div>
 
     <div class="panel"><div class="panel-head"><h3>Send a new announcement</h3></div>
       <div class="panel-body" style="padding-top:10px;">
-        <p style="margin:0 0 12px;font-size:12px;color:var(--slate);">This will appear at the top of the portal for every parent it's addressed to, right away.</p>
+        <p style="margin:0 0 12px;font-size:12px;color:var(--slate);">This appears right away for everyone it's addressed to — at the top of a parent's page, or on a teacher's dashboard.</p>
         <div style="display:flex;flex-direction:column;gap:10px;max-width:560px;">
           <input type="text" id="ann-title" placeholder="Title (e.g. Mid-term break notice)" style="padding:10px 12px;border:1px solid var(--line);border-radius:8px;">
           <textarea id="ann-message" rows="4" placeholder="Write the announcement..." style="padding:10px 12px;border:1px solid var(--line);border-radius:8px;font-family:inherit;resize:vertical;"></textarea>
@@ -5984,6 +6011,8 @@ function renderAnnouncements(){
             <label style="font-size:12px;font-weight:600;color:var(--slate);display:block;margin-bottom:6px;">Send to</label>
             <select id="ann-audience" style="padding:8px 10px;border:1px solid var(--line);border-radius:8px;min-width:220px;" onchange="announceAudience=this.value">
               <option value="all" ${announceAudience==='all'?'selected':''}>All parents (whole school)</option>
+              <option value="teachers" ${announceAudience==='teachers'?'selected':''}>All teachers</option>
+              <option value="everyone" ${announceAudience==='everyone'?'selected':''}>Everyone — parents and teachers</option>
               ${DB.classes.map(c=>`<option value="${c.id}" ${announceAudience===c.id?'selected':''}>${c.name} only</option>`).join('')}
             </select>
           </div>
@@ -6003,7 +6032,7 @@ function renderAnnouncements(){
               <div class="fee-alert-title">${a.title}</div>
               <div class="fee-alert-sub" style="white-space:pre-wrap;">${a.message}</div>
               <div class="fee-alert-sub" style="margin-top:6px;font-size:11px;color:var(--brass);font-weight:600;">
-                To: ${cls ? cls.name : 'All parents'} · ${fmtDateTime(a.date)} · by ${a.author||'—'}
+                To: ${annAudienceLabel(a)} · ${fmtDateTime(a.date)} · by ${a.author||'—'}
               </div>
             </div>
             <button class="btn-danger" onclick="removeAnnouncement('${a.id}')">Delete</button>
@@ -6014,7 +6043,7 @@ function renderAnnouncements(){
   `;
 }
 async function addAnnouncement(){
-  if(!isBillAccess()) return;
+  if(!canAnnounce()) return;
   const titleEl = document.getElementById('ann-title');
   const msgEl = document.getElementById('ann-message');
   const title = titleEl.value.trim();
@@ -6029,6 +6058,7 @@ async function addAnnouncement(){
     date: new Date().toISOString(),
     author: session ? session.name : ''
   });
+  logAudit('Announcement sent', `"${title}" to ${annAudienceLabel({audience:announceAudience}).toLowerCase()}.`);
   await saveDB();
   titleEl.value = '';
   msgEl.value = '';
@@ -6036,7 +6066,7 @@ async function addAnnouncement(){
   render();
 }
 async function removeAnnouncement(id){
-  if(!isBillAccess()) return;
+  if(!canAnnounce()) return;
   if(!confirm('Delete this announcement? Parents will no longer see it.')) return;
   DB.announcements = (DB.announcements||[]).filter(a=>a.id!==id);
   await saveDB();
@@ -6246,7 +6276,7 @@ function renderParentPortal(){
 
     ${(()=>{
       const feed = (DB.announcements||[])
-        .filter(a=> a.audience==='all' || a.audience===cls.id)
+        .filter(a=> a.audience==='all' || a.audience==='everyone' || a.audience===cls.id)
         .sort((a,b)=> new Date(b.date) - new Date(a.date))
         .slice(0,5);
       if(!feed.length) return '';
