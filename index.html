@@ -5966,6 +5966,7 @@ async function dismissBillNotice(studentId, noticeKey){
    and it shows up in a feed at the top of the Parent Portal.
 ============================================================ */
 let announceAudience = 'all';
+let announceSms = true;   // announcements are also texted unless unticked
 /* Audiences: 'all' = all parents, a class id = that class's parents, 'teachers' = all teachers,
    'everyone' = all parents and all teachers. */
 function annAudienceLabel(a){
@@ -6016,6 +6017,11 @@ function renderAnnouncements(){
               ${DB.classes.map(c=>`<option value="${c.id}" ${announceAudience===c.id?'selected':''}>${c.name} only</option>`).join('')}
             </select>
           </div>
+          <label style="display:flex;gap:8px;align-items:flex-start;font-size:13px;">
+            <input type="checkbox" ${announceSms && smsIsConfigured()?'checked':''} ${smsIsConfigured()?'':'disabled'} onchange="announceSms=this.checked" style="margin-top:3px;">
+            <span>Also send as an SMS${smsIsConfigured()?'':' <span style="color:var(--brick);">(SMS is not set up)</span>'}<br>
+              <span style="font-size:11.5px;color:var(--slate);">Texts the teachers and/or parents it's addressed to (a parent's number comes from their account or the guardian contact). You'll see how many texts will go before anything is sent.</span></span>
+          </label>
           <button class="btn-small brass" style="align-self:flex-start;" onclick="addAnnouncement()">Send announcement</button>
         </div>
       </div>
@@ -6033,14 +6039,71 @@ function renderAnnouncements(){
               <div class="fee-alert-sub" style="white-space:pre-wrap;">${a.message}</div>
               <div class="fee-alert-sub" style="margin-top:6px;font-size:11px;color:var(--brass);font-weight:600;">
                 To: ${annAudienceLabel(a)} · ${fmtDateTime(a.date)} · by ${a.author||'—'}
+                ${a.sms ? ` · SMS: ${a.sms.sent} sent${a.sms.failed?`, ${a.sms.failed} failed`:''}` : ' · not texted'}
               </div>
             </div>
+            ${smsIsConfigured() && (!a.sms || a.sms.failed) ? `<button class="btn-ghost" onclick="textAnnouncement('${a.id}')">${a.sms ? 'Retry failed texts' : 'Also send as SMS'}</button>` : ''}
             <button class="btn-danger" onclick="removeAnnouncement('${a.id}')">Delete</button>
           </div>`;
         }).join('')}
       </div>
     </div>
   `;
+}
+/* Who gets the text for an announcement. Teachers use their account number; parents use the guardian
+   contact on each child and/or their parent account number. Numbers are de-duplicated, so a family
+   with several children (or someone who is both) is texted once. */
+function announcementRecipients(audience){
+  const seen = new Set(), teachers = [], parents = [];
+  const add = (list, raw, who)=>{ const n = normalizeGhanaPhone(raw); if(n && !seen.has(n)){ seen.add(n); list.push({ phone:raw, norm:n, who }); } };
+  if(audience==='teachers' || audience==='everyone'){
+    DB.users.filter(u=>u.role==='Teacher').forEach(u=>add(teachers, u.contact, u.name));
+  }
+  let noNumber = 0;
+  if(audience!=='teachers'){
+    const students = audience==='all' || audience==='everyone' ? DB.students.filter(s=>!s.graduated) : studentsOf(audience);
+    students.forEach(s=>{
+      const before = parents.length;
+      add(parents, s.guardian, s.name);
+      DB.users.filter(u=>u.role==='Parent' && (u.wardIds||[]).includes(s.id)).forEach(u=>add(parents, u.contact, u.name));
+      const reachable = [s.guardian, ...DB.users.filter(u=>u.role==='Parent' && (u.wardIds||[]).includes(s.id)).map(u=>u.contact)].some(r=>normalizeGhanaPhone(r));
+      if(!reachable) noNumber++;
+    });
+  }
+  return { teachers, parents, noNumber, all:[...teachers, ...parents] };
+}
+function announcementSmsText(title, message){ return `${DB.school.name}: ${title}\n${message}`; }
+function smsPartsOf(text){
+  const uni = /[^\x00-\x7F]/.test(text);
+  const single = uni ? 70 : 160, multi = uni ? 67 : 153;
+  return text.length<=single ? 1 : Math.ceil(text.length/multi);
+}
+/* Sends to everyone in `recipients` who hasn't already been texted this announcement. */
+async function runAnnouncementSms(a, recipients){
+  const text = announcementSmsText(a.title, a.message);
+  const todo = recipients.filter(r=>!alertAlreadySent(`ann|${a.id}|${r.norm}`));
+  let sent = 0, failed = 0, firstErr = '';
+  for(let i=0;i<todo.length;i++){
+    mockToast(`Texting ${i+1} of ${todo.length}…`);
+    const r = await smsSendRaw(todo[i].phone, text);
+    if(r.ok){ sent++; if(!DB.alertsSent) DB.alertsSent = {}; DB.alertsSent[`ann|${a.id}|${todo[i].norm}`] = Date.now(); }
+    else { failed++; if(!firstErr) firstErr = r.error; }
+  }
+  const prev = a.sms || { sent:0, failed:0 };
+  a.sms = { sent: prev.sent + sent, failed, at: Date.now(), total: recipients.length };
+  if(DB.alertsSent){
+    const ks = Object.keys(DB.alertsSent);
+    if(ks.length>1500) ks.sort((x,y)=>DB.alertsSent[x]-DB.alertsSent[y]).slice(0,ks.length-1500).forEach(k=>delete DB.alertsSent[k]);
+  }
+  logAudit('Announcement texted', `"${a.title}": ${sent} text${sent===1?'':'s'} sent${failed?`, ${failed} failed`:''}.`);
+  await saveDB(); render();
+  alert(`${sent} text${sent===1?'':'s'} sent.` + (failed?`\n${failed} failed${firstErr?' ('+firstErr+')':''} — use "Retry failed texts" on the announcement to try those again.`:''));
+}
+function recipientSummary(rec){
+  const bits = [];
+  if(rec.teachers.length) bits.push(`${rec.teachers.length} teacher${rec.teachers.length===1?'':'s'}`);
+  if(rec.parents.length) bits.push(`${rec.parents.length} parent number${rec.parents.length===1?'':'s'}`);
+  return bits.join(' and ');
 }
 async function addAnnouncement(){
   if(!canAnnounce()) return;
@@ -6049,21 +6112,46 @@ async function addAnnouncement(){
   const title = titleEl.value.trim();
   const message = msgEl.value.trim();
   if(!title || !message){ alert('Enter both a title and a message.'); return; }
+  const wantSms = announceSms && smsIsConfigured();
+  const rec = wantSms ? announcementRecipients(announceAudience) : null;
+  if(wantSms){
+    if(!rec.all.length){
+      if(!confirm('None of the people this is addressed to have a valid phone number on file, so no texts can be sent.\n\nPost the announcement anyway (without texts)?')) return;
+    } else {
+      const text = announcementSmsText(title, message), parts = smsPartsOf(text);
+      const msg = `Post this announcement and also text ${recipientSummary(rec)} (${rec.all.length} text${rec.all.length===1?'':'s'})?` +
+        (rec.noNumber ? `\n\n${rec.noNumber} child${rec.noNumber===1?'':'ren'} ha${rec.noNumber===1?'s':'ve'} no valid number on file, so ${rec.noNumber===1?'that family':'those families'} will only see it on the portal.` : '') +
+        `\n\nEach text is about ${parts} SMS part${parts===1?'':'s'} (${text.length} characters).\n\nOK = post and text.\nCancel = do nothing.`;
+      if(!confirm(msg)) return;
+    }
+  }
   if(!DB.announcements) DB.announcements = [];
-  DB.announcements.push({
-    id: 'ann'+Date.now(),
-    title,
-    message,
-    audience: announceAudience,
-    date: new Date().toISOString(),
-    author: session ? session.name : ''
-  });
+  const a = { id:'ann'+Date.now(), title, message, audience:announceAudience, date:new Date().toISOString(), author: session ? session.name : '' };
+  DB.announcements.push(a);
   logAudit('Announcement sent', `"${title}" to ${annAudienceLabel({audience:announceAudience}).toLowerCase()}.`);
-  await saveDB();
   titleEl.value = '';
   msgEl.value = '';
   announceAudience = 'all';
+  if(wantSms && rec.all.length){
+    if(TEST_MODE){ await saveDB(); render(); alert(`Test mode — ${rec.all.length} text${rec.all.length===1?'':'s'} would have been sent here.`); return; }
+    await runAnnouncementSms(a, rec.all);
+    return;
+  }
+  await saveDB();
   render();
+}
+/* For an older announcement, or to retry texts that failed. */
+async function textAnnouncement(id){
+  if(!canAnnounce()) return;
+  const a = (DB.announcements||[]).find(x=>x.id===id);
+  if(!a) return;
+  const rec = announcementRecipients(a.audience);
+  const todo = rec.all.filter(r=>!alertAlreadySent(`ann|${a.id}|${r.norm}`));
+  if(!todo.length){ alert(rec.all.length ? 'Everyone with a valid number has already been texted this announcement.' : 'Nobody addressed by this announcement has a valid phone number on file.'); return; }
+  const text = announcementSmsText(a.title, a.message), parts = smsPartsOf(text);
+  if(!confirm(`Text "${a.title}" to ${todo.length} number${todo.length===1?'':'s'} that haven't received it yet?\n\nEach text is about ${parts} SMS part${parts===1?'':'s'}.`)) return;
+  if(TEST_MODE){ alert(`Test mode — ${todo.length} text${todo.length===1?'':'s'} would have been sent here.`); return; }
+  await runAnnouncementSms(a, rec.all);
 }
 async function removeAnnouncement(id){
   if(!canAnnounce()) return;
