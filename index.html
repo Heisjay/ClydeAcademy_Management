@@ -1057,8 +1057,7 @@ function firebaseIsConfigured(){
 ============================================================ */
 const IDB_NAME = 'clyde-academy-local', IDB_STORE = 'kv', IDB_KEY = 'record';
 const CHUNK_CHARS = 250000;          // well under Firestore's 1 MB-per-document limit, even for non-ASCII text
-const MAX_BACKUPS = 20;               // always keep at least this many of the newest backups
-const BACKUP_KEEP_DAYS = 7;          // ...and keep EVERY backup from the last 7 days (so a whole day can be restored from)
+const MAX_BACKUPS = 20;
 const AUTO_BACKUP_EVERY_MS = 3*60*60*1000;
 
 let baseStr = null;      // JSON of the last state known to be identical in the cloud (used for merging)
@@ -1247,7 +1246,14 @@ function cloudCol(){ return firestoreDB.collection(FIRESTORE_COLLECTION); }
 /* ---------- 3-way merge (base = last synced, local = this device, remote = cloud) ---------- */
 const _isObj = v => v && typeof v==='object' && !Array.isArray(v);
 const _same = (a,b) => JSON.stringify(a)===JSON.stringify(b);
-const _idLike = arr => arr.every(x=>_isObj(x) && x.id!==undefined && x.id!==null);
+/* How to tell the items of a list apart when merging two devices' copies: by id; staff/parent accounts
+   have no id, so by username; a class's subjects have none either, so by name. Without this, a list
+   like the accounts was merged as ONE lump — when two devices both touched it, one device's whole list
+   replaced the other's, and accounts added on the other device vanished. */
+const _keyOf = x => (x.id!==undefined && x.id!==null) ? x.id
+  : (typeof x.username==='string' ? 'u:'+x.username.toLowerCase()
+  : (typeof x.name==='string' ? 'n:'+x.name : undefined));
+const _idLike = arr => arr.every(x=>_isObj(x) && _keyOf(x)!==undefined) && new Set(arr.map(_keyOf)).size===arr.length;
 // path/conflicts let a caller find every spot where THIS device and the cloud changed the very
 // same value to two different things — the one case this merge can't safely combine on its own.
 // Everything else (additions, one-sided edits, different fields) merges automatically either way.
@@ -1270,16 +1276,18 @@ function merge3(base, local, remote, path, conflicts){
   }
   if(Array.isArray(local) && Array.isArray(remote) && _idLike(local) && _idLike(remote)){
     const b = Array.isArray(base) && _idLike(base) ? base : [];
-    const bm = new Map(b.map(x=>[x.id,x])), rm = new Map(remote.map(x=>[x.id,x]));
+    const bm = new Map(b.map(x=>[_keyOf(x),x])), rm = new Map(remote.map(x=>[_keyOf(x),x]));
     const out = [], used = new Set();
     local.forEach(l=>{
-      used.add(l.id);
-      if(rm.has(l.id)) out.push(merge3(bm.get(l.id), l, rm.get(l.id), path+'['+l.id+']', conflicts));
-      else if(!bm.has(l.id) || !_same(bm.get(l.id), l)) out.push(l);
+      const k = _keyOf(l);
+      used.add(k);
+      if(rm.has(k)) out.push(merge3(bm.get(k), l, rm.get(k), path+'['+k+']', conflicts));
+      else if(!bm.has(k) || !_same(bm.get(k), l)) out.push(l);
     });
     remote.forEach(r=>{
-      if(used.has(r.id)) return;
-      if(!bm.has(r.id) || !_same(bm.get(r.id), r)) out.push(r);
+      const k = _keyOf(r);
+      if(used.has(k)) return;
+      if(!bm.has(k) || !_same(bm.get(k), r)) out.push(r);
     });
     return out;
   }
@@ -1300,7 +1308,7 @@ function setAtConflictPath(obj, path, value){
   let cur = obj;
   for(let i=0;i<segs.length-1;i++){
     const seg = segs[i];
-    cur = seg.type==='key' ? cur[seg.v] : (Array.isArray(cur) ? cur.find(x=>String(x.id)===seg.v) : undefined);
+    cur = seg.type==='key' ? cur[seg.v] : (Array.isArray(cur) ? cur.find(x=>String(_keyOf(x))===seg.v) : undefined);
     if(cur===undefined) return false;
   }
   const last = segs[segs.length-1];
@@ -1395,8 +1403,7 @@ async function listCloudBackups(){
 }
 async function pruneBackups(){
   const all = await listCloudBackups();
-  const cutoff = Date.now() - BACKUP_KEEP_DAYS*24*60*60*1000;
-  for(const b of all.slice(MAX_BACKUPS).filter(x=>(x.createdAt||0) < cutoff)){
+  for(const b of all.slice(MAX_BACKUPS)){
     const batch = firestoreDB.batch();
     for(let i=0;i<(b.chunkCount||0);i++) batch.delete(cloudCol().doc(`${b.id}_p${i}`));
     batch.delete(cloudCol().doc(b.id));
@@ -1580,6 +1587,7 @@ async function loadDB(){
     }
   }
   migrateDB();
+  snapshotAcctSigs();          // what's loaded now counts as already known — only later changes are written
   applyBranding();
   await persistLocal();
   syncReady = true;
@@ -1612,6 +1620,7 @@ async function saveDB(){
   const saved = persistLocal();          // on-device copy first — nothing is lost even if the network is down
   refreshBadge();
   if(syncReady && cloudEnabled) requestSync(1500);
+  scheduleAccountSync();                  // any admin/teacher account that changed is saved as its own cloud record
   await saved;
 }
 /* The "Save" buttons: make sure the on-device copy is written, then upload to the cloud right now and say exactly what happened. */
@@ -1719,184 +1728,15 @@ async function dsListCloudBackups(){
   box.textContent = 'Loading…';
   try{
     const list = await listCloudBackups();
-    if(!list.length){ box.textContent = 'No cloud backups yet. One is created automatically after saves (at most every 3 hours) and before risky operations, and all of them are kept for ${BACKUP_KEEP_DAYS} days.'; return; }
-    box.innerHTML = `<div style="font-size:12.5px;font-weight:700;margin-bottom:4px;">${list.length} backup file${list.length===1?'':'s'} in the cloud (newest first; everything from the last ${BACKUP_KEEP_DAYS} days is kept)</div>` + list.map(b=>`<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;border-top:1px solid var(--line);font-size:12.5px;">
+    if(!list.length){ box.textContent = 'No cloud backups yet. One is created automatically after saves (at most every 3 hours) and before risky operations.'; return; }
+    box.innerHTML = list.map(b=>`<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;border-top:1px solid var(--line);font-size:12.5px;">
       <span><b>${fmtDateTime(new Date(b.createdAt).toISOString())}</b> · ${b.reason||'backup'} · ${Math.round((b.size||0)/1024)} KB</span>
-      <span style="display:flex;gap:6px;"><button class="btn-small brass" onclick="dsCheckCloud('${b.id}')">Check</button><button class="btn-small" onclick="dsDownloadCloud('${b.id}')">Download</button><button class="btn-small" onclick="dsRestoreCloud('${b.id}')">Restore</button></span></div>`).join('');
+      <button class="btn-small" onclick="dsRestoreCloud('${b.id}')">Restore</button></div>`).join('');
   }catch(e){ box.textContent = 'Could not load backups: ' + (e && e.message ? e.message : e); }
 }
-async function dsDownloadCloud(id){
-  try{ const str = await readCloudBackup(id); downloadTextFile('cloud-' + id + '.json', str); }
-  catch(e){ alert('Could not read that backup: ' + (e && e.message ? e.message : e)); }
-}
-/* Show the backup files automatically whenever the Settings page is opened. */
-(function(){
-  let busy = false;
-  new MutationObserver(()=>{
-    const box = document.getElementById('ds-backups');
-    if(box && !box.dataset.auto && !busy){
-      box.dataset.auto = '1'; busy = true;
-      Promise.resolve().then(()=>dsListCloudBackups()).finally(()=>{ busy = false; });
-    }
-  }).observe(document.documentElement, { childList:true, subtree:true });
-})();
 async function dsRestoreCloud(id){
   try{ const str = await readCloudBackup(id); await restoreFromString(str, 'cloud backup'); }
   catch(e){ alert('Could not read that backup: ' + (e && e.message ? e.message : e)); }
-}
-
-/* ---------- Find cloud backups from 22 Oct 2026 (whole day), highlighting 11:00-11:30 am (Accra time = UTC) ----------
-   Read-only until you press Restore. Restore goes through restoreFromString(), so you are asked to
-   confirm, a copy of the current data is downloaded, and a safety backup is saved in the cloud first. */
-const RECOVER_FROM = Date.UTC(2026, 9, 22, 11, 0, 0);
-const RECOVER_TO   = Date.UTC(2026, 9, 22, 11, 30, 0);
-const DAY_FROM     = Date.UTC(2026, 9, 22, 0, 0, 0);
-const DAY_TO       = Date.UTC(2026, 9, 23, 0, 0, 0);
-function recFmt(ms){
-  return new Date(ms).toLocaleString('en-GB', { timeZone:'UTC', day:'2-digit', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit', second:'2-digit' });
-}
-async function dsFindMorningBackup(){
-  const box = document.getElementById('ds-backups'); if(!box) return;
-  if(!cloudEnabled){ box.textContent = 'Cloud is not configured.'; return; }
-  box.textContent = 'Looking for backups from today…';
-  try{
-    const list = await listCloudBackups();                                   // ALL backups, newest first
-    if(!list.length){ box.textContent = 'There are no backups stored in the cloud, so there is nothing to restore from here.'; return; }
-    const day    = list.filter(b=>b.createdAt>=DAY_FROM && b.createdAt<DAY_TO);
-    const inWin  = day.filter(b=>b.createdAt>=RECOVER_FROM && b.createdAt<=RECOVER_TO);
-    const row = (b, hl)=>`<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 10px;border-top:1px solid var(--line);font-size:12.5px;${hl?'background:#fff7e0;':''}">
-      <span><b>${recFmt(b.createdAt)}</b>${hl?' · <b style="color:var(--brass);">in the 11:00–11:30 window</b>':''} · ${ckEsc(b.reason||'backup')} · ${Math.round((b.size||0)/1024)} KB</span>
-      <span style="display:flex;gap:6px;"><button class="btn-small brass" onclick="dsCheckCloud('${b.id}')">Check</button><button class="btn-small" onclick="dsRestoreCloud('${b.id}')">Restore</button></span></div>`;
-    let html = '';
-    if(day.length){
-      html += `<div style="font-size:12.5px;font-weight:700;margin-bottom:4px;">${day.length} backup${day.length===1?'':'s'} from the whole of 22 Oct 2026 (newest first)</div>`;
-      html += inWin.length
-        ? `<div style="font-size:12px;color:var(--slate);margin-bottom:6px;">${inWin.length} of them (highlighted) ${inWin.length===1?'was':'were'} taken between 11:00 and 11:30 am. Press Check first to see what is inside before you restore.</div>`
-        : `<div style="font-size:12px;color:var(--slate);margin-bottom:6px;">None was taken between 11:00 and 11:30 am. Pick the one just BEFORE 11:00 for the data as it stood then, or the first one AFTER 11:30 if you also want what was entered later. Use Check to compare.</div>`;
-      html += day.map(b=>row(b, inWin.includes(b))).join('');
-    } else {
-      html += `<div style="font-size:12.5px;font-weight:700;margin-bottom:4px;">No backup was taken on 22 Oct 2026</div><div style="font-size:12px;color:var(--slate);margin-bottom:6px;">Here are all the backups that exist (newest first):</div>` + list.map(b=>row(b,false)).join('');
-    }
-    html += `<div style="font-size:11.5px;color:var(--slate);margin-top:8px;">The cloud holds ${list.length} backup${list.length===1?'':'s'} in total, from ${recFmt(list[list.length-1].createdAt)} to ${recFmt(list[0].createdAt)} (Accra time).</div>`;
-    box.innerHTML = html;
-  }catch(e){ box.textContent = 'Could not load backups: ' + (e && e.message ? e.message : e); }
-}
-
-/* ---------- Check an old backup (read-only: nothing is changed, saved or uploaded) ---------- */
-let ckState = null;   // { str, obj, label }
-function ckEsc(v){ return String(v==null?'':v).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
-function ckParse(str){
-  let obj;
-  try{ obj = JSON.parse(str); if(obj && obj.db && !obj.classes) obj = obj.db; }catch(e){ return null; }
-  if(!obj || typeof obj!=='object' || !Array.isArray(obj.classes) || !Array.isArray(obj.students)) return null;
-  return obj;
-}
-function ckStats(d){
-  const users = Array.isArray(d.users) ? d.users : [];
-  let attDays = 0, lastAtt = '';
-  Object.values(d.attendance||{}).forEach(m=>{ Object.keys(m||{}).forEach(dt=>{ attDays++; if(dt>lastAtt) lastAtt = dt; }); });
-  const paid = d.students.reduce((t,s)=>t+(s.payments||[]).reduce((a,p)=>a+(Number(p.amount)||0),0),0);
-  return {
-    classes: d.classes.length, students: d.students.length,
-    teachers: users.filter(u=>u.role==='Teacher').length, parents: users.filter(u=>u.role==='Parent').length,
-    admins: users.filter(u=>u.role!=='Teacher' && u.role!=='Parent').length,
-    attDays, lastAtt, paid, announcements:(d.announcements||[]).length, audit:(d.auditLog||[]).length,
-  };
-}
-function ckClassName(d, id){ const c = d.classes.find(x=>x.id===id); return c ? c.name : '(class removed)'; }
-async function dsCheckFile(input){
-  const f = input.files && input.files[0]; if(!f) return;
-  const text = await f.text(); input.value = '';
-  ckOpen(text, f.name);
-}
-async function dsCheckCloud(id){
-  try{ const str = await readCloudBackup(id); ckOpen(str, 'cloud backup'); }
-  catch(e){ alert('Could not read that backup: ' + (e && e.message ? e.message : e)); }
-}
-function ckOpen(str, label){
-  const obj = ckParse(str);
-  if(!obj){ alert('That file is not a valid Clyde Academy backup.'); return; }
-  ckState = { str, obj, label };
-  ckRender('');
-}
-function ckClose(){ const b = document.getElementById('ck-view'); if(b) b.remove(); ckState = null; }
-function ckDownload(){ if(ckState) downloadTextFile(backupFileName(), ckState.str); }
-function ckRestore(){ if(!ckState) return; const { str, label } = ckState; ckClose(); restoreFromString(str, label); }
-function ckSearch(v){ ckRender(v, true); }
-function ckRender(q, keepFocus){
-  if(!ckState) return;
-  const b = ckState.obj, cur = DB || { classes:[], students:[], users:[] };
-  const sb = ckStats(b), sc = ckStats(cur);
-  const row = (name, a, c)=>`<tr><td>${name}</td><td style="text-align:right;font-weight:700;">${a}</td><td style="text-align:right;color:#5b6b85;">${c}</td></tr>`;
-  const curIds = new Set(cur.students.map(s=>s.id));
-  const bkIds  = new Set(b.students.map(s=>s.id));
-  const curNames = new Set(cur.students.map(s=>(s.name||'').trim().toLowerCase()));
-  const missingNow = b.students.filter(s=>!curIds.has(s.id) && !curNames.has((s.name||'').trim().toLowerCase()));
-  const newSince   = cur.students.filter(s=>!bkIds.has(s.id));
-  const bkUsers = (b.users||[]), curUsernames = new Set((cur.users||[]).map(u=>u.username));
-  const staffMissing = bkUsers.filter(u=>u.role==='Teacher' && !curUsernames.has(u.username));
-  const needle = (q||'').trim().toLowerCase();
-  const list = b.students.filter(s=>!needle || (s.name||'').toLowerCase().includes(needle) || ckClassName(b,s.classId).toLowerCase().includes(needle) || String(s.studentId||'').toLowerCase().includes(needle));
-  const stuRow = s=>`<tr><td>${ckEsc(s.name)}</td><td>${ckEsc(ckClassName(b,s.classId))}</td><td>${ckEsc(s.studentId||'')}</td><td>${ckEsc(s.guardian||'')}</td><td style="text-align:right;">${(s.payments||[]).reduce((t,p)=>t+(Number(p.amount)||0),0).toLocaleString()}</td></tr>`;
-  const miniList = (arr, f, empty)=> arr.length ? `<ul style="margin:6px 0 0;padding-left:18px;font-size:13px;line-height:1.5;">${arr.slice(0,60).map(f).join('')}${arr.length>60?`<li>…and ${arr.length-60} more</li>`:''}</ul>` : `<div style="font-size:13px;color:#5b6b85;margin-top:4px;">${empty}</div>`;
-  const classBlocks = b.classes.map(c=>{
-    const n = b.students.filter(s=>s.classId===c.id).length;
-    return `<li>${ckEsc(c.name)} <span style="color:#5b6b85;">— ${n} student${n===1?'':'s'}</span></li>`;
-  }).join('');
-  let box = document.getElementById('ck-view');
-  const isNew = !box;
-  if(isNew){
-    box = document.createElement('div'); box.id = 'ck-view';
-    box.style.cssText = 'position:fixed;inset:0;background:rgba(10,15,30,.6);z-index:10001;overflow:auto;padding:16px;';
-    box.onclick = e=>{ if(e.target===box) ckClose(); };
-    document.body.appendChild(box);
-  }
-  const th = 'text-align:left;font-size:11.5px;color:#5b6b85;padding:4px 6px;border-bottom:1px solid #d9dfeb;';
-  box.innerHTML = `<div style="background:#fff;border-radius:12px;max-width:760px;margin:0 auto;padding:18px;color:#16213E;">
-    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap;">
-      <div><div style="font-weight:700;font-size:17px;">Checking a backup</div>
-      <div style="font-size:12.5px;color:#5b6b85;">${ckEsc(ckState.label)} · ${Math.round(ckState.str.length/1024)} KB · <b>read-only</b> — nothing on this device or in the cloud is changed.</div></div>
-      <button class="btn-small" onclick="ckClose()">Close</button>
-    </div>
-
-    <table style="width:100%;border-collapse:collapse;margin-top:14px;font-size:13.5px;">
-      <tr><th style="${th}">What's inside</th><th style="${th}text-align:right;">This backup</th><th style="${th}text-align:right;">Right now</th></tr>
-      ${row('Classes', sb.classes, sc.classes)}
-      ${row('Students', sb.students, sc.students)}
-      ${row('Teachers', sb.teachers, sc.teachers)}
-      ${row('Parents', sb.parents, sc.parents)}
-      ${row('Attendance days recorded', sb.attDays, sc.attDays)}
-      ${row('Latest attendance date', sb.lastAtt||'—', sc.lastAtt||'—')}
-      ${row('Total fees paid', sb.paid.toLocaleString(), sc.paid.toLocaleString())}
-      ${row('Announcements', sb.announcements, sc.announcements)}
-    </table>
-
-    <div style="margin-top:16px;font-weight:700;font-size:14px;">In this backup but missing now (${missingNow.length} student${missingNow.length===1?'':'s'}, ${staffMissing.length} teacher${staffMissing.length===1?'':'s'})</div>
-    ${miniList(missingNow, s=>`<li>${ckEsc(s.name)} <span style="color:#5b6b85;">— ${ckEsc(ckClassName(b,s.classId))}</span></li>`, 'Every student in this backup is still in the current data.')}
-    ${staffMissing.length ? miniList(staffMissing, u=>`<li>${ckEsc(u.name)} <span style="color:#5b6b85;">— teacher (${ckEsc(u.username)})</span></li>`, '') : ''}
-
-    <div style="margin-top:16px;font-weight:700;font-size:14px;">Added since this backup (${newSince.length} student${newSince.length===1?'':'s'})</div>
-    ${miniList(newSince, s=>`<li>${ckEsc(s.name)} <span style="color:#5b6b85;">— ${ckEsc(ckClassName(cur,s.classId))}</span></li>`, 'No students have been added since this backup.')}
-
-    <div style="margin-top:16px;font-weight:700;font-size:14px;">Classes in this backup</div>
-    <ul style="margin:6px 0 0;padding-left:18px;font-size:13px;line-height:1.5;">${classBlocks}</ul>
-
-    <div style="margin-top:16px;font-weight:700;font-size:14px;">All students in this backup</div>
-    <input id="ck-q" type="search" placeholder="Search name, class or ID…" value="${ckEsc(q||'')}" oninput="ckSearch(this.value)" style="width:100%;box-sizing:border-box;margin:8px 0;padding:8px 10px;border:1px solid #d9dfeb;border-radius:8px;font-size:14px;">
-    <div style="overflow-x:auto;max-height:320px;overflow-y:auto;border:1px solid #eef1f7;border-radius:8px;">
-      <table style="width:100%;border-collapse:collapse;font-size:13px;">
-        <tr><th style="${th}">Name</th><th style="${th}">Class</th><th style="${th}">ID</th><th style="${th}">Guardian</th><th style="${th}text-align:right;">Paid</th></tr>
-        ${list.slice(0,400).map(stuRow).join('') || '<tr><td colspan="5" style="padding:10px;color:#5b6b85;">No matches.</td></tr>'}
-      </table>
-    </div>
-    ${list.length>400?`<div style="font-size:12px;color:#5b6b85;margin-top:4px;">Showing the first 400 of ${list.length}. Use search to narrow.</div>`:''}
-
-    <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;margin-top:16px;">
-      <button class="btn-small" onclick="ckDownload()">Download this backup</button>
-      <button class="btn-danger" onclick="ckRestore()">Restore this backup…</button>
-    </div>
-  </div>`;
-  if(keepFocus){ const i = document.getElementById('ck-q'); if(i){ i.focus(); const n = i.value.length; i.setSelectionRange(n,n); } }
 }
 
 /* Attendance is Monday–Friday only. */
@@ -2915,16 +2755,169 @@ function parsePastedRows(text, columns){
 /* ============================================================
    Auth
 ============================================================ */
+/* ---------- Staff accounts saved to, and read from, Firestore on their own ----------
+   Admin and teacher accounts are ALSO kept as one small cloud record each ("acct_<username>").
+   • Saving: whenever an account is added or changed, that account's record is written to Firestore.
+   • Reading: when someone logs in, the site checks the cloud record first, so a brand-new or changed
+     account works on any device straight away, a changed password takes effect everywhere, and an
+     account missing from a device's copy is put back automatically.
+   • Removing an account writes a "removed" marker, so a removed person can't log in from an old copy.
+   Nothing is written when the site loads — only after an account is changed, or when the admin presses
+   "Save all accounts" on the Staff Accounts page. */
+const ACCT_ROLES = ['Admin','Teacher'];
+let acctSigs = null;            // username -> what the cloud was last given (or already held) for it
+let acctPendingRemovals = [];
+let acctSaveTimer = null;
+function acctDocId(username){ return 'acct_' + String(username).toLowerCase().replace(/[^a-z0-9_.-]/g, c=>'~'+c.charCodeAt(0).toString(16)); }
+function acctSig(u){ return JSON.stringify(u); }
+function snapshotAcctSigs(){
+  acctSigs = {};
+  (DB.users||[]).forEach(u=>{ if(ACCT_ROLES.includes(u.role)) acctSigs[u.username.toLowerCase()] = acctSig(u); });
+}
+function scheduleAccountSync(){
+  if(TEST_MODE || !cloudEnabled || !firestoreDB) return;
+  clearTimeout(acctSaveTimer);
+  acctSaveTimer = setTimeout(()=>{ syncAccountsToCloud().catch(e=>console.warn('account sync failed', e)); }, 900);
+}
+async function syncAccountsToCloud(force){
+  if(TEST_MODE || !cloudEnabled || !firestoreDB || !DB || placeholder) return { written:0 };
+  if(acctSigs===null) snapshotAcctSigs();
+  const ops = [];
+  (DB.users||[]).forEach(u=>{
+    if(!ACCT_ROLES.includes(u.role)) return;
+    const k = u.username.toLowerCase(), sig = acctSig(u);
+    if(force || acctSigs[k]!==sig) ops.push({ k, sig, doc:{ kind:'account', username:k, user:JSON.parse(sig), deleted:false, updatedAt:Date.now(), device:deviceId } });
+  });
+  // a removal that's no longer true (the account was added back) must not be written
+  const present = new Set((DB.users||[]).filter(u=>ACCT_ROLES.includes(u.role)).map(u=>u.username.toLowerCase()));
+  acctPendingRemovals = acctPendingRemovals.filter(k=>!present.has(k));
+  const removals = acctPendingRemovals.slice();
+  let written = 0;
+  for(let i=0;i<ops.length;i+=400){
+    const chunk = ops.slice(i,i+400), batch = firestoreDB.batch();
+    chunk.forEach(o=>batch.set(cloudCol().doc(acctDocId(o.k)), o.doc));
+    await batch.commit();
+    chunk.forEach(o=>{ acctSigs[o.k] = o.sig; });
+    written += chunk.length;
+  }
+  for(const k of removals){
+    await cloudCol().doc(acctDocId(k)).set({ kind:'account', username:k, deleted:true, updatedAt:Date.now(), device:deviceId });
+    acctPendingRemovals = acctPendingRemovals.filter(x=>x!==k);
+  }
+  return { written, removed: removals.length };
+}
+function markAccountRemoved(username){
+  const k = String(username).toLowerCase();
+  if(acctSigs) delete acctSigs[k];
+  if(!acctPendingRemovals.includes(k)) acctPendingRemovals.push(k);
+  scheduleAccountSync();
+}
+/* undefined = couldn't check (offline / slow); null = no cloud record; otherwise the record */
+async function fetchCloudAccount(username){
+  if(!cloudEnabled || !firestoreDB || TEST_MODE) return undefined;
+  try{
+    const snap = await Promise.race([
+      cloudCol().doc(acctDocId(username)).get({ source:'server' }),
+      new Promise((_,rej)=>setTimeout(()=>rej(new Error('timeout')), 4000))
+    ]);
+    return snap.exists ? snap.data() : null;
+  }catch(e){ return undefined; }
+}
+/* Bring this device's copy of an account in line with the cloud record (adds it if it was missing). */
+async function adoptCloudAccount(cu){
+  const k = cu.username.toLowerCase();
+  const i = DB.users.findIndex(u=>u.username.toLowerCase()===k);
+  const next = JSON.parse(JSON.stringify(cu));
+  if(i===-1) DB.users.push(next);
+  else if(acctSig(DB.users[i])!==acctSig(next)) DB.users[i] = next;
+  else { if(acctSigs) acctSigs[k] = acctSig(next); return; }
+  if(acctSigs) acctSigs[k] = acctSig(next);
+  await saveDB();
+}
+let loginBusy = false;
 async function login(){
+  if(loginBusy) return;
   const username = document.getElementById('login-username').value.trim().toLowerCase();
   const password = document.getElementById('login-password').value;
-  const user = DB.users.find(u=>u.username.toLowerCase()===username && u.password===password);
   const errEl = document.getElementById('login-error');
-  if(!user){ errEl.style.display='block'; return; }
-  errEl.style.display='none';
-  document.getElementById('login-screen').style.display = 'none';
-  completeSignIn(user);
+  loginBusy = true;
+  try{
+    let user = DB.users.find(u=>u.username.toLowerCase()===username && u.password===password) || null;
+    const cloud = ACCT_ROLES.length ? await fetchCloudAccount(username) : undefined;
+    if(cloud && cloud.kind==='account'){
+      if(cloud.deleted){ errEl.textContent = 'This account has been removed. Please contact the administrator.'; errEl.style.display='block'; return; }
+      // the cloud record is the source of truth: it decides, even if this device's copy is out of date
+      if(cloud.user && cloud.user.password===password){ user = cloud.user; await adoptCloudAccount(cloud.user); user = DB.users.find(u=>u.username.toLowerCase()===username) || user; }
+      else user = null;
+    }
+    if(!user){ errEl.textContent = 'Incorrect username or password.'; errEl.style.display='block'; return; }
+    errEl.style.display='none';
+    document.getElementById('login-screen').style.display = 'none';
+    completeSignIn(user);
+  } finally { loginBusy = false; }
 }
+async function recoverAccountsFromCloud(){
+  if(session.role!=='Admin') return;
+  if(!cloudEnabled || !firestoreDB){ alert('The cloud database is not connected.'); return; }
+  try{
+    const snap = await cloudCol().where('kind','==','account').get();
+    const have = new Set(DB.users.map(u=>u.username.toLowerCase()));
+    const missing = snap.docs.map(d=>d.data()).filter(c=>!c.deleted && c.user && !have.has(c.username));
+    if(!missing.length){ alert('Nothing to recover — every account saved in the cloud is already on the list.'); return; }
+    if(!confirm(`Put back ${missing.length} account${missing.length===1?'':'s'} found in the cloud?\n\n${missing.map(c=>c.user.name+' (@'+c.username+')').join('\n')}`)) return;
+    missing.forEach(c=>{ DB.users.push(JSON.parse(JSON.stringify(c.user))); if(acctSigs) acctSigs[c.username] = acctSig(c.user); });
+    logAudit('Accounts recovered', `${missing.length} account${missing.length===1?'':'s'} put back from the cloud records.`);
+    await saveDB(); render();
+  }catch(e){ alert('Could not read the cloud records: ' + (e && e.message ? e.message : e)); }
+}
+async function saveAllAccountsNow(){
+  if(session.role!=='Admin') return;
+  if(!cloudEnabled || !firestoreDB){ alert('The cloud database is not connected.'); return; }
+  if(TEST_MODE){ alert('Test mode — nothing is saved.'); return; }
+  try{
+    const r = await syncAccountsToCloud(true);
+    alert(`${r.written} staff account${r.written===1?'':'s'} saved to the cloud. They can now log in from any device.`);
+  }catch(e){ alert('Could not save the accounts: ' + (e && e.message ? e.message : e)); }
+}
+/* Adds back any staff account that is in an older backup file but missing now (never touches existing ones). */
+async function restoreAccountsFromBackupFile(input){
+  const f = input.files && input.files[0]; if(!f) return;
+  const text = await f.text(); input.value = '';
+  let obj; try{ obj = JSON.parse(text); if(obj && obj.db && !obj.users) obj = obj.db; }catch(e){ alert('That file is not a valid backup.'); return; }
+  if(!obj || !Array.isArray(obj.users)){ alert('That file does not look like a Clyde Academy backup.'); return; }
+  const have = new Set(DB.users.map(u=>u.username.toLowerCase()));
+  const missing = obj.users.filter(u=>ACCT_ROLES.includes(u.role) && !have.has(String(u.username).toLowerCase()));
+  if(!missing.length){ alert('Every staff account in that backup is already on the list.'); return; }
+  if(!confirm(`Add back ${missing.length} staff account${missing.length===1?'':'s'} from this backup?\n\n${missing.map(u=>u.name+' (@'+u.username+', '+u.role+')').join('\n')}\n\nExisting accounts are not changed.`)) return;
+  let reassigned = 0;
+  missing.forEach(u=>{
+    const copy = JSON.parse(JSON.stringify(u));
+    if(copy.staffId && DB.users.some(x=>x.staffId===copy.staffId)) copy.staffId = nextDisplayId('TCH');
+    DB.users.push(copy);
+    (obj.classes||[]).forEach(bc=>{
+      const c = DB.classes.find(x=>x.id===bc.id);
+      if(!c) return;
+      if(bc.classTeacher===u.username && !c.classTeacher){ c.classTeacher = u.username; reassigned++; }
+      (bc.subjects||[]).forEach(bs=>{ if(bs.teacher===u.username){ const sub = c.subjects.find(x=>x.name===bs.name); if(sub && !sub.teacher){ sub.teacher = u.username; reassigned++; } } });
+    });
+  });
+  logAudit('Accounts restored from backup', `${missing.length} staff account${missing.length===1?'':'s'} added back from ${f.name}${reassigned?` (${reassigned} class/subject assignment${reassigned===1?'':'s'} restored)`:''}.`);
+  await saveDB(); render();
+  alert(`${missing.length} account${missing.length===1?'':'s'} added back` + (reassigned?`, with ${reassigned} class/subject assignment${reassigned===1?'':'s'}.`:'.') + '\nThey are saved to the cloud now too.');
+}
+function renderAccountRecordsPanel(){
+  if(session.role!=='Admin') return '';
+  return `<div class="panel"><div class="panel-head"><h3>Account records in the cloud</h3></div>
+    <div class="panel-body" style="padding-top:10px;">
+      <p style="margin:0 0 10px;font-size:12.5px;color:var(--slate);">Every admin and teacher account is also kept as its own record in Firestore, and logging in reads it from there — so a new account or a changed password works on every device straight away, and an account missing from a device is put back when that person logs in.</p>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <button class="btn-small brass" onclick="saveAllAccountsNow()">Save all accounts to the cloud now</button>
+        <button class="btn-small" onclick="recoverAccountsFromCloud()">Recover missing accounts from the cloud</button>
+        <label class="btn-small" style="cursor:pointer;display:inline-block;">Add back accounts from a backup file<input type="file" accept=".json,application/json" style="display:none" onchange="restoreAccountsFromBackupFile(this)"></label>
+      </div>
+    </div></div>`;
+}
+
 /* Shared "finish signing in" step, used by both username/password login and phone/OTP login below.
    restoredView, when given (only on a page refresh that's restoring a still-valid session), is used
    instead of resetting to the default landing page — so a refresh keeps you where you were. */
@@ -6775,6 +6768,7 @@ function renderStaff(){
   return `
     <div class="topbar"><div><div class="eyebrow">Administration</div><h1>Staff Accounts</h1></div><button class="btn-ghost" onclick="manualSave()">Save</button></div>
     ${renderWardRequestsPanel()}
+    ${renderAccountRecordsPanel()}
 
     <div class="panel"><div class="panel-head"><h3>Term setup</h3></div>
       <div class="panel-body" style="padding-top:14px;padding-bottom:16px;">
@@ -6830,8 +6824,6 @@ function renderStaff(){
           <button class="btn-small" onclick="dsVerifyCloudCopy()">Verify cloud copy now</button>
           <button class="btn-small" onclick="dsDownloadBackup()">Download backup file</button>
           <label class="btn-small" style="cursor:pointer;display:inline-block;">Restore from file<input type="file" accept=".json,application/json" style="display:none" onchange="dsRestoreFile(this)"></label>
-          <label class="btn-small brass" style="cursor:pointer;display:inline-block;">Check a backup file<input type="file" accept=".json,application/json" style="display:none" onchange="dsCheckFile(this)"></label>
-          <button class="btn-small brass" onclick="dsFindMorningBackup()">Find backups from today (11:00–11:30 highlighted)</button>
           <button class="btn-small" onclick="dsListCloudBackups()">Cloud backups…</button>
         </div>
         <p style="margin:8px 0 0;font-size:12px;color:var(--slate);">"Verify cloud copy now" reads directly from Firestore's server (not this device's memory) and tells you plainly whether what's on this device is actually what's stored in the cloud. It also runs automatically every 10 minutes in the background — if it ever finds a real mismatch, the banner at the top of the screen will say so.</p>
@@ -7143,6 +7135,12 @@ async function addStaff(){
     errEl.style.display='block';
     return;
   }
+  const inCloud = await fetchCloudAccount(username);
+  if(inCloud && inCloud.kind==='account' && !inCloud.deleted){
+    errEl.textContent = 'That username is already taken (it exists in the cloud records).';
+    errEl.style.display='block';
+    return;
+  }
   errEl.style.display='none';
   DB.users.push({ name, username, password, role, signature:null, contact, resetOTP:null, staffId: role==='Teacher' ? nextDisplayId('TCH') : undefined });
   await saveDB();
@@ -7209,6 +7207,7 @@ async function editAccount(username){
   u.name = newName;
   u.username = newUsername;
   u.contact = newPhone;
+  if(oldUsername.toLowerCase()!==newUsername.toLowerCase() && ACCT_ROLES.includes(u.role)) markAccountRemoved(oldUsername);   // the old username must stop working
   // For a parent, keep each child's guardian contact in step — but only where that child's guardian
   // number was this parent's old number (so a different parent's number is never overwritten).
   if(u.role==='Parent' && newPhone && newPhone!==oldPhone){
@@ -7256,6 +7255,7 @@ async function removeStaff(username){
   const who = DB.users.find(u=>u.username===username);
   logAudit('Account removed', `${who?who.name:username} (@${username}, ${who?who.role:''}) was removed.`, snap);
   DB.users = DB.users.filter(u=>u.username!==username);
+  markAccountRemoved(username);            // so the removed person can't log in from an old copy
   DB.classes.forEach(c=>{
     if(c.classTeacher===username) c.classTeacher = null;
     c.subjects.forEach(s=>{ if(s.teacher===username) s.teacher = null; });
