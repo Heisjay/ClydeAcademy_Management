@@ -1057,7 +1057,8 @@ function firebaseIsConfigured(){
 ============================================================ */
 const IDB_NAME = 'clyde-academy-local', IDB_STORE = 'kv', IDB_KEY = 'record';
 const CHUNK_CHARS = 250000;          // well under Firestore's 1 MB-per-document limit, even for non-ASCII text
-const MAX_BACKUPS = 20;
+const MAX_BACKUPS = 20;               // always keep at least this many of the newest backups
+const BACKUP_KEEP_DAYS = 7;          // ...and keep EVERY backup from the last 7 days (so a whole day can be restored from)
 const AUTO_BACKUP_EVERY_MS = 3*60*60*1000;
 
 let baseStr = null;      // JSON of the last state known to be identical in the cloud (used for merging)
@@ -1394,7 +1395,8 @@ async function listCloudBackups(){
 }
 async function pruneBackups(){
   const all = await listCloudBackups();
-  for(const b of all.slice(MAX_BACKUPS)){
+  const cutoff = Date.now() - BACKUP_KEEP_DAYS*24*60*60*1000;
+  for(const b of all.slice(MAX_BACKUPS).filter(x=>(x.createdAt||0) < cutoff)){
     const batch = firestoreDB.batch();
     for(let i=0;i<(b.chunkCount||0);i++) batch.delete(cloudCol().doc(`${b.id}_p${i}`));
     batch.delete(cloudCol().doc(b.id));
@@ -1717,8 +1719,8 @@ async function dsListCloudBackups(){
   box.textContent = 'Loading…';
   try{
     const list = await listCloudBackups();
-    if(!list.length){ box.textContent = 'No cloud backups yet. One is created automatically after saves (at most every 3 hours) and before risky operations.'; return; }
-    box.innerHTML = `<div style="font-size:12.5px;font-weight:700;margin-bottom:4px;">${list.length} backup file${list.length===1?'':'s'} in the cloud (newest first, the latest ${MAX_BACKUPS} are kept)</div>` + list.map(b=>`<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;border-top:1px solid var(--line);font-size:12.5px;">
+    if(!list.length){ box.textContent = 'No cloud backups yet. One is created automatically after saves (at most every 3 hours) and before risky operations, and all of them are kept for ${BACKUP_KEEP_DAYS} days.'; return; }
+    box.innerHTML = `<div style="font-size:12.5px;font-weight:700;margin-bottom:4px;">${list.length} backup file${list.length===1?'':'s'} in the cloud (newest first; everything from the last ${BACKUP_KEEP_DAYS} days is kept)</div>` + list.map(b=>`<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;border-top:1px solid var(--line);font-size:12.5px;">
       <span><b>${fmtDateTime(new Date(b.createdAt).toISOString())}</b> · ${b.reason||'backup'} · ${Math.round((b.size||0)/1024)} KB</span>
       <span style="display:flex;gap:6px;"><button class="btn-small brass" onclick="dsCheckCloud('${b.id}')">Check</button><button class="btn-small" onclick="dsDownloadCloud('${b.id}')">Download</button><button class="btn-small" onclick="dsRestoreCloud('${b.id}')">Restore</button></span></div>`).join('');
   }catch(e){ box.textContent = 'Could not load backups: ' + (e && e.message ? e.message : e); }
@@ -1743,39 +1745,39 @@ async function dsRestoreCloud(id){
   catch(e){ alert('Could not read that backup: ' + (e && e.message ? e.message : e)); }
 }
 
-/* ---------- Find the cloud backup from 22 Oct 2026, 11:00-11:30 am (Accra time = UTC) ----------
+/* ---------- Find cloud backups from 22 Oct 2026 (whole day), highlighting 11:00-11:30 am (Accra time = UTC) ----------
    Read-only until you press Restore. Restore goes through restoreFromString(), so you are asked to
    confirm, a copy of the current data is downloaded, and a safety backup is saved in the cloud first. */
 const RECOVER_FROM = Date.UTC(2026, 9, 22, 11, 0, 0);
 const RECOVER_TO   = Date.UTC(2026, 9, 22, 11, 30, 0);
+const DAY_FROM     = Date.UTC(2026, 9, 22, 0, 0, 0);
+const DAY_TO       = Date.UTC(2026, 9, 23, 0, 0, 0);
 function recFmt(ms){
   return new Date(ms).toLocaleString('en-GB', { timeZone:'UTC', day:'2-digit', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit', second:'2-digit' });
 }
 async function dsFindMorningBackup(){
   const box = document.getElementById('ds-backups'); if(!box) return;
   if(!cloudEnabled){ box.textContent = 'Cloud is not configured.'; return; }
-  box.textContent = 'Looking for backups from this morning…';
+  box.textContent = 'Looking for backups from today…';
   try{
-    const list = await listCloudBackups();                                   // newest first
+    const list = await listCloudBackups();                                   // ALL backups, newest first
     if(!list.length){ box.textContent = 'There are no backups stored in the cloud, so there is nothing to restore from here.'; return; }
-    const inWin  = list.filter(b=>b.createdAt>=RECOVER_FROM && b.createdAt<=RECOVER_TO);
-    const before = list.filter(b=>b.createdAt<RECOVER_FROM)[0];              // closest one before 11:00
-    const after  = list.filter(b=>b.createdAt>RECOVER_TO).slice(-1)[0];      // closest one after 11:30
-    const row = (b, tag, hl)=>`<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 10px;border-top:1px solid var(--line);font-size:12.5px;${hl?'background:#fff7e0;':''}">
-      <span><b>${recFmt(b.createdAt)}</b> · ${tag} · ${ckEsc(b.reason||'backup')} · ${Math.round((b.size||0)/1024)} KB</span>
+    const day    = list.filter(b=>b.createdAt>=DAY_FROM && b.createdAt<DAY_TO);
+    const inWin  = day.filter(b=>b.createdAt>=RECOVER_FROM && b.createdAt<=RECOVER_TO);
+    const row = (b, hl)=>`<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 10px;border-top:1px solid var(--line);font-size:12.5px;${hl?'background:#fff7e0;':''}">
+      <span><b>${recFmt(b.createdAt)}</b>${hl?' · <b style="color:var(--brass);">in the 11:00–11:30 window</b>':''} · ${ckEsc(b.reason||'backup')} · ${Math.round((b.size||0)/1024)} KB</span>
       <span style="display:flex;gap:6px;"><button class="btn-small brass" onclick="dsCheckCloud('${b.id}')">Check</button><button class="btn-small" onclick="dsRestoreCloud('${b.id}')">Restore</button></span></div>`;
     let html = '';
-    if(inWin.length){
-      html += `<div style="font-size:12.5px;font-weight:700;margin-bottom:4px;">${inWin.length} backup${inWin.length===1?'':'s'} taken between 11:00 and 11:30 am on 22 Oct 2026</div>`
-           +  `<div style="font-size:12px;color:var(--slate);margin-bottom:6px;">Press Check first to see exactly what is inside (students, marks, attendance) and compare it with today's data before you restore.</div>`
-           +  inWin.map(b=>row(b,'in the 11:00–11:30 window',true)).join('');
+    if(day.length){
+      html += `<div style="font-size:12.5px;font-weight:700;margin-bottom:4px;">${day.length} backup${day.length===1?'':'s'} from the whole of 22 Oct 2026 (newest first)</div>`;
+      html += inWin.length
+        ? `<div style="font-size:12px;color:var(--slate);margin-bottom:6px;">${inWin.length} of them (highlighted) ${inWin.length===1?'was':'were'} taken between 11:00 and 11:30 am. Press Check first to see what is inside before you restore.</div>`
+        : `<div style="font-size:12px;color:var(--slate);margin-bottom:6px;">None was taken between 11:00 and 11:30 am. Pick the one just BEFORE 11:00 for the data as it stood then, or the first one AFTER 11:30 if you also want what was entered later. Use Check to compare.</div>`;
+      html += day.map(b=>row(b, inWin.includes(b))).join('');
     } else {
-      html += `<div style="font-size:12.5px;font-weight:700;margin-bottom:4px;">No backup was taken between 11:00 and 11:30 am on 22 Oct 2026</div>`
-           +  `<div style="font-size:12px;color:var(--slate);margin-bottom:6px;">These are the closest ones. A backup from just BEFORE 11:00 shows the data as it stood then (anything entered after it is not included). One from AFTER 11:30 also contains whatever was entered later.</div>`
-           +  (before ? row(before,'closest before 11:00',false) : '<div style="font-size:12px;padding:6px 10px;border-top:1px solid var(--line);">Nothing older than 11:00 is stored.</div>')
-           +  (after  ? row(after,'closest after 11:30',false)   : '<div style="font-size:12px;padding:6px 10px;border-top:1px solid var(--line);">Nothing newer than 11:30 is stored.</div>');
+      html += `<div style="font-size:12.5px;font-weight:700;margin-bottom:4px;">No backup was taken on 22 Oct 2026</div><div style="font-size:12px;color:var(--slate);margin-bottom:6px;">Here are all the backups that exist (newest first):</div>` + list.map(b=>row(b,false)).join('');
     }
-    html += `<div style="font-size:11.5px;color:var(--slate);margin-top:8px;">The cloud holds ${list.length} backup${list.length===1?'':'s'}, from ${recFmt(list[list.length-1].createdAt)} to ${recFmt(list[0].createdAt)} (Accra time). Only the latest ${MAX_BACKUPS} are kept.</div>`;
+    html += `<div style="font-size:11.5px;color:var(--slate);margin-top:8px;">The cloud holds ${list.length} backup${list.length===1?'':'s'} in total, from ${recFmt(list[list.length-1].createdAt)} to ${recFmt(list[0].createdAt)} (Accra time).</div>`;
     box.innerHTML = html;
   }catch(e){ box.textContent = 'Could not load backups: ' + (e && e.message ? e.message : e); }
 }
@@ -6829,7 +6831,7 @@ function renderStaff(){
           <button class="btn-small" onclick="dsDownloadBackup()">Download backup file</button>
           <label class="btn-small" style="cursor:pointer;display:inline-block;">Restore from file<input type="file" accept=".json,application/json" style="display:none" onchange="dsRestoreFile(this)"></label>
           <label class="btn-small brass" style="cursor:pointer;display:inline-block;">Check a backup file<input type="file" accept=".json,application/json" style="display:none" onchange="dsCheckFile(this)"></label>
-          <button class="btn-small brass" onclick="dsFindMorningBackup()">Find backup from 11:00–11:30 am (22 Oct)</button>
+          <button class="btn-small brass" onclick="dsFindMorningBackup()">Find backups from today (11:00–11:30 highlighted)</button>
           <button class="btn-small" onclick="dsListCloudBackups()">Cloud backups…</button>
         </div>
         <p style="margin:8px 0 0;font-size:12px;color:var(--slate);">"Verify cloud copy now" reads directly from Firestore's server (not this device's memory) and tells you plainly whether what's on this device is actually what's stored in the cloud. It also runs automatically every 10 minutes in the background — if it ever finds a real mismatch, the banner at the top of the screen will say so.</p>
