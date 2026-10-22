@@ -1718,14 +1718,146 @@ async function dsListCloudBackups(){
   try{
     const list = await listCloudBackups();
     if(!list.length){ box.textContent = 'No cloud backups yet. One is created automatically after saves (at most every 3 hours) and before risky operations.'; return; }
-    box.innerHTML = list.map(b=>`<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;border-top:1px solid var(--line);font-size:12.5px;">
+    box.innerHTML = `<div style="font-size:12.5px;font-weight:700;margin-bottom:4px;">${list.length} backup file${list.length===1?'':'s'} in the cloud (newest first, the latest ${MAX_BACKUPS} are kept)</div>` + list.map(b=>`<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;border-top:1px solid var(--line);font-size:12.5px;">
       <span><b>${fmtDateTime(new Date(b.createdAt).toISOString())}</b> · ${b.reason||'backup'} · ${Math.round((b.size||0)/1024)} KB</span>
-      <button class="btn-small" onclick="dsRestoreCloud('${b.id}')">Restore</button></div>`).join('');
+      <span style="display:flex;gap:6px;"><button class="btn-small brass" onclick="dsCheckCloud('${b.id}')">Check</button><button class="btn-small" onclick="dsDownloadCloud('${b.id}')">Download</button><button class="btn-small" onclick="dsRestoreCloud('${b.id}')">Restore</button></span></div>`).join('');
   }catch(e){ box.textContent = 'Could not load backups: ' + (e && e.message ? e.message : e); }
 }
+async function dsDownloadCloud(id){
+  try{ const str = await readCloudBackup(id); downloadTextFile('cloud-' + id + '.json', str); }
+  catch(e){ alert('Could not read that backup: ' + (e && e.message ? e.message : e)); }
+}
+/* Show the backup files automatically whenever the Settings page is opened. */
+(function(){
+  let busy = false;
+  new MutationObserver(()=>{
+    const box = document.getElementById('ds-backups');
+    if(box && !box.dataset.auto && !busy){
+      box.dataset.auto = '1'; busy = true;
+      Promise.resolve().then(()=>dsListCloudBackups()).finally(()=>{ busy = false; });
+    }
+  }).observe(document.documentElement, { childList:true, subtree:true });
+})();
 async function dsRestoreCloud(id){
   try{ const str = await readCloudBackup(id); await restoreFromString(str, 'cloud backup'); }
   catch(e){ alert('Could not read that backup: ' + (e && e.message ? e.message : e)); }
+}
+
+/* ---------- Check an old backup (read-only: nothing is changed, saved or uploaded) ---------- */
+let ckState = null;   // { str, obj, label }
+function ckEsc(v){ return String(v==null?'':v).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function ckParse(str){
+  let obj;
+  try{ obj = JSON.parse(str); if(obj && obj.db && !obj.classes) obj = obj.db; }catch(e){ return null; }
+  if(!obj || typeof obj!=='object' || !Array.isArray(obj.classes) || !Array.isArray(obj.students)) return null;
+  return obj;
+}
+function ckStats(d){
+  const users = Array.isArray(d.users) ? d.users : [];
+  let attDays = 0, lastAtt = '';
+  Object.values(d.attendance||{}).forEach(m=>{ Object.keys(m||{}).forEach(dt=>{ attDays++; if(dt>lastAtt) lastAtt = dt; }); });
+  const paid = d.students.reduce((t,s)=>t+(s.payments||[]).reduce((a,p)=>a+(Number(p.amount)||0),0),0);
+  return {
+    classes: d.classes.length, students: d.students.length,
+    teachers: users.filter(u=>u.role==='Teacher').length, parents: users.filter(u=>u.role==='Parent').length,
+    admins: users.filter(u=>u.role!=='Teacher' && u.role!=='Parent').length,
+    attDays, lastAtt, paid, announcements:(d.announcements||[]).length, audit:(d.auditLog||[]).length,
+  };
+}
+function ckClassName(d, id){ const c = d.classes.find(x=>x.id===id); return c ? c.name : '(class removed)'; }
+async function dsCheckFile(input){
+  const f = input.files && input.files[0]; if(!f) return;
+  const text = await f.text(); input.value = '';
+  ckOpen(text, f.name);
+}
+async function dsCheckCloud(id){
+  try{ const str = await readCloudBackup(id); ckOpen(str, 'cloud backup'); }
+  catch(e){ alert('Could not read that backup: ' + (e && e.message ? e.message : e)); }
+}
+function ckOpen(str, label){
+  const obj = ckParse(str);
+  if(!obj){ alert('That file is not a valid Clyde Academy backup.'); return; }
+  ckState = { str, obj, label };
+  ckRender('');
+}
+function ckClose(){ const b = document.getElementById('ck-view'); if(b) b.remove(); ckState = null; }
+function ckDownload(){ if(ckState) downloadTextFile(backupFileName(), ckState.str); }
+function ckRestore(){ if(!ckState) return; const { str, label } = ckState; ckClose(); restoreFromString(str, label); }
+function ckSearch(v){ ckRender(v, true); }
+function ckRender(q, keepFocus){
+  if(!ckState) return;
+  const b = ckState.obj, cur = DB || { classes:[], students:[], users:[] };
+  const sb = ckStats(b), sc = ckStats(cur);
+  const row = (name, a, c)=>`<tr><td>${name}</td><td style="text-align:right;font-weight:700;">${a}</td><td style="text-align:right;color:#5b6b85;">${c}</td></tr>`;
+  const curIds = new Set(cur.students.map(s=>s.id));
+  const bkIds  = new Set(b.students.map(s=>s.id));
+  const curNames = new Set(cur.students.map(s=>(s.name||'').trim().toLowerCase()));
+  const missingNow = b.students.filter(s=>!curIds.has(s.id) && !curNames.has((s.name||'').trim().toLowerCase()));
+  const newSince   = cur.students.filter(s=>!bkIds.has(s.id));
+  const bkUsers = (b.users||[]), curUsernames = new Set((cur.users||[]).map(u=>u.username));
+  const staffMissing = bkUsers.filter(u=>u.role==='Teacher' && !curUsernames.has(u.username));
+  const needle = (q||'').trim().toLowerCase();
+  const list = b.students.filter(s=>!needle || (s.name||'').toLowerCase().includes(needle) || ckClassName(b,s.classId).toLowerCase().includes(needle) || String(s.studentId||'').toLowerCase().includes(needle));
+  const stuRow = s=>`<tr><td>${ckEsc(s.name)}</td><td>${ckEsc(ckClassName(b,s.classId))}</td><td>${ckEsc(s.studentId||'')}</td><td>${ckEsc(s.guardian||'')}</td><td style="text-align:right;">${(s.payments||[]).reduce((t,p)=>t+(Number(p.amount)||0),0).toLocaleString()}</td></tr>`;
+  const miniList = (arr, f, empty)=> arr.length ? `<ul style="margin:6px 0 0;padding-left:18px;font-size:13px;line-height:1.5;">${arr.slice(0,60).map(f).join('')}${arr.length>60?`<li>…and ${arr.length-60} more</li>`:''}</ul>` : `<div style="font-size:13px;color:#5b6b85;margin-top:4px;">${empty}</div>`;
+  const classBlocks = b.classes.map(c=>{
+    const n = b.students.filter(s=>s.classId===c.id).length;
+    return `<li>${ckEsc(c.name)} <span style="color:#5b6b85;">— ${n} student${n===1?'':'s'}</span></li>`;
+  }).join('');
+  let box = document.getElementById('ck-view');
+  const isNew = !box;
+  if(isNew){
+    box = document.createElement('div'); box.id = 'ck-view';
+    box.style.cssText = 'position:fixed;inset:0;background:rgba(10,15,30,.6);z-index:10001;overflow:auto;padding:16px;';
+    box.onclick = e=>{ if(e.target===box) ckClose(); };
+    document.body.appendChild(box);
+  }
+  const th = 'text-align:left;font-size:11.5px;color:#5b6b85;padding:4px 6px;border-bottom:1px solid #d9dfeb;';
+  box.innerHTML = `<div style="background:#fff;border-radius:12px;max-width:760px;margin:0 auto;padding:18px;color:#16213E;">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap;">
+      <div><div style="font-weight:700;font-size:17px;">Checking a backup</div>
+      <div style="font-size:12.5px;color:#5b6b85;">${ckEsc(ckState.label)} · ${Math.round(ckState.str.length/1024)} KB · <b>read-only</b> — nothing on this device or in the cloud is changed.</div></div>
+      <button class="btn-small" onclick="ckClose()">Close</button>
+    </div>
+
+    <table style="width:100%;border-collapse:collapse;margin-top:14px;font-size:13.5px;">
+      <tr><th style="${th}">What's inside</th><th style="${th}text-align:right;">This backup</th><th style="${th}text-align:right;">Right now</th></tr>
+      ${row('Classes', sb.classes, sc.classes)}
+      ${row('Students', sb.students, sc.students)}
+      ${row('Teachers', sb.teachers, sc.teachers)}
+      ${row('Parents', sb.parents, sc.parents)}
+      ${row('Attendance days recorded', sb.attDays, sc.attDays)}
+      ${row('Latest attendance date', sb.lastAtt||'—', sc.lastAtt||'—')}
+      ${row('Total fees paid', sb.paid.toLocaleString(), sc.paid.toLocaleString())}
+      ${row('Announcements', sb.announcements, sc.announcements)}
+    </table>
+
+    <div style="margin-top:16px;font-weight:700;font-size:14px;">In this backup but missing now (${missingNow.length} student${missingNow.length===1?'':'s'}, ${staffMissing.length} teacher${staffMissing.length===1?'':'s'})</div>
+    ${miniList(missingNow, s=>`<li>${ckEsc(s.name)} <span style="color:#5b6b85;">— ${ckEsc(ckClassName(b,s.classId))}</span></li>`, 'Every student in this backup is still in the current data.')}
+    ${staffMissing.length ? miniList(staffMissing, u=>`<li>${ckEsc(u.name)} <span style="color:#5b6b85;">— teacher (${ckEsc(u.username)})</span></li>`, '') : ''}
+
+    <div style="margin-top:16px;font-weight:700;font-size:14px;">Added since this backup (${newSince.length} student${newSince.length===1?'':'s'})</div>
+    ${miniList(newSince, s=>`<li>${ckEsc(s.name)} <span style="color:#5b6b85;">— ${ckEsc(ckClassName(cur,s.classId))}</span></li>`, 'No students have been added since this backup.')}
+
+    <div style="margin-top:16px;font-weight:700;font-size:14px;">Classes in this backup</div>
+    <ul style="margin:6px 0 0;padding-left:18px;font-size:13px;line-height:1.5;">${classBlocks}</ul>
+
+    <div style="margin-top:16px;font-weight:700;font-size:14px;">All students in this backup</div>
+    <input id="ck-q" type="search" placeholder="Search name, class or ID…" value="${ckEsc(q||'')}" oninput="ckSearch(this.value)" style="width:100%;box-sizing:border-box;margin:8px 0;padding:8px 10px;border:1px solid #d9dfeb;border-radius:8px;font-size:14px;">
+    <div style="overflow-x:auto;max-height:320px;overflow-y:auto;border:1px solid #eef1f7;border-radius:8px;">
+      <table style="width:100%;border-collapse:collapse;font-size:13px;">
+        <tr><th style="${th}">Name</th><th style="${th}">Class</th><th style="${th}">ID</th><th style="${th}">Guardian</th><th style="${th}text-align:right;">Paid</th></tr>
+        ${list.slice(0,400).map(stuRow).join('') || '<tr><td colspan="5" style="padding:10px;color:#5b6b85;">No matches.</td></tr>'}
+      </table>
+    </div>
+    ${list.length>400?`<div style="font-size:12px;color:#5b6b85;margin-top:4px;">Showing the first 400 of ${list.length}. Use search to narrow.</div>`:''}
+
+    <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;margin-top:16px;">
+      <button class="btn-small" onclick="ckDownload()">Download this backup</button>
+      <button class="btn-danger" onclick="ckRestore()">Restore this backup…</button>
+    </div>
+  </div>`;
+  if(keepFocus){ const i = document.getElementById('ck-q'); if(i){ i.focus(); const n = i.value.length; i.setSelectionRange(n,n); } }
 }
 
 /* Attendance is Monday–Friday only. */
@@ -6659,6 +6791,7 @@ function renderStaff(){
           <button class="btn-small" onclick="dsVerifyCloudCopy()">Verify cloud copy now</button>
           <button class="btn-small" onclick="dsDownloadBackup()">Download backup file</button>
           <label class="btn-small" style="cursor:pointer;display:inline-block;">Restore from file<input type="file" accept=".json,application/json" style="display:none" onchange="dsRestoreFile(this)"></label>
+          <label class="btn-small brass" style="cursor:pointer;display:inline-block;">Check a backup file<input type="file" accept=".json,application/json" style="display:none" onchange="dsCheckFile(this)"></label>
           <button class="btn-small" onclick="dsListCloudBackups()">Cloud backups…</button>
         </div>
         <p style="margin:8px 0 0;font-size:12px;color:var(--slate);">"Verify cloud copy now" reads directly from Firestore's server (not this device's memory) and tells you plainly whether what's on this device is actually what's stored in the cloud. It also runs automatically every 10 minutes in the background — if it ever finds a real mismatch, the banner at the top of the screen will say so.</p>
