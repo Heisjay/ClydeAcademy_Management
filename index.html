@@ -477,6 +477,18 @@
     .bottom-nav button .ic{font-size:18px;}
     .bottom-nav button.active{color:var(--brass-soft);}
     .topbar h1{font-size:19px;}
+    .main{padding-top:52px;}
+    .mobile-userbar{
+      display:flex; align-items:center; gap:10px; position:fixed; top:0; left:0; right:0; height:40px; z-index:55;
+      padding:0 12px; background:#fff; border-bottom:1px solid var(--line); box-shadow:0 2px 8px rgba(0,0,0,0.06);
+    }
+  }
+  .mobile-userbar{display:none;}
+  @media (max-width: 860px){ .mobile-userbar{display:flex;} }
+  .mobile-userbar .who{flex:1; font-size:12.5px; font-weight:600; color:var(--ink); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+  .mobile-userbar button{
+    background:none; border:1.5px solid var(--brick); color:var(--brick); border-radius:8px; padding:5px 12px;
+    font-weight:700; font-size:12px; cursor:pointer;
   }
   @media (max-width: 480px){
     .stat-grid{grid-template-columns:1fr 1fr;}
@@ -834,6 +846,7 @@
   </div>
 
   <div class="bottom-nav" id="bottom-nav"></div>
+  <div class="mobile-userbar" id="mobile-userbar"><span class="who" id="mobile-user"></span><button onclick="logout()">Sign out</button></div>
 </div>
 
 <script>
@@ -1403,7 +1416,15 @@ async function listCloudBackups(){
 }
 async function pruneBackups(){
   const all = await listCloudBackups();
-  for(const b of all.slice(MAX_BACKUPS)){
+  // Keep the newest MAX_BACKUPS, plus the newest backup of each earlier day (up to 45 days back), so a
+  // flurry of recent backups can never push out the good ones from before a problem.
+  const keepDays = new Set(), older = [];
+  all.slice(MAX_BACKUPS).forEach(b=>{
+    const day = new Date(b.createdAt).toISOString().slice(0,10);
+    if(Date.now()-b.createdAt < 45*86400000 && !keepDays.has(day)){ keepDays.add(day); return; }
+    older.push(b);
+  });
+  for(const b of older){
     const batch = firestoreDB.batch();
     for(let i=0;i<(b.chunkCount||0);i++) batch.delete(cloudCol().doc(`${b.id}_p${i}`));
     batch.delete(cloudCol().doc(b.id));
@@ -1501,6 +1522,7 @@ function adoptRemote(remote){
   DB = JSON.parse(remote.str);
   baseStr = remote.str; cloudRev = remote.rev; dirty = false;
   migrateDB();
+  snapshotAcctSigs();      // what the cloud just gave us is already known — don't write it back
 }
 async function syncOnce(){
   for(let attempt=0; attempt<4; attempt++){
@@ -1731,8 +1753,109 @@ async function dsListCloudBackups(){
     if(!list.length){ box.textContent = 'No cloud backups yet. One is created automatically after saves (at most every 3 hours) and before risky operations.'; return; }
     box.innerHTML = list.map(b=>`<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;border-top:1px solid var(--line);font-size:12.5px;">
       <span><b>${fmtDateTime(new Date(b.createdAt).toISOString())}</b> · ${b.reason||'backup'} · ${Math.round((b.size||0)/1024)} KB</span>
-      <button class="btn-small" onclick="dsRestoreCloud('${b.id}')">Restore</button></div>`).join('');
+      <span style="display:flex;gap:6px;"><button class="btn-small brass" onclick="dsRecoverCloud('${b.id}')" title="Adds back what this backup has and the live data is missing; changes nothing else">Bring back missing</button><button class="btn-small" onclick="dsRestoreCloud('${b.id}')" title="Replaces ALL current data with this backup">Restore (replace all)</button></span></div>`).join('');
   }catch(e){ box.textContent = 'Could not load backups: ' + (e && e.message ? e.message : e); }
+}
+/* ---------- Bring back lost data from backups — without replacing anything current ----------
+   "Restore" replaces everything with an old copy. This does the opposite: it only ADDS what an older
+   backup has and the live data is missing (accounts, students, marks, attendance, payments, assignments…).
+   Anything that exists now is left exactly as it is, so work done since the backup is never overwritten.
+   It shows what it would bring back first, and saves a safety copy before applying. */
+const RECOVER_SKIP = new Set(['presence','statusLog']);
+function _countLeaves(v){
+  if(Array.isArray(v)) return v.reduce((t,x)=>t+_countLeaves(x),0) || 1;
+  if(_isObj(v)) return Object.keys(v).reduce((t,k)=>t+_countLeaves(v[k]),0) || 1;
+  return 1;
+}
+const _isEmpty = v => v===undefined || v===null || v==='';
+function fillGaps(cur, bk, stats, sec){
+  if(_isEmpty(cur)){
+    if(_isEmpty(bk)) return cur;
+    stats.count[sec] = (stats.count[sec]||0) + _countLeaves(bk);
+    return JSON.parse(JSON.stringify(bk));
+  }
+  if(_isObj(cur) && _isObj(bk)){
+    Object.keys(bk).forEach(k=>{ const r = fillGaps(cur[k], bk[k], stats, sec); if(r!==cur[k]) cur[k] = r; });
+    return cur;
+  }
+  if(Array.isArray(cur) && Array.isArray(bk) && _idLike(cur) && _idLike(bk)){
+    const idx = new Map(cur.map(x=>[_keyOf(x), x]));
+    bk.forEach(b=>{
+      const k = _keyOf(b);
+      if(!idx.has(k)){
+        const copy = JSON.parse(JSON.stringify(b)); cur.push(copy);
+        stats.count[sec] = (stats.count[sec]||0) + _countLeaves(b);
+        if(sec==='users' || sec==='students') (stats.names[sec] = stats.names[sec]||[]).push(b.name||String(k));
+      } else fillGaps(idx.get(k), b, stats, sec);
+    });
+    return cur;
+  }
+  return cur;     // a value that exists now (or a list we can't match item by item) is never changed
+}
+function recoverIntoCurrent(work, backups){
+  const stats = { count:{}, names:{} };
+  backups.forEach(bk=>{
+    Object.keys(bk).forEach(sec=>{
+      if(RECOVER_SKIP.has(sec)) return;
+      if(sec==='idCounters' && _isObj(bk[sec])){ if(!_isObj(work[sec])) work[sec] = {}; Object.keys(bk[sec]).forEach(k=>{ if((Number(bk[sec][k])||0) > (Number(work[sec][k])||0)) work[sec][k] = bk[sec][k]; }); return; }
+      const r = fillGaps(work[sec], bk[sec], stats, sec);
+      if(r!==work[sec]) work[sec] = r;
+    });
+  });
+  return stats;
+}
+const RECOVER_LABELS = { users:'staff/parent accounts', students:'students', classes:'classes / subject assignments', gradebook:'marks and scores', attendance:'attendance entries',
+  attendanceMeta:'attendance records', weeklyMeta:'weekly-entry records', billItems:'fee items', announcements:'announcements', timetable:'timetable entries', timetableSlots:'timetable periods',
+  morningTimetable:'morning timetable entries', mock:'mock exam entries', auditLog:'activity-log entries', wardRequests:'parent requests', school:'school settings', term:'term settings' };
+function recoverSummary(stats){
+  const rows = Object.keys(stats.count).filter(k=>stats.count[k]>0).sort((a,b)=>stats.count[b]-stats.count[a]);
+  if(!rows.length) return null;
+  let t = rows.map(k=>`• ${RECOVER_LABELS[k]||k}: ${stats.count[k]}`).join('\n');
+  ['users','students'].forEach(k=>{ const n = stats.names[k]; if(n && n.length) t += `\n\n${RECOVER_LABELS[k]} coming back: ${n.slice(0,15).join(', ')}${n.length>15?' …and '+(n.length-15)+' more':''}`; });
+  return t;
+}
+async function applyRecovery(backupObjs, label){
+  const work = JSON.parse(JSON.stringify(DB));
+  const stats = recoverIntoCurrent(work, backupObjs);
+  const text = recoverSummary(stats);
+  if(!text){ alert('Nothing to bring back — everything in '+label+' is already in the live data.'); return; }
+  if(!confirm(`From ${label}, this would ADD back:\n\n${text}\n\nNothing that exists now is changed or removed. (Things deleted on purpose since then could come back too.)\n\nA safety copy of the current data is saved first. Continue?`)) return;
+  try{
+    const current = JSON.stringify(DB);
+    try{ downloadTextFile('before-recover-' + backupFileName(), current); }catch(e){ console.warn('safety download failed', e); }
+    if(cloudEnabled && !TEST_MODE) await writeBackup(current, 'before-recover');
+    DB = work; migrateDB(); logAudit('Lost data brought back', `From ${label}: ` + Object.keys(stats.count).filter(k=>stats.count[k]>0).map(k=>`${RECOVER_LABELS[k]||k} ${stats.count[k]}`).join(', ') + '.');
+    await saveDB(); applyBranding(); render();
+    alert('Done — the missing data has been added back and will sync to every device.');
+  }catch(e){ console.error(e); alert('Could not apply it: ' + (e && e.message ? e.message : e)); }
+}
+function _unwrapBackup(str){ let o = JSON.parse(str); if(o && o.db && !o.classes) o = o.db; if(!o || !Array.isArray(o.classes) || !Array.isArray(o.students)) throw new Error('not a backup'); return o; }
+async function dsRecoverFile(input){
+  const f = input.files && input.files[0]; if(!f) return;
+  const text = await f.text(); input.value = '';
+  let o; try{ o = _unwrapBackup(text); }catch(e){ alert('That file does not look like a Clyde Academy backup.'); return; }
+  await applyRecovery([o], f.name);
+}
+async function dsRecoverCloud(id){
+  try{ const o = _unwrapBackup(await readCloudBackup(id)); await applyRecovery([o], 'that cloud backup'); }
+  catch(e){ alert('Could not read that backup: ' + (e && e.message ? e.message : e)); }
+}
+/* One click: look through EVERY saved cloud backup (newest first) and gather everything that's missing. */
+async function dsRecoverAllCloud(){
+  if(!cloudEnabled){ alert('The cloud database is not connected.'); return; }
+  const box = document.getElementById('ds-backups');
+  try{
+    const list = await listCloudBackups();
+    if(!list.length){ alert('There are no cloud backups yet.'); return; }
+    const objs = [];
+    for(let i=0;i<list.length;i++){
+      if(box) box.textContent = `Reading backup ${i+1} of ${list.length}…`;
+      try{ objs.push(_unwrapBackup(await readCloudBackup(list[i].id))); }catch(e){ console.warn('skipped a backup', e); }
+    }
+    if(box) box.textContent = '';
+    if(!objs.length){ alert('None of the cloud backups could be read.'); return; }
+    await applyRecovery(objs, `all ${objs.length} cloud backups`);
+  }catch(e){ alert('Could not read the backups: ' + (e && e.message ? e.message : e)); }
 }
 async function dsRestoreCloud(id){
   try{ const str = await readCloudBackup(id); await restoreFromString(str, 'cloud backup'); }
@@ -2830,9 +2953,9 @@ async function adoptCloudAccount(cu){
   const next = JSON.parse(JSON.stringify(cu));
   if(i===-1) DB.users.push(next);
   else if(acctSig(DB.users[i])!==acctSig(next)) DB.users[i] = next;
-  else { if(acctSigs) acctSigs[k] = acctSig(next); return; }
   if(acctSigs) acctSigs[k] = acctSig(next);
-  await saveDB();
+  // In memory only — logging in never writes to the database. The account is saved along with the
+  // next real change, as part of the normal sync.
 }
 let loginBusy = false;
 async function login(){
@@ -3266,6 +3389,7 @@ async function registerParent(){
   document.getElementById('login-username').value = username;
 }
 function logout(){
+  if(typeof dirty!=='undefined' && dirty && cloudEnabled && !TEST_MODE && !confirm("Some changes haven't finished saving to the cloud yet. Sign out anyway?\n\n(They stay on this device and will keep trying to save.)")) return;
   session = null;
   navHistory = [];
   persistSession();
@@ -3324,6 +3448,8 @@ function saveHiddenTabs(set){
 }
 function tabIsLocked(id){ return id==='dashboard' || id==='parent'; }
 function renderNav(){
+  const mu = document.getElementById('mobile-user');
+  if(mu && session) mu.textContent = session.name + ' · ' + session.role;
   const all = navItemsForUser();
   const hidden = hiddenTabs();
   const items = all.filter(i=>tabIsLocked(i.id) || !hidden.has(i.id));
@@ -6825,6 +6951,8 @@ function renderStaff(){
           <button class="btn-small" onclick="dsDownloadBackup()">Download backup file</button>
           <label class="btn-small" style="cursor:pointer;display:inline-block;">Restore from file<input type="file" accept=".json,application/json" style="display:none" onchange="dsRestoreFile(this)"></label>
           <button class="btn-small" onclick="dsListCloudBackups()">Cloud backups…</button>
+          <button class="btn-small brass" onclick="dsRecoverAllCloud()" title="Adds back anything missing from the live data, taken from every saved cloud backup">Bring back lost data (all backups)</button>
+          <label class="btn-small" style="cursor:pointer;display:inline-block;">Bring back missing from a file<input type="file" accept=".json,application/json" style="display:none" onchange="dsRecoverFile(this)"></label>
         </div>
         <p style="margin:8px 0 0;font-size:12px;color:var(--slate);">"Verify cloud copy now" reads directly from Firestore's server (not this device's memory) and tells you plainly whether what's on this device is actually what's stored in the cloud. It also runs automatically every 10 minutes in the background — if it ever finds a real mismatch, the banner at the top of the screen will say so.</p>
         <div id="ds-verify-result" style="margin-top:10px;font-size:12.5px;"></div>
