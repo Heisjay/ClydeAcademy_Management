@@ -484,6 +484,91 @@
     }
   }
   .mobile-userbar{display:none;}
+
+
+  /* ===== Login: a 3D card that follows the pointer, a spinning crest, a glowing backdrop ===== */
+  #login-screen{perspective:1200px;}
+  #login-screen::before{
+    content:""; position:absolute; inset:-20%; z-index:0; pointer-events:none;
+    background:radial-gradient(40% 35% at 20% 25%, rgba(184,134,46,.32), transparent 70%), radial-gradient(35% 30% at 80% 75%, rgba(95,122,94,.28), transparent 70%), radial-gradient(30% 30% at 70% 15%, rgba(120,150,230,.2), transparent 70%);
+    animation:loginGlow 14s ease-in-out infinite alternate;
+  }
+  @keyframes loginGlow{from{transform:translate3d(-3%,-2%,0) scale(1);}to{transform:translate3d(3%,2%,0) scale(1.12);}}
+  .login-card{
+    transform-style:preserve-3d; transition:transform .2s ease-out, box-shadow .3s ease;
+    animation:loginIn .8s cubic-bezier(.2,.9,.25,1) both;
+    box-shadow:0 40px 80px -20px rgba(0,0,0,.55), 0 0 0 1px rgba(255,255,255,.08);
+  }
+  .login-card.tilting{box-shadow:0 55px 90px -20px rgba(0,0,0,.6), 0 0 0 1px rgba(184,134,46,.25);}
+  @keyframes loginIn{from{opacity:0; transform:perspective(1200px) rotateX(24deg) translateY(60px) scale(.94);}to{opacity:1; transform:none;}}
+  .login-card .login-head,.login-card .field,.login-card .book-scene{transform:translateZ(24px);}
+  .login-head .crest{animation:crestSpin 9s linear infinite; transform-style:preserve-3d; box-shadow:0 6px 16px rgba(0,0,0,.3);}
+  .login-head .crest:hover{animation-duration:2.2s;}
+  @keyframes crestSpin{0%{transform:rotateY(0);}100%{transform:rotateY(360deg);}}
+  @media (prefers-reduced-motion: reduce){
+    #login-screen::before,.login-card,.login-head .crest{animation:none !important;}
+  }
+  /* ===== Look & feel layer: depth, motion and friendlier controls (display only — no data involved) ===== */
+  html{scroll-behavior:smooth;}
+  body{background:radial-gradient(1200px 600px at 85% -10%, rgba(184,134,46,.10), transparent 60%), radial-gradient(900px 500px at -10% 110%, rgba(22,33,62,.07), transparent 55%), var(--paper); background-attachment:fixed;}
+  /* 3D stage: the page content sits in a perspective so cards can tilt and fly in */
+  .main{perspective:1400px; perspective-origin:50% 0;}
+  .stat-grid{perspective:1000px;}
+  .stat-card, .student-card, .panel{transform-style:preserve-3d; will-change:transform;}
+  .stat-card{
+    position:relative; border-radius:16px; overflow:hidden;
+    background:linear-gradient(160deg,#fff 0%, #FBF8EE 100%);
+    box-shadow:0 1px 0 rgba(255,255,255,.9) inset, 0 10px 24px -12px rgba(22,33,62,.35), 0 2px 6px rgba(22,33,62,.08);
+    transition:transform .18s ease-out, box-shadow .25s ease;
+  }
+  .stat-card::before{ /* gold edge that makes the card read as a slab */
+    content:""; position:absolute; left:0; right:0; top:0; height:4px;
+    background:linear-gradient(90deg,var(--brass),#E3C77A,var(--brass));
+  }
+  .stat-card::after{ /* moving glare that follows the pointer */
+    content:""; position:absolute; inset:0; pointer-events:none; opacity:0; transition:opacity .25s;
+    background:radial-gradient(260px circle at var(--gx,50%) var(--gy,0%), rgba(255,255,255,.75), transparent 60%);
+  }
+  .stat-card.tilting::after{opacity:1;}
+  .stat-card .label,.stat-card .value,.stat-card .sub{transform:translateZ(34px);}
+  .stat-card .value{font-size:34px;}
+  .tilting{box-shadow:0 26px 40px -18px rgba(22,33,62,.55), 0 4px 10px rgba(22,33,62,.12) !important;}
+  .panel{border-radius:16px; transition:box-shadow .25s ease, transform .25s ease;}
+  .panel:hover{box-shadow:0 14px 30px -16px rgba(22,33,62,.35);}
+  .student-card{border-radius:14px; transition:transform .18s ease-out, box-shadow .25s ease;}
+  /* tabs: sliding glow marker + icon pop */
+  .nav-item{position:relative; transition:background .2s, color .2s, transform .2s;}
+  .nav-item:hover{transform:translateX(3px);}
+  .nav-item.active{background:linear-gradient(90deg,rgba(184,134,46,.32),rgba(184,134,46,.06)); box-shadow:inset 3px 0 0 var(--brass-soft);}
+  .nav-item.active .ic{animation:icPop .45s cubic-bezier(.3,1.6,.5,1);}
+  @keyframes icPop{0%{transform:scale(.6) rotate(-12deg);}100%{transform:scale(1) rotate(0);}}
+  .bottom-nav button.active .ic{animation:icPop .45s cubic-bezier(.3,1.6,.5,1);}
+  /* page transitions: the page turns in like a card, direction follows the tab order */
+  .page-in-down{animation:pageDown .55s cubic-bezier(.2,.8,.2,1) both; transform-origin:50% 0;}
+  .page-in-up{animation:pageUp .55s cubic-bezier(.2,.8,.2,1) both; transform-origin:50% 100%;}
+  @keyframes pageDown{from{opacity:0; transform:rotateX(-16deg) translateY(34px) scale(.97);}to{opacity:1; transform:none;}}
+  @keyframes pageUp{from{opacity:0; transform:rotateX(16deg) translateY(-34px) scale(.97);}to{opacity:1; transform:none;}}
+  /* cards then fly in one after another */
+  .fx-in{animation:cardIn .6s cubic-bezier(.2,.9,.25,1) both; animation-delay:calc(var(--i,0) * 55ms + 90ms);}
+  @keyframes cardIn{from{opacity:0; transform:translateY(26px) rotateX(-22deg) scale(.95);}to{opacity:1; transform:none;}}
+  /* friendlier controls: bigger targets, press feedback, clear focus */
+  button, .btn-small, .btn-ghost, .btn-danger, .logout-btn{transition:transform .12s ease, box-shadow .2s ease, background .2s;}
+  button:active:not(:disabled){transform:scale(.96);}
+  .btn-small:hover, .btn-ghost:hover{box-shadow:0 6px 14px -6px rgba(22,33,62,.45); transform:translateY(-1px);}
+  button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, a:focus-visible{outline:3px solid rgba(184,134,46,.55); outline-offset:2px;}
+  input, select, textarea{transition:border-color .2s, box-shadow .2s;}
+  input:focus, select:focus, textarea:focus{border-color:var(--brass); box-shadow:0 0 0 4px rgba(184,134,46,.16);}
+  .ledger-row{transition:background .15s;}
+  .ledger-row:hover{background:rgba(184,134,46,.07);}
+  @media (max-width: 860px){
+    .btn-small, .btn-ghost, .btn-danger{min-height:38px; padding-left:14px; padding-right:14px;}
+    .stat-card .value{font-size:28px;}
+  }
+  @media (prefers-reduced-motion: reduce){
+    .page-in-down,.page-in-up,.fx-in,.nav-item.active .ic{animation:none !important;}
+    .stat-card,.student-card,.panel,.nav-item{transition:none !important;}
+    html{scroll-behavior:auto;}
+  }
   @media (max-width: 860px){ .mobile-userbar{display:flex;} }
   .mobile-userbar .who{flex:1; font-size:12.5px; font-weight:600; color:var(--ink); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
   .mobile-userbar button{
@@ -643,7 +728,11 @@
     </div>
     <div class="field">
       <label>Password</label>
-      <input type="password" id="login-password" placeholder="••••••••" autocomplete="current-password" />
+      <div style="position:relative;">
+        <input type="password" id="login-password" placeholder="••••••••" autocomplete="current-password" style="padding-right:64px;" />
+        <button type="button" id="pw-toggle" onclick="togglePassword()" aria-label="Show password" style="position:absolute;right:6px;top:50%;transform:translateY(-50%);background:none;border:none;color:var(--brass);font-weight:700;font-size:12.5px;padding:8px;cursor:pointer;">Show</button>
+      </div>
+      <div id="caps-hint" style="display:none;margin-top:6px;font-size:12px;color:var(--brick);font-weight:600;">&#9888; Caps Lock is on</div>
     </div>
     <p id="login-error" style="display:none;color:var(--brick);font-size:12.5px;font-weight:600;margin:-8px 0 14px;">Incorrect username or password.</p>
 
@@ -3513,7 +3602,98 @@ function goBack(){
 /* ============================================================
    Render root
 ============================================================ */
+/* ---------- Motion: page-turn between tabs, staggered cards, 3D tilt on the dashboard ----------
+   Display effects only. Nothing here reads or writes any school data. */
+const FX_ON = !(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+let fxLastKey = null, fxLastIndex = 0;
+function afterRenderFX(){
+  if(!FX_ON) return;
+  const el = document.getElementById('main-content');
+  if(!el) return;
+  const key = (view.studentId ? 'student:'+view.studentId : view.page) + '|' + (view.tab||'');
+  if(key===fxLastKey) return;                         // only animate when the page actually changes
+  const idx = navItemsForUser().findIndex(i=>i.id===view.page);
+  const down = fxLastKey===null || idx>=fxLastIndex;
+  fxLastKey = key; fxLastIndex = idx<0 ? fxLastIndex : idx;
+  el.classList.remove('page-in-down','page-in-up'); void el.offsetWidth;
+  el.classList.add(down ? 'page-in-down' : 'page-in-up');
+  const items = el.querySelectorAll('.stat-card, .panel, .student-card, .fee-alert');
+  items.forEach((n,i)=>{ if(i<28){ n.style.setProperty('--i', i); n.classList.add('fx-in'); } });
+  countUpStats(el);
+}
+/* numbers on the stat cards roll up from 0 (the figures themselves are untouched) */
+function countUpStats(root){
+  root.querySelectorAll('.stat-card .value').forEach(v=>{
+    const txt = v.textContent.trim();
+    const m = txt.match(/^(\d+(?:\.\d+)?)(%?)$/);
+    if(!m) return;
+    const target = parseFloat(m[1]), dec = (m[1].split('.')[1]||'').length, suffix = m[2], t0 = performance.now(), dur = 900;
+    const tick = now=>{
+      const k = Math.min(1,(now-t0)/dur), e = 1-Math.pow(1-k,3);
+      v.textContent = (target*e).toFixed(dec) + suffix;
+      if(k<1) requestAnimationFrame(tick); else v.textContent = txt;
+    };
+    v.textContent = (0).toFixed(dec) + suffix;
+    requestAnimationFrame(tick);
+  });
+}
+/* 3D tilt that follows the mouse over cards (mouse/pen only, so touch scrolling is never disturbed) */
+(function initTilt(){
+  if(!FX_ON) return;
+  let cur = null;
+  const reset = n=>{ if(n){ n.classList.remove('tilting'); n.style.transform = ''; } };
+  document.addEventListener('pointermove', e=>{
+    if(e.pointerType==='touch') return;
+    const card = e.target.closest && e.target.closest('#main-content .stat-card, #main-content .student-card');
+    if(cur && cur!==card) reset(cur);
+    cur = card;
+    if(!card) return;
+    const r = card.getBoundingClientRect();
+    const px = (e.clientX-r.left)/r.width, py = (e.clientY-r.top)/r.height;
+    card.classList.add('tilting');
+    card.style.setProperty('--gx', (px*100)+'%'); card.style.setProperty('--gy', (py*100)+'%');
+    card.style.transform = `perspective(700px) rotateX(${((.5-py)*14).toFixed(2)}deg) rotateY(${((px-.5)*16).toFixed(2)}deg) translateZ(10px)`;
+  }, { passive:true });
+  document.addEventListener('pointerleave', ()=>{ reset(cur); cur = null; }, true);
+  document.addEventListener('pointerdown', e=>{ if(e.pointerType==='touch') reset(cur); }, { passive:true });
+})();
+
+/* ---------- Login page: pointer-follow 3D card, show/hide password, Caps Lock warning ---------- */
+function togglePassword(){
+  const i = document.getElementById('login-password'), b = document.getElementById('pw-toggle');
+  if(!i || !b) return;
+  const show = i.type==='password';
+  i.type = show ? 'text' : 'password';
+  b.textContent = show ? 'Hide' : 'Show';
+  b.setAttribute('aria-label', show ? 'Hide password' : 'Show password');
+}
+function initLoginFX(){
+  const scr = document.getElementById('login-screen');
+  const card = scr && scr.querySelector('.login-card');
+  if(!scr || !card) return;
+  if(FX_ON){
+    scr.addEventListener('pointermove', e=>{
+      if(e.pointerType==='touch') return;
+      const r = scr.getBoundingClientRect();
+      const px = (e.clientX-r.left)/r.width - .5, py = (e.clientY-r.top)/r.height - .5;
+      card.classList.add('tilting');
+      card.style.transform = `rotateX(${(-py*9).toFixed(2)}deg) rotateY(${(px*11).toFixed(2)}deg)`;
+    }, { passive:true });
+    scr.addEventListener('pointerleave', ()=>{ card.classList.remove('tilting'); card.style.transform = ''; });
+  }
+  const pw = document.getElementById('login-password'), hint = document.getElementById('caps-hint');
+  if(pw && hint){
+    const check = e=>{ try{ hint.style.display = e.getModifierState && e.getModifierState('CapsLock') ? 'block' : 'none'; }catch(_){} };
+    pw.addEventListener('keydown', check); pw.addEventListener('keyup', check);
+    pw.addEventListener('blur', ()=>{ hint.style.display = 'none'; });
+  }
+}
+if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', initLoginFX); else initLoginFX();
 function render(){
+  renderCore();
+  try{ afterRenderFX(); }catch(e){ /* effects must never break the page */ }
+}
+function renderCore(){
   persistSession();
   renderNav();
   const el = document.getElementById('main-content');
