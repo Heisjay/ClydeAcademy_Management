@@ -704,6 +704,25 @@
   html.intro-on #login-screen .login-card{opacity:0 !important}
   @media (max-width:760px),(max-height:560px){#login-kid{display:none}}
   @media (prefers-reduced-motion:reduce){#login-kid img,#grain{animation:none}}
+
+  /* ===== Phone: tab bars scroll sideways so every tab can be reached (display only) ===== */
+  .tabs{overflow-x:auto; flex-wrap:nowrap; white-space:nowrap; -webkit-overflow-scrolling:touch; scrollbar-width:thin; scrollbar-color:var(--brass) transparent;}
+  .tabs .tab-btn{flex:0 0 auto;}
+  #bn-scroll{display:none;}
+  .tabs::-webkit-scrollbar{height:4px;} .tabs::-webkit-scrollbar-thumb{background:var(--brass); border-radius:3px;}
+  @media (max-width: 860px){
+    .main{padding-bottom:104px;}
+    .bottom-nav{
+      justify-content:flex-start; overflow-x:auto; overflow-y:hidden; -webkit-overflow-scrolling:touch; overscroll-behavior-x:contain;
+      scroll-snap-type:x proximity; scrollbar-width:none;
+      padding:8px 4px calc(7px + env(safe-area-inset-bottom,0px));
+    }
+    .bottom-nav::-webkit-scrollbar{display:none;}
+    #bn-scroll{display:block; position:fixed; left:14px; right:14px; bottom:calc(2px + env(safe-area-inset-bottom,0px)); height:4px; z-index:51; border-radius:3px; background:rgba(255,255,255,.16); pointer-events:none;}
+    #bn-scroll[hidden]{display:none;}
+    #bn-scroll i{display:block; height:100%; border-radius:3px; background:var(--brass-soft); width:30%; transform:translateX(0);}
+    .bottom-nav button{flex:0 0 auto; min-width:72px; white-space:nowrap; scroll-snap-align:center;}
+  }
 </style>
 </head>
 <body>
@@ -7863,6 +7882,23 @@ window.addEventListener('beforeunload', function(e){
   }
   new MutationObserver(check).observe(ls,{attributes:true,attributeFilter:['style','class']});
   setTimeout(check,900);
+})();
+</script>
+<script>
+/* Keeps the active bottom tab in view on phones. Display only: no data is read or written. */
+(function(){
+  var nav=document.getElementById('bottom-nav'); if(!nav||!window.MutationObserver) return;
+  function center(){ var a=nav.querySelector('button.active'); if(a&&nav.scrollWidth>nav.clientWidth&&nav.scrollTo){ nav.scrollTo({left:a.offsetLeft-(nav.clientWidth-a.offsetWidth)/2,behavior:'smooth'}); } }
+  var bar=document.createElement('div'); bar.id='bn-scroll'; bar.hidden=true; bar.innerHTML='<i></i>'; document.body.appendChild(bar);
+  var thumb=bar.firstChild;
+  function sync(){
+    var over=nav.scrollWidth-nav.clientWidth, shown=over>4&&getComputedStyle(nav).display!=='none'; bar.hidden=!shown; if(!shown) return;
+    var w=bar.clientWidth, tw=Math.max(34,w*nav.clientWidth/nav.scrollWidth);
+    thumb.style.width=tw+'px'; thumb.style.transform='translateX('+((w-tw)*nav.scrollLeft/over)+'px)';
+  }
+  nav.addEventListener('scroll',sync,{passive:true}); addEventListener('resize',sync);
+  new MutationObserver(function(){requestAnimationFrame(function(){center();sync();});}).observe(nav,{childList:true});
+  setTimeout(function(){center();sync();},600);
 })();
 </script>
 </body>
