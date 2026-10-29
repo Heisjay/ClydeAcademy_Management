@@ -2766,9 +2766,10 @@ function subjectBreakdown(classId, subj, studentId){
       const v = weeklyRec['w'+w];
       if(hasMark(v)){ earned += Number(v)||0; weeksEntered++; }
     }
-    // Fixed base: every week of the session counts, so a full set of weekly marks = 60.
-    // A week with no mark entered simply counts as 0 until it is filled in.
-    if(weeksEntered>0){ sbaRaw = earned; sbaMax = weeks * (sub.weeklyMax||10); }
+    // Only the weeks that actually have a mark count. A week with no mark is NOT treated as a 0 — the
+    // class score is worked out from what has been entered, and once every week is entered the marks
+    // make up the full 60 (then 50% of it goes to the report card as before).
+    if(weeksEntered>0){ sbaRaw = earned; sbaMax = weeksEntered * (sub.weeklyMax||10); }
     weeksEnteredOut = weeksEntered; weeksTotalOut = weeks;
   } else {
     const sc = sub.scores[studentId];
@@ -2880,8 +2881,13 @@ function subjectTypeLabel(type){
    average = mean percentage across them. aggregate = sum of their 1–9 grade points (lower = better). */
 function sixSubjectSummary(classId, studentId){
   const cls = classOf(classId);
-  if(!cls) return { subjects:[], raw:null, average:null, aggregate:null, count:0 };
+  if(!cls) return { subjects:[], raw:null, average:null, aggregate:null, count:0, totalAll:null, gradedAll:0, subjectsAll:0 };
   const withScores = list => list.map(s=>({ name:s.name, grand: subjectAverage(classId, s.name, studentId) }));
+  // Total Marks = the marks of ALL the subjects (every academic subject that has a mark), not just the best six.
+  const allAcademic = withScores(cls.subjects.filter(s=>s.type!=='nonacademic'));
+  const gradedAll = allAcademic.filter(s=>s.grand!==null);
+  const totalAll = gradedAll.length ? gradedAll.reduce((t,s)=>t+s.grand, 0) : null;
+  const subjectsAll = allAcademic.length;
   // Only a subject that actually has a mark (class score and/or exam entered) can count toward the
   // "best 6" total — a subject with nothing entered yet is left out entirely, not treated as a 0.
   // Counting it would both understate the raw total and overstate "Total Marks" (count x 100) as if
@@ -2895,11 +2901,11 @@ function sixSubjectSummary(classId, studentId){
     .sort((a,b)=>b.grand-a.grand)
     .slice(0,2);
   const chosen = [...core, ...electives];
-  if(!chosen.length) return { subjects:[], raw:null, average:null, aggregate:null, count:0 };
+  if(!chosen.length) return { subjects:[], raw:null, average:null, aggregate:null, count:0, totalAll, gradedAll:gradedAll.length, subjectsAll };
   const raw = chosen.reduce((sum,s)=>sum+s.grand, 0);
   const average = Math.round(raw/chosen.length);
   const aggregate = chosen.reduce((sum,s)=>sum+(gradePointFor(s.grand)??9), 0);
-  return { subjects:chosen, raw, average, aggregate, count:chosen.length };
+  return { subjects:chosen, raw, average, aggregate, count:chosen.length, totalAll, gradedAll:gradedAll.length, subjectsAll };
 }
 /* Position of a student within their class, ranked by their official (core + best-two-electives) average, highest first.
    Standard "competition ranking": ties share the same rank, next rank skips accordingly. */
@@ -4672,7 +4678,7 @@ function renderGradebook(){
     <div class="panel"><div class="panel-head"><h3>End-of-term exam &amp; grand total</h3></div>
     <div class="panel-body" style="padding-top:10px;">
       ${!DB.term?.examDeclared && !isAdminUser ? `<p style="margin:0 0 10px;font-size:12.5px;color:var(--slate);">Exam marks entry isn't open yet — the head teacher will declare exams week when it's time.</p>` : ''}
-      ${sub.weeklyEnabled ? `<p style="margin:0 0 10px;font-size:12.5px;color:var(--slate);">All ${weeks} weeks' marks are added up and scaled to a mark out of 60 once every week has been entered. That /60 is converted to the Class Score (the 50% share of the final grade, shown /50) and added to the exam's 50%. A week with no mark yet counts as 0 until it is entered.</p>` : ''}
+      ${sub.weeklyEnabled ? `<p style="margin:0 0 10px;font-size:12.5px;color:var(--slate);">All ${weeks} weeks' marks are added up and scaled to a mark out of 60 once every week has been entered. That /60 is converted to the Class Score (the 50% share of the final grade, shown /50) and added to the exam's 50%. A week with no mark is simply left out — it is never counted as 0.</p>` : ''}
       ${canEdit && (DB.term?.examDeclared || isAdminUser) && roster.length ? `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:10px 0 12px;padding:10px 12px;background:var(--sage-soft);border-radius:8px;">
         <span style="font-size:12.5px;font-weight:600;color:var(--ink);">Same mark for everyone:</span>
         <input type="number" id="bulk-exam" class="score-input" style="width:64px;" min="0" max="100" placeholder="/100">
@@ -7699,19 +7705,20 @@ function buildReportCardHTML(studentId){
         </tbody>
       </table>
       <table class="rc-table" style="margin-top:0;">
-        <thead><tr><th>No. on Roll</th><th>Raw Marks</th><th>Total Marks</th><th>Average Mark</th><th>Grade</th><th>Position</th></tr></thead>
+        <thead><tr><th>No. on Roll</th><th>Raw Score</th><th>Total Marks</th><th>Average Mark</th><th>Grade</th><th>Position</th></tr></thead>
         <tbody>
           <tr>
             <td class="mono">${roster.length}</td>
             <td class="mono">${sixSum.raw??'—'}</td>
-            <td class="mono">${sixSum.count ? sixSum.count*100 : '—'}</td>
+            <td class="mono">${sixSum.totalAll!==null && sixSum.totalAll!==undefined ? sixSum.totalAll : '—'}</td>
             <td class="mono">${sixSum.average??'—'}${sixSum.average!==null?'%':''}</td>
             <td class="mono">${sixSum.aggregate??'—'}</td>
             <td class="mono">${pos ? ordinal(pos.rank) : '—'}</td>
           </tr>
         </tbody>
       </table>
-      ${sixSum.count && sixSum.count<6 ? `<p style="margin:-10px 0 12px;font-size:11px;color:var(--brick);">Based on ${sixSum.count} of 6 subjects graded so far — the rest have no marks entered yet, so the total and average above will change once they do.</p>` : ''}
+      <p style="margin:-10px 0 4px;font-size:11px;color:var(--slate);">Raw Score = the 4 core subjects + the 2 best other subjects. Total Marks = the marks of all ${sixSum.subjectsAll} subjects.</p>
+      ${sixSum.gradedAll && (sixSum.gradedAll<sixSum.subjectsAll || (sixSum.count && sixSum.count<6)) ? `<p style="margin:0 0 12px;font-size:11px;color:var(--brick);">${sixSum.gradedAll} of ${sixSum.subjectsAll} subjects have marks so far — the rest are not entered yet, so the totals above will change once they are.</p>` : ''}
       <div class="panel" style="box-shadow:none;margin-bottom:16px;"><div class="panel-body" style="padding-top:14px;">
         <div style="font-size:11px;text-transform:uppercase;letter-spacing:0.05em;color:var(--slate);font-weight:600;margin-bottom:4px;">Teacher's remarks</div>
         <div style="font-size:13px;">${s.remark || '—'}</div>
