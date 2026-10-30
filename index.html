@@ -2027,6 +2027,34 @@ async function dsRestoreCloud(id){
 }
 
 /* Attendance is Monday–Friday only. */
+/* Holidays: any teacher (or admin) can tell the register a date is a school holiday. Kept in DB.holidays
+   ({ 'YYYY-MM-DD': { name, by, byName, at } }), created only when the first holiday is marked. A holiday is
+   not a school day: no register is taken, it isn't counted in attendance percentages, and it never shows up
+   as a "missed" register. Attendance already entered on that date is kept, just ignored. */
+function holidayInfo(d){ return (DB.holidays && DB.holidays[d]) || null; }
+function isHoliday(d){ return !!holidayInfo(d); }
+async function setHoliday(date){
+  if(isWeekendDate(date)){ alert('That is already a weekend.'); return; }
+  const raw = prompt('What is the holiday? (for example: Independence Day)', 'Public holiday');
+  if(raw===null) return;
+  const name = raw.trim() || 'Holiday';
+  const hasRegisters = DB.classes.some(c=>DB.attendance[c.id] && DB.attendance[c.id][date] && Object.keys(DB.attendance[c.id][date]).length);
+  if(hasRegisters && !confirm('Some attendance has already been entered for this date. It will be kept, but ignored while the date is a holiday. Continue?')) return;
+  if(!DB.holidays) DB.holidays = {};
+  DB.holidays[date] = { name, by: session.username, byName: session.name, at: Date.now() };
+  logAudit('Holiday marked', `${fmtDate(date)} — ${name}.`);
+  await saveDB();
+  render();
+}
+async function removeHoliday(date){
+  const h = holidayInfo(date);
+  if(!h) return;
+  if(!confirm(`Remove the holiday on ${fmtDate(date)} (${h.name})? The register for that day will open again.`)) return;
+  delete DB.holidays[date];
+  logAudit('Holiday removed', `${fmtDate(date)} — ${h.name}.`);
+  await saveDB();
+  render();
+}
 function isWeekendDate(d){ const g = new Date(d+'T12:00:00').getDay(); return g===0 || g===6; }
 function lastWeekdayOnOrBefore(d){
   let x = new Date(d+'T12:00:00');
@@ -2166,7 +2194,7 @@ function schoolDaysSoFar(){
   for(let w=1; w<=weeks; w++){
     for(let dOff=0; dOff<5; dOff++){
       const d = addDays(mon, (w-1)*7 + dOff);
-      if(d<=today) out.push({ date:d, week:w });
+      if(d<=today && !isHoliday(d)) out.push({ date:d, week:w });
     }
   }
   return out;
@@ -2953,7 +2981,7 @@ function overallAverage(studentId){
 }
 function attendanceRate(studentId, classId){
   const days = DB.attendance[classId] || {};
-  let keys = Object.keys(days).filter(d=>!isWeekendDate(d));
+  let keys = Object.keys(days).filter(d=>!isWeekendDate(d) && !isHoliday(d));
   const sess = activeSession();
   if(sess.startDate){
     const start = sess.startDate;
@@ -2971,7 +2999,7 @@ function attendanceRate(studentId, classId){
 /* Raw "X out of Y" attendance count over the active session (term or vacation), for the report card. */
 function attendanceCounts(studentId, classId){
   const days = DB.attendance[classId] || {};
-  let keys = Object.keys(days).filter(d=>!isWeekendDate(d));
+  let keys = Object.keys(days).filter(d=>!isWeekendDate(d) && !isHoliday(d));
   const sess = activeSession();
   if(sess.startDate){
     const start = sess.startDate;
@@ -4023,7 +4051,8 @@ function renderDashboard(){
       activity.push({ text: `${c.name} register taken for today — ${absentees.length ? absentees.length+' absent' : 'full attendance'}`, kind: absentees.length ? 'absent' : 'present' });
     }
   });
-  if(!activity.length) activity.push({text:'No register entries yet for today.', kind:'present'});
+  if(isHoliday(todayStr(0))){ activity.length = 0; activity.push({ text:`Holiday today — ${holidayInfo(todayStr(0)).name}. No register is needed.`, kind:'present' }); }
+  else if(!activity.length) activity.push({text:'No register entries yet for today.', kind:'present'});
 
   return `
     <div class="topbar">
@@ -4442,7 +4471,7 @@ function renderStudentDetail(id){
     }).join('');
   } else if(view.tab==='attendance'){
     const days = DB.attendance[s.classId] || {};
-    const keys = Object.keys(days).filter(d=>!isWeekendDate(d)).sort().reverse();
+    const keys = Object.keys(days).filter(d=>!isWeekendDate(d) && !isHoliday(d)).sort().reverse();
     body = `<div class="panel"><div class="panel-head"><h3>Attendance history</h3></div><div class="panel-body">
       ${keys.length ? keys.map((d,i)=>{
         const status = days[d][id] || 'present';
@@ -4851,11 +4880,17 @@ function renderAttendance(){
         ${classes.map(c=>`<option value="${c.id}" ${c.id===view.classId?'selected':''}>${c.name}</option>`).join('')}
       </select>` : ''}
       <input type="date" value="${view.date}" onchange="view.date=this.value; render()">
-      ${roster.length ? `<button class="btn-small brass" onclick="markAllPresent('${cls.id}','${view.date}')">&#10003; All present</button>` : ''}
+      ${!isHoliday(view.date) && roster.length ? `<button class="btn-small brass" onclick="markAllPresent('${cls.id}','${view.date}')">&#10003; All present</button>` : ''}
+      ${isHoliday(view.date) ? '' : `<button class="btn-small" onclick="setHoliday('${view.date}')">&#127881; Mark as holiday</button>`}
       ${roster.some(s=>rec[s.id]==='absent') ? `<button class="btn-small" onclick="textAbsentParents('${cls.id}','${view.date}')">Text parents of absent (${roster.filter(s=>rec[s.id]==='absent').length})</button>` : ''}
     </div>
     ${weekendNote}
-    ${(()=>{
+    ${isHoliday(view.date) ? (()=>{ const h = holidayInfo(view.date); return `<div class="panel" style="border-color:var(--brass);background:#FBF3DC;"><div class="panel-body" style="padding:18px;display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
+        <span style="font-size:30px;">&#127881;</span>
+        <div style="flex:1;min-width:200px;"><div style="font-weight:700;font-size:16px;">Holiday — ${h.name}</div>
+          <div style="font-size:12.5px;color:var(--slate);">${fmtDate(view.date)} is a school holiday${h.byName?`, marked by <b>${h.byName}</b>`:''}. No register is taken, and the day isn't counted in attendance.</div></div>
+        <button class="btn-ghost" onclick="removeHoliday('${view.date}')">Remove holiday</button></div></div>`; })() : ''}
+    ${isHoliday(view.date) ? '' : (()=>{
       // Has a register already been entered for this class on this date, and by whom?
       const taken = Object.keys(rec).length>0;
       const meta = DB.attendanceMeta && DB.attendanceMeta[cls.id] && DB.attendanceMeta[cls.id][view.date];
@@ -4866,7 +4901,7 @@ function renderAttendance(){
       const past = view.date < todayStr(0);
       return `<div class="crud-box" style="border-color:${past?'var(--brick)':'var(--line)'};background:${past?'#FBEAE8':'transparent'};"><span style="font-size:12.5px;color:${past?'var(--brick)':'var(--slate)'};">${past?'&#9873; No attendance has been entered for '+cls.name+' on '+fmtDate(view.date)+' yet.':'Attendance for '+fmtDate(view.date)+' has not been entered yet. Everyone shows as Present until you mark the register.'}</span></div>`;
     })()}
-    <div class="panel"><div class="panel-body" style="padding-top:14px;">
+    ${isHoliday(view.date) ? '' : `<div class="panel"><div class="panel-body" style="padding-top:14px;">
       ${roster.map((s,i)=>{
         const status = rec[s.id] || 'present';
         return `<div class="ledger-row" data-sid="${s.id}">
@@ -4879,11 +4914,12 @@ function renderAttendance(){
           </div>
         </div>`;
       }).join('')}
-    </div></div>
+    </div></div>`}
   `;
 }
 async function markAttendance(classId, date, studentId, status){
   if(isWeekendDate(date)){ alert('Attendance is not taken on weekends.'); return; }
+  if(isHoliday(date)){ alert('This date is marked as a holiday — no register is taken.'); return; }
   if(!DB.attendance[classId]) DB.attendance[classId] = {};
   if(!DB.attendance[classId][date]) DB.attendance[classId][date] = {};
   DB.attendance[classId][date][studentId] = status;
@@ -4895,6 +4931,7 @@ async function markAttendance(classId, date, studentId, status){
 /* One click marks the whole class present for the chosen date (a single save). */
 async function markAllPresent(classId, date){
   if(isWeekendDate(date)){ alert('Attendance is not taken on weekends.'); return; }
+  if(isHoliday(date)){ alert('This date is marked as a holiday — no register is taken.'); return; }
   const roster = studentsOf(classId);
   if(!roster.length) return;
   const rec = (DB.attendance[classId] && DB.attendance[classId][date]) || {};
