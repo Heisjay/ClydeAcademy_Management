@@ -2033,6 +2033,36 @@ async function removeHoliday(date){
   await saveDB();
   render();
 }
+/* Mid-term break (admin only): marks a few weekdays at once, using the same DB.holidays records as a single
+   holiday (same shape, no new fields), so every existing holiday rule already applies. Weekends and dates that
+   are already holidays are skipped. Single days can still be removed one by one with "Remove holiday". */
+function midtermDates(from, to){
+  const out=[]; if(!from||!to||to<from) return out;
+  const d=new Date(from+'T12:00:00'), end=new Date(to+'T12:00:00');
+  for(let i=0;i<60 && d<=end;i++){
+    const k=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+    if(!isWeekendDate(k) && !isHoliday(k)) out.push(k);
+    d.setDate(d.getDate()+1);
+  }
+  return out;
+}
+async function setMidterm(){
+  if(session.role!=='Admin'){ alert('Only the administrator can set the mid-term break.'); return; }
+  const from=view.midFrom, to=view.midTo;
+  if(!from||!to){ alert('Choose the first and last day of the mid-term break.'); return; }
+  if(to<from){ alert('The last day cannot be before the first day.'); return; }
+  const days=midtermDates(from,to);
+  if(!days.length){ alert('No school days to mark in that range (weekends and existing holidays are skipped).'); return; }
+  const name=(view.midName||'').trim()||'Mid-term break';
+  const hasRegisters=days.some(d=>DB.classes.some(c=>DB.attendance[c.id]&&DB.attendance[c.id][d]&&Object.keys(DB.attendance[c.id][d]).length));
+  if(!confirm(`Mark ${days.length} school day${days.length===1?'':'s'} (${fmtDate(days[0])}${days.length>1?' to '+fmtDate(days[days.length-1]):''}) as "${name}"?`+(hasRegisters?'\n\nSome attendance was already entered on these dates. It will be kept, but ignored while they are holidays.':''))) return;
+  if(!DB.holidays) DB.holidays = {};
+  days.forEach(d=>{ DB.holidays[d]={ name, by: session.username, byName: session.name, at: Date.now() }; });
+  logAudit('Mid-term break marked', `${days.length} day${days.length===1?'':'s'}, ${fmtDate(days[0])} to ${fmtDate(days[days.length-1])} — ${name}.`);
+  view.midOpen=false; view.midFrom=view.midTo=null;
+  await saveDB();
+  render();
+}
 function isWeekendDate(d){ const g = new Date(d+'T12:00:00').getDay(); return g===0 || g===6; }
 function lastWeekdayOnOrBefore(d){
   let x = new Date(d+'T12:00:00');
@@ -4860,8 +4890,17 @@ function renderAttendance(){
       <input type="date" value="${view.date}" onchange="view.date=this.value; render()">
       ${!isHoliday(view.date) && roster.length ? `<button class="btn-small brass" onclick="markAllPresent('${cls.id}','${view.date}')">&#10003; All present</button>` : ''}
       ${isHoliday(view.date) ? '' : `<button class="btn-small" onclick="setHoliday('${view.date}')">&#127881; Mark as holiday</button>`}
+      ${session.role==='Admin' ? `<button class="btn-small" onclick="view.midOpen=!view.midOpen; view.midFrom=view.midFrom||view.date; view.midTo=view.midTo||view.date; render()">&#128197; Mid-term break</button>` : ''}
       ${roster.some(s=>rec[s.id]==='absent') ? `<button class="btn-small" onclick="textAbsentParents('${cls.id}','${view.date}')">Text parents of absent (${roster.filter(s=>rec[s.id]==='absent').length})</button>` : ''}
     </div>
+    ${session.role==='Admin' && view.midOpen ? (()=>{ const n = midtermDates(view.midFrom,view.midTo).length; return `<div class="crud-box" style="flex-wrap:wrap;gap:10px;align-items:flex-end;border-color:var(--brass);background:#FBF3DC;">
+      <div style="flex-basis:100%;font-weight:700;font-size:13.5px;">&#128197; Mid-term break <span style="font-weight:400;font-size:12px;color:var(--slate);">— admin only. Weekends and existing holidays are skipped.</span></div>
+      <label style="font-size:12px;">First day<br><input type="date" value="${view.midFrom||''}" onchange="view.midFrom=this.value; if(!view.midTo||view.midTo<this.value) view.midTo=this.value; render()"></label>
+      <label style="font-size:12px;">Last day<br><input type="date" value="${view.midTo||''}" min="${view.midFrom||''}" onchange="view.midTo=this.value; render()"></label>
+      <label style="font-size:12px;">Name<br><input type="text" placeholder="Mid-term break" value="${(view.midName||'').replace(/"/g,'&quot;')}" onchange="view.midName=this.value"></label>
+      <button class="btn-small brass" onclick="setMidterm()">Mark ${n} day${n===1?'':'s'}</button>
+      <button class="btn-ghost" onclick="view.midOpen=false; render()">Cancel</button>
+    </div>`; })() : ''}
     ${weekendNote}
     ${isHoliday(view.date) ? (()=>{ const h = holidayInfo(view.date); return `<div class="panel" style="border-color:var(--brass);background:#FBF3DC;"><div class="panel-body" style="padding:18px;display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
         <span style="font-size:30px;">&#127881;</span>
